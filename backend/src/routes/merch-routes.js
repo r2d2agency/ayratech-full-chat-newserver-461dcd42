@@ -2729,7 +2729,9 @@ async function calculateRouteExecutionProgress(routeId, routeBrandId = null) {
             COALESCE(mec.category_after_photo, '') as category_after_photo,
             COALESCE(mec.completed, false) as category_completed,
             COALESCE(rb.eff_require_category_photos, r.eff_require_category_photos, bc_rb.require_category_photos, bc_route.require_category_photos, bc_brand.require_category_photos, true) as require_category_photos,
-            COALESCE(rb.eff_category_photo_mode, r.eff_category_photo_mode, bc_rb.category_photo_mode, bc_route.category_photo_mode, bc_brand.category_photo_mode, 'both') as category_photo_mode
+            COALESCE(rb.eff_category_photo_mode, r.eff_category_photo_mode, bc_rb.category_photo_mode, bc_route.category_photo_mode, bc_brand.category_photo_mode, 'both') as category_photo_mode,
+            COALESCE(rb.eff_require_stock_count, r.eff_require_stock_count, bc_rb.require_stock_count, bc_route.require_stock_count, bc_brand.require_stock_count, false) as require_stock_count,
+            COALESCE(rb.eff_require_validity_check, r.eff_require_validity_check, bc_rb.require_validity_check, bc_route.require_validity_check, bc_brand.require_validity_check, false) as require_validity_check
      FROM route_product_executions rpe
      JOIN merch_routes r ON r.id = rpe.route_id
      LEFT JOIN route_brands rb ON rb.id = rpe.route_brand_id
@@ -2749,7 +2751,11 @@ async function calculateRouteExecutionProgress(routeId, routeBrandId = null) {
               rb.eff_require_category_photos, r.eff_require_category_photos,
               bc_rb.require_category_photos, bc_route.require_category_photos, bc_brand.require_category_photos,
               rb.eff_category_photo_mode, r.eff_category_photo_mode,
-              bc_rb.category_photo_mode, bc_route.category_photo_mode, bc_brand.category_photo_mode`,
+              bc_rb.category_photo_mode, bc_route.category_photo_mode, bc_brand.category_photo_mode,
+              rb.eff_require_stock_count, r.eff_require_stock_count,
+              bc_rb.require_stock_count, bc_route.require_stock_count, bc_brand.require_stock_count,
+              rb.eff_require_validity_check, r.eff_require_validity_check,
+              bc_rb.require_validity_check, bc_route.require_validity_check, bc_brand.require_validity_check`,
 
     params
   );
@@ -2760,18 +2766,23 @@ async function calculateRouteExecutionProgress(routeId, routeBrandId = null) {
   let photoDone = 0;
 
   for (const row of progressRes.rows) {
-    productTotal += Number(row.total_products || 0);
-    productDone += Number(row.completed_products || 0);
+    const mode = row.category_photo_mode || 'both';
+    const photoOnlyAfter = row.require_category_photos !== false && mode === 'after' &&
+      !row.require_stock_count && !row.require_validity_check;
+    if (!photoOnlyAfter) {
+      productTotal += Number(row.total_products || 0);
+      productDone += Number(row.completed_products || 0);
+    }
 
     if (row.require_category_photos === false) continue;
-    const mode = row.category_photo_mode || 'both';
     if (mode === 'before' || mode === 'both') {
       photoTotal += 1;
       if (row.category_before_photo) photoDone += 1;
     }
     if (mode === 'after' || mode === 'both') {
       photoTotal += 1;
-      if (row.category_after_photo || row.category_completed) photoDone += 1;
+      // `completed` só é marcado quando a quantidade mínima foi atingida.
+      if (row.category_completed) photoDone += 1;
     }
   }
 
@@ -3904,17 +3915,24 @@ router.post('/promotor/routes/:routeId/categories/:catId/after-photo', promotorA
       [req.params.routeId, catId, route_brand_id || null]
     );
     if (!cat.rows.length) return res.status(404).json({ error: 'Categoria não encontrada' });
-    if (!cat.rows[0].products_unlocked) return res.status(400).json({ error: 'Produtos ainda não foram liberados (foto do ANTES necessária)' });
-
     let minAfter = 1;
+    let categoryPhotoMode = 'both';
+    let requireStockCount = false;
+    let requireValidityCheck = false;
     try {
       // Prioritize brand-specific checklist if multi-brand
-      let checklistQuery = `SELECT COALESCE(r.eff_min_category_photos_after, bc.min_category_photos_after) as min_category_photos_after FROM merch_routes r
+      let checklistQuery = `SELECT COALESCE(r.eff_min_category_photos_after, bc.min_category_photos_after) as min_category_photos_after,
+           COALESCE(r.eff_category_photo_mode, bc.category_photo_mode, 'both') as category_photo_mode,
+           COALESCE(r.eff_require_stock_count, bc.require_stock_count, false) as require_stock_count,
+           COALESCE(r.eff_require_validity_check, bc.require_validity_check, false) as require_validity_check FROM merch_routes r
          LEFT JOIN brand_checklists bc ON bc.id = r.checklist_id WHERE r.id=$1`;
       let checklistParams = [req.params.routeId];
 
       if (route_brand_id) {
-        checklistQuery = `SELECT COALESCE(rb.eff_min_category_photos_after, bc.min_category_photos_after) as min_category_photos_after FROM route_brands rb
+        checklistQuery = `SELECT COALESCE(rb.eff_min_category_photos_after, bc.min_category_photos_after) as min_category_photos_after,
+             COALESCE(rb.eff_category_photo_mode, bc.category_photo_mode, 'both') as category_photo_mode,
+             COALESCE(rb.eff_require_stock_count, bc.require_stock_count, false) as require_stock_count,
+             COALESCE(rb.eff_require_validity_check, bc.require_validity_check, false) as require_validity_check FROM route_brands rb
            LEFT JOIN brand_checklists bc ON bc.id = rb.checklist_id WHERE rb.id=$1`;
         checklistParams = [route_brand_id];
       }
@@ -3922,7 +3940,14 @@ router.post('/promotor/routes/:routeId/categories/:catId/after-photo', promotorA
 
       const minRes = await query(checklistQuery, checklistParams);
       if (minRes.rows[0]?.min_category_photos_after) minAfter = Math.max(1, parseInt(minRes.rows[0].min_category_photos_after, 10));
+      categoryPhotoMode = minRes.rows[0]?.category_photo_mode || 'both';
+      requireStockCount = minRes.rows[0]?.require_stock_count === true;
+      requireValidityCheck = minRes.rows[0]?.require_validity_check === true;
     } catch {}
+
+    if (!cat.rows[0].products_unlocked && categoryPhotoMode !== 'after') {
+      return res.status(400).json({ error: 'Produtos ainda não foram liberados (foto do ANTES necessária)' });
+    }
 
     const hasRouteBrandColumn = await hasColumn('route_photos', 'route_brand_id');
     const prevCount = (await query(
@@ -3938,6 +3963,7 @@ router.post('/promotor/routes/:routeId/categories/:catId/after-photo', promotorA
     )).rows[0]?.n || 0;
     const totalAfterUpload = prevCount + photoList.length;
     const completes = totalAfterUpload >= minAfter;
+    const photoOnlyAfter = categoryPhotoMode === 'after' && !requireStockCount && !requireValidityCheck;
 
     const primaryPhoto = cat.rows[0].category_after_photo || photoList[0];
     const result = await query(
@@ -3986,6 +4012,18 @@ router.post('/promotor/routes/:routeId/categories/:catId/after-photo', promotorA
           );
         }
       } catch {}
+    }
+
+    // Produtos são opcionais neste modo. Ao atingir o mínimo de fotos, mantenha
+    // os registros internos consistentes sem exigir cliques do promotor.
+    if (completes && photoOnlyAfter) {
+      await query(
+        `UPDATE route_product_executions
+         SET status='completed', checked=true, executed_by=$4, executed_at=COALESCE(executed_at,NOW()), updated_at=NOW()
+         WHERE route_id=$1 AND category_id IS NOT DISTINCT FROM $2 AND route_brand_id IS NOT DISTINCT FROM $3
+           AND status <> 'completed'`,
+        [req.params.routeId, catId, route_brand_id || null, req.employeeId]
+      );
     }
 
 

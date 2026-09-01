@@ -1581,7 +1581,9 @@ export default function PromotorRota() {
                           Fotos
                         </Button>
                       )}
-                      <Badge variant={isActiveCategory ? 'default' : 'outline'} className="text-[10px]">{doneCount}/{execs.length}</Badge>
+                      {!photoOnlyMode && (
+                        <Badge variant={isActiveCategory ? 'default' : 'outline'} className="text-[10px]">{doneCount}/{execs.length}</Badge>
+                      )}
                       {isCompletedCategory && (expandedCategories[accordionKey] ? <ChevronUp className="h-4 w-4 text-green-700" /> : <ChevronDown className="h-4 w-4 text-green-700" />)}
                     </div>
                   </div>
@@ -1740,13 +1742,24 @@ export default function PromotorRota() {
             {(() => {
               // Para rotas multi-marcas, a conclusão global deve checar TODOS os produtos de TODAS as marcas
               const allExecutions = route?.executions || [];
-              const totalExecsGlobalRaw = allExecutions.length;
-              const completedExecsGlobalRaw = allExecutions.filter((e: any) => e.status === 'completed').length;
+              const productIsRequired = (exec: any) => {
+                const rbConfig = isMultiBrand ? routeBrands.find((b: any) => b.id === exec.route_brand_id) : null;
+                const source = rbConfig || (route as any);
+                const photoOnlyAfter = source?.require_category_photos !== false &&
+                  (source?.category_photo_mode || 'both') === 'after' &&
+                  !source?.require_stock_count && !source?.require_validity_check;
+                return !photoOnlyAfter;
+              };
+              // Em checklist "Somente Depois" sem estoque/validade, os produtos são
+              // opcionais: a categoria é concluída exclusivamente pelo mínimo de fotos.
+              const requiredProductExecutions = allExecutions.filter(productIsRequired);
+              const totalExecsGlobalRaw = requiredProductExecutions.length;
+              const completedExecsGlobalRaw = requiredProductExecutions.filter((e: any) => e.status === 'completed').length;
 
               // MODO CHECKIN_ONLY: zera as exigências de produtos/fotos de categoria
               const totalExecsGlobal = isCheckinOnlyMode ? 0 : totalExecsGlobalRaw;
               const completedExecsGlobal = isCheckinOnlyMode ? 0 : completedExecsGlobalRaw;
-              const allProductsDoneGlobal = isCheckinOnlyMode ? true : (totalExecsGlobal > 0 && completedExecsGlobal === totalExecsGlobal);
+               const allProductsDoneGlobal = isCheckinOnlyMode ? true : (totalExecsGlobal === 0 || completedExecsGlobal === totalExecsGlobal);
               
               // Verificação global de fotos de categoria (DEPOIS) em todas as marcas/categorias
               const allExecutionsGroupedGlobal = allExecutions.reduce((acc: any, e: any) => {
@@ -1773,7 +1786,7 @@ export default function PromotorRota() {
               const globalMissingAfterPhotos = isCheckinOnlyMode ? [] : Object.entries(allExecutionsGroupedGlobal).filter(([key, data]: [string, any]) => {
                 const { catId, routeBrandId, execs } = data;
                 const catStatus = categoryStatusMap[key] || categoryStatusMap[catId];
-                const allDone = execs.every((e: any) => e.status === 'completed');
+                 const allDone = execs.every((e: any) => e.status === 'completed');
                 
                 // Busca as configurações da marca para esta categoria
                 const rbConfig = isMultiBrand ? routeBrands.find((b: any) => b.id === routeBrandId) : null;
@@ -1792,8 +1805,11 @@ export default function PromotorRota() {
                  // category_after_photo no status retornado ficava verde mas bloqueava a conclusão da rota.
                  const hasAfter = !!catStatus?.category_after_photo || !!catStatus?.completed || hasAfterPhotoInRoute || !!optimisticAfterPhoto[`${catId}_${routeBrandId || 'null'}`];
                  
-                 // Uma categoria só exige foto do depois se todos os seus produtos foram executados
-                 return allDone && needsAfter && !hasAfter;
+                  const photoOnlyAfter = pMode === 'after' &&
+                    !(rbConfig || route as any)?.require_stock_count &&
+                    !(rbConfig || route as any)?.require_validity_check;
+                  // No modo somente foto depois, produtos não bloqueiam a categoria.
+                  return (allDone || photoOnlyAfter) && needsAfter && !hasAfter;
               });
 
               const allBeforePhotosDone = globalMissingBeforePhotos.length === 0;
@@ -1824,7 +1840,7 @@ export default function PromotorRota() {
                       return rb?.brand_name ? `${rb.brand_name} › ${cat}` : cat;
                     };
                     if (!allProductsDoneGlobal) {
-                      const pendingList = allExecutions.filter((e: any) => e.status !== 'completed');
+                       const pendingList = requiredProductExecutions.filter((e: any) => e.status !== 'completed');
                       const pendingExtra = pendingList.filter((e: any) => e.exposure_point === 'extra').length;
                       const sample = pendingList.slice(0, 3).map((e: any) => {
                         const rb = e.route_brand_id ? routeBrands.find((b: any) => b.id === e.route_brand_id) : null;
