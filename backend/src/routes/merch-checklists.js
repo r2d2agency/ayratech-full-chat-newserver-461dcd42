@@ -3,6 +3,8 @@ import express from 'express';
 import { query } from '../db.js';
 import { authenticate } from '../middleware/auth.js';
 import { logError } from '../logger.js';
+import { resyncChecklistOnFutureRoutes } from './merch-routes.js';
+
 
 const router = express.Router();
 router.use(authenticate);
