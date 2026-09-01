@@ -131,7 +131,10 @@ router.put('/:id', async (req, res) => {
        c.stock_count_frequency, c.validity_check_frequency,
        req.params.id, req.orgId]
     );
+    // Aplica o novo checklist nas rotas futuras já agendadas
+    await resyncChecklistOnFutureRoutes(req.params.id).catch(() => {});
     res.json(r.rows[0]);
+
   } catch (e) {
     logError('update checklist', e);
     res.status(500).json({ error: e.message });
