@@ -1036,7 +1036,8 @@ export default function PromotorRota() {
         photosSatisfied = true;
       } else {
         const hasBefore = !!catStatus?.category_before_photo;
-        const hasAfter = !!catStatus?.category_after_photo || !!optimisticAfterPhoto[categoryKey];
+        // O backend marca `completed` somente quando o mínimo configurado foi atingido.
+        const hasAfter = !!catStatus?.completed || !!optimisticAfterPhoto[categoryKey];
         if (photoMode === 'before') photosSatisfied = hasBefore;
         else if (photoMode === 'after') photosSatisfied = hasAfter;
         else photosSatisfied = hasBefore && hasAfter;
@@ -1467,7 +1468,7 @@ export default function PromotorRota() {
               const doneCount = execs.filter((e: any) => e.status === 'completed').length;
               const allProductsDone = doneCount === execs.length && execs.length > 0;
               const afterPhotoKey = `${catId}_${routeBrandId || 'null'}`;
-              const hasAfterPhoto = !!catStatus?.category_after_photo || !!catStatus?.completed || !!optimisticAfterPhoto[afterPhotoKey];
+               const hasAfterPhoto = !!catStatus?.completed || !!optimisticAfterPhoto[afterPhotoKey];
               const accordionKey = categoryKey;
               const isCompletedCategory = hasAfterPhoto;
               
@@ -1803,7 +1804,7 @@ export default function PromotorRota() {
                  // category_after_photo OU completed (backend já aceitou a foto) OU foto na rota OU estado offline.
                  // Sem o fallback `completed`, uma categoria marcada como concluída no backend mas sem
                  // category_after_photo no status retornado ficava verde mas bloqueava a conclusão da rota.
-                 const hasAfter = !!catStatus?.category_after_photo || !!catStatus?.completed || hasAfterPhotoInRoute || !!optimisticAfterPhoto[`${catId}_${routeBrandId || 'null'}`];
+                  const hasAfter = !!catStatus?.completed || !!optimisticAfterPhoto[`${catId}_${routeBrandId || 'null'}`];
                  
                   const photoOnlyAfter = pMode === 'after' &&
                     !(rbConfig || route as any)?.require_stock_count &&
