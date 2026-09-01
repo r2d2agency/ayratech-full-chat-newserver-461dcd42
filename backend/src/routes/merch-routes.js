@@ -227,6 +227,43 @@ async function persistMergedChecklist(table, rowId, checklistIds) {
   }
 }
 
+// Re-aplica o checklist efetivo nas rotas FUTURAS/não concluídas que usam este checklist.
+// Necessário para que ajustes no checklist (ex.: "só foto DEPOIS") valham imediatamente
+// em rotas já agendadas, cujos campos eff_* foram congelados na criação.
+export async function resyncChecklistOnFutureRoutes(checklistId) {
+  if (!checklistId) return;
+  try {
+    await ensureChecklistMergeColumns();
+    const routes = await query(
+      `SELECT id, checklist_ids, checklist_id FROM merch_routes
+       WHERE status NOT IN ('completed','cancelled')
+         AND visit_date >= CURRENT_DATE
+         AND (checklist_id = $1 OR checklist_ids @> to_jsonb($1::text))`,
+      [checklistId]
+    ).catch(() => ({ rows: [] }));
+    for (const r of routes.rows) {
+      const ids = Array.isArray(r.checklist_ids) && r.checklist_ids.length ? r.checklist_ids : [r.checklist_id].filter(Boolean);
+      await persistMergedChecklist('merch_routes', r.id, ids);
+    }
+
+    const brands = await query(
+      `SELECT rb.id, rb.checklist_ids, rb.checklist_id FROM route_brands rb
+       JOIN merch_routes r ON r.id = rb.route_id
+       WHERE r.status NOT IN ('completed','cancelled')
+         AND r.visit_date >= CURRENT_DATE
+         AND (rb.checklist_id = $1 OR rb.checklist_ids @> to_jsonb($1::text))`,
+      [checklistId]
+    ).catch(() => ({ rows: [] }));
+    for (const rb of brands.rows) {
+      const ids = Array.isArray(rb.checklist_ids) && rb.checklist_ids.length ? rb.checklist_ids : [rb.checklist_id].filter(Boolean);
+      await persistMergedChecklist('route_brands', rb.id, ids);
+    }
+  } catch (e) {
+    logWarn('resyncChecklistOnFutureRoutes.failed', { checklistId, error: e?.message });
+  }
+}
+
+
 // Marca has_stock_count também quando o CHECKLIST da rota (ou de qualquer marca da
 // rota) exige contagem de saldo — não só quando existe regra em stock_count_rules.
 // Assim o ícone/tag de saldo fica visual no dia e na rota.
