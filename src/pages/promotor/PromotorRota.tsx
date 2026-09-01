@@ -461,8 +461,8 @@ function ExtraPointPhotoGate({ catId, routeBrandId, categoryName, routeId, pdvNa
 }
 
 // ===== Category After Photo Gate (required to close/complete category) =====
-function CategoryAfterPhotoGate({ catId, routeBrandId, categoryName, routeId, pdvName, brandName, promotorName, qualityConfig, minPhotos, beforePhotoUrl, onCompleted, onCaptureOptimistic }: {
-  catId: string; routeBrandId?: string; categoryName: string; routeId: string; pdvName: string; brandName: string; promotorName?: string; qualityConfig?: PhotoQualityConfig; minPhotos: number; beforePhotoUrl?: string | null; onCompleted: () => void; onCaptureOptimistic?: (url: string, type: string) => void;
+function CategoryAfterPhotoGate({ catId, routeBrandId, categoryName, routeId, pdvName, brandName, promotorName, qualityConfig, minPhotos, beforePhotoUrl, afterOnly, onCompleted, onCaptureOptimistic }: {
+  catId: string; routeBrandId?: string; categoryName: string; routeId: string; pdvName: string; brandName: string; promotorName?: string; qualityConfig?: PhotoQualityConfig; minPhotos: number; beforePhotoUrl?: string | null; afterOnly?: boolean; onCompleted: () => void; onCaptureOptimistic?: (url: string, type: string) => void;
 }) {
   const setCategoryAfterPhoto = usePromotorCategoryAfterPhoto();
   const [photos, setPhotos] = useState<string[]>([]);
@@ -505,10 +505,12 @@ function CategoryAfterPhotoGate({ catId, routeBrandId, categoryName, routeId, pd
     <Card className="border-green-500/40 bg-green-50/50 mt-2">
       <CardContent className="p-4 space-y-3">
         {/* Tabs Antes / Depois */}
-        <div className="grid grid-cols-2 gap-1 p-1 bg-muted rounded-lg">
-          <div className="text-center py-1.5 rounded-md text-xs font-medium text-green-700 flex items-center justify-center gap-1">
-            <CheckCircle2 className="h-3 w-3" /> Foto Antes
-          </div>
+        <div className={`grid ${afterOnly ? 'grid-cols-1' : 'grid-cols-2'} gap-1 p-1 bg-muted rounded-lg`}>
+          {!afterOnly && (
+            <div className="text-center py-1.5 rounded-md text-xs font-medium text-green-700 flex items-center justify-center gap-1">
+              <CheckCircle2 className="h-3 w-3" /> Foto Antes
+            </div>
+          )}
           <div className="text-center py-1.5 rounded-md bg-green-600 text-white text-xs font-semibold">
             📷 Foto Depois
           </div>
@@ -1468,7 +1470,18 @@ export default function PromotorRota() {
               const doneCount = execs.filter((e: any) => e.status === 'completed').length;
               const allProductsDone = doneCount === execs.length && execs.length > 0;
               const afterPhotoKey = `${catId}_${routeBrandId || 'null'}`;
-               const hasAfterPhoto = !!catStatus?.completed || !!optimisticAfterPhoto[afterPhotoKey];
+              const minAfterPhotos = Math.max(1, parseInt((rb || route as any)?.min_category_photos_after, 10) || 1);
+              const afterPhotoCount = new Set(
+                [...(route?.photos || []), ...optimisticPhotos]
+                  .filter((p: any) =>
+                    (p.category_id || null) === (catId || null) &&
+                    (p.route_brand_id || null) === (routeBrandId || null) &&
+                    p.photo_type === 'category_after'
+                  )
+                  .map((p: any) => p.photo_url)
+                  .filter(Boolean)
+              ).size;
+              const hasAfterPhoto = !!catStatus?.completed || !!optimisticAfterPhoto[afterPhotoKey] || afterPhotoCount >= minAfterPhotos;
               const accordionKey = categoryKey;
               const isCompletedCategory = hasAfterPhoto;
               
@@ -1720,7 +1733,8 @@ export default function PromotorRota() {
                       brandName={currentBrand?.brand_name || route.brand_name}
                       promotorName={route.promotor_name}
                       qualityConfig={photoQualityConfig}
-                      minPhotos={Math.max(1, parseInt((rb || route as any)?.min_category_photos_after, 10) || 1)}
+                      minPhotos={minAfterPhotos}
+                      afterOnly={photoMode === 'after'}
                       beforePhotoUrl={
                         catStatus?.category_before_photo ||
                         ([...(route?.photos || []), ...optimisticPhotos].find((p: any) =>
@@ -1795,16 +1809,24 @@ export default function PromotorRota() {
                 const pMode = (rbConfig || route as any)?.category_photo_mode || 'both';
                 
                  const needsAfter = reqPhotos && (pMode === 'both' || pMode === 'after');
-                 const hasAfterPhotoInRoute = [...(route?.photos || []), ...optimisticPhotos].some((p: any) =>
-                   (p.category_id || null) === (catId || null) &&
-                   (!isMultiBrand || (p.route_brand_id || null) === (routeBrandId || null)) &&
-                   p.photo_type === 'category_after'
-                 );
+                 const minAfterPhotos = Math.max(1, parseInt((rbConfig || route as any)?.min_category_photos_after, 10) || 1);
+                 const afterPhotoCount = new Set(
+                   [...(route?.photos || []), ...optimisticPhotos]
+                     .filter((p: any) =>
+                       (p.category_id || null) === (catId || null) &&
+                       (!isMultiBrand || (p.route_brand_id || null) === (routeBrandId || null)) &&
+                       p.photo_type === 'category_after'
+                     )
+                     .map((p: any) => p.photo_url)
+                     .filter(Boolean)
+                 ).size;
                  // Mesma definição de "foto do depois concluída" usada no card da categoria (hasAfterPhoto):
                  // category_after_photo OU completed (backend já aceitou a foto) OU foto na rota OU estado offline.
                  // Sem o fallback `completed`, uma categoria marcada como concluída no backend mas sem
                  // category_after_photo no status retornado ficava verde mas bloqueava a conclusão da rota.
-                  const hasAfter = !!catStatus?.completed || !!optimisticAfterPhoto[`${catId}_${routeBrandId || 'null'}`];
+                  const hasAfter = !!catStatus?.completed ||
+                    !!optimisticAfterPhoto[`${catId}_${routeBrandId || 'null'}`] ||
+                    afterPhotoCount >= minAfterPhotos;
                  
                   const photoOnlyAfter = pMode === 'after' &&
                     !(rbConfig || route as any)?.require_stock_count &&
