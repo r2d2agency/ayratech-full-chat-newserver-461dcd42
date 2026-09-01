@@ -2728,6 +2728,9 @@ async function calculateRouteExecutionProgress(routeId, routeBrandId = null) {
             COALESCE(mec.category_before_photo, '') as category_before_photo,
             COALESCE(mec.category_after_photo, '') as category_after_photo,
             COALESCE(mec.completed, false) as category_completed,
+            COALESCE(rb.eff_min_category_photos_after, r.eff_min_category_photos_after,
+                     bc_rb.min_category_photos_after, bc_route.min_category_photos_after,
+                     bc_brand.min_category_photos_after, 1) as min_category_photos_after,
             COALESCE(rb.eff_require_category_photos, r.eff_require_category_photos, bc_rb.require_category_photos, bc_route.require_category_photos, bc_brand.require_category_photos, true) as require_category_photos,
             COALESCE(rb.eff_category_photo_mode, r.eff_category_photo_mode, bc_rb.category_photo_mode, bc_route.category_photo_mode, bc_brand.category_photo_mode, 'both') as category_photo_mode,
             COALESCE(rb.eff_require_stock_count, r.eff_require_stock_count, bc_rb.require_stock_count, bc_route.require_stock_count, bc_brand.require_stock_count, false) as require_stock_count,
@@ -2748,6 +2751,8 @@ async function calculateRouteExecutionProgress(routeId, routeBrandId = null) {
       AND mec.route_brand_id IS NOT DISTINCT FROM rpe.route_brand_id
      WHERE rpe.route_id = $1 ${brandFilter}
      GROUP BY rpe.category_id, rpe.route_brand_id, mec.category_before_photo, mec.category_after_photo, mec.completed,
+              rb.eff_min_category_photos_after, r.eff_min_category_photos_after,
+              bc_rb.min_category_photos_after, bc_route.min_category_photos_after, bc_brand.min_category_photos_after,
               rb.eff_require_category_photos, r.eff_require_category_photos,
               bc_rb.require_category_photos, bc_route.require_category_photos, bc_brand.require_category_photos,
               rb.eff_category_photo_mode, r.eff_category_photo_mode,
@@ -2782,7 +2787,11 @@ async function calculateRouteExecutionProgress(routeId, routeBrandId = null) {
     if (mode === 'after' || mode === 'both') {
       photoTotal += 1;
       // `completed` só é marcado quando a quantidade mínima foi atingida.
-      if (row.category_completed) photoDone += 1;
+      // Para mínimo 1, a própria foto persistida é evidência suficiente. Isso
+      // também recupera execuções antigas/parcialmente sincronizadas nas quais
+      // category_after_photo foi gravada, mas o flag completed não foi atualizado.
+      const minAfter = Math.max(1, Number(row.min_category_photos_after || 1));
+      if (row.category_completed || (minAfter === 1 && row.category_after_photo)) photoDone += 1;
     }
   }
 

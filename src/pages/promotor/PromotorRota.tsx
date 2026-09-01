@@ -1039,7 +1039,7 @@ export default function PromotorRota() {
       } else {
         const hasBefore = !!catStatus?.category_before_photo;
         // O backend marca `completed` somente quando o mínimo configurado foi atingido.
-        const hasAfter = !!catStatus?.completed || !!optimisticAfterPhoto[categoryKey];
+        const hasAfter = !!catStatus?.completed || !!catStatus?.category_after_photo || !!optimisticAfterPhoto[categoryKey];
         if (photoMode === 'before') photosSatisfied = hasBefore;
         else if (photoMode === 'after') photosSatisfied = hasAfter;
         else photosSatisfied = hasBefore && hasAfter;
@@ -1481,7 +1481,7 @@ export default function PromotorRota() {
                   .map((p: any) => p.photo_url)
                   .filter(Boolean)
               ).size;
-              const hasAfterPhoto = !!catStatus?.completed || !!optimisticAfterPhoto[afterPhotoKey] || afterPhotoCount >= minAfterPhotos;
+              const hasAfterPhoto = !!catStatus?.completed || !!catStatus?.category_after_photo || !!optimisticAfterPhoto[afterPhotoKey] || afterPhotoCount >= minAfterPhotos;
               const accordionKey = categoryKey;
               const isCompletedCategory = hasAfterPhoto;
               
@@ -1825,6 +1825,7 @@ export default function PromotorRota() {
                  // Sem o fallback `completed`, uma categoria marcada como concluída no backend mas sem
                  // category_after_photo no status retornado ficava verde mas bloqueava a conclusão da rota.
                   const hasAfter = !!catStatus?.completed ||
+                    !!catStatus?.category_after_photo ||
                     !!optimisticAfterPhoto[`${catId}_${routeBrandId || 'null'}`] ||
                     afterPhotoCount >= minAfterPhotos;
                  
