@@ -7,14 +7,45 @@ import { logError } from '../logger.js';
 const router = express.Router();
 router.use(authenticate);
 
-// Ensure checklist_type column exists
+// Ensure all checklist config columns exist
 async function ensureChecklistTypeColumn() {
   try {
     await query(`ALTER TABLE brand_checklists ADD COLUMN IF NOT EXISTS checklist_type VARCHAR(20) DEFAULT 'standard'`);
+    await query(`ALTER TABLE brand_checklists ADD COLUMN IF NOT EXISTS require_stock_count BOOLEAN DEFAULT false`);
+    await query(`ALTER TABLE brand_checklists ADD COLUMN IF NOT EXISTS require_validity_check BOOLEAN DEFAULT false`);
+    await query(`ALTER TABLE brand_checklists ADD COLUMN IF NOT EXISTS require_extra_point BOOLEAN DEFAULT false`);
+    await query(`ALTER TABLE brand_checklists ADD COLUMN IF NOT EXISTS require_category_photos BOOLEAN DEFAULT true`);
+    await query(`ALTER TABLE brand_checklists ADD COLUMN IF NOT EXISTS category_photo_mode VARCHAR(20) DEFAULT 'both'`);
+    await query(`ALTER TABLE brand_checklists ADD COLUMN IF NOT EXISTS min_category_photos_before INT DEFAULT 1`);
+    await query(`ALTER TABLE brand_checklists ADD COLUMN IF NOT EXISTS min_category_photos_after INT DEFAULT 1`);
+    await query(`ALTER TABLE brand_checklists ADD COLUMN IF NOT EXISTS stock_count_frequency VARCHAR(20) DEFAULT 'every_visit'`);
+    await query(`ALTER TABLE brand_checklists ADD COLUMN IF NOT EXISTS validity_check_frequency VARCHAR(20) DEFAULT 'every_visit'`);
   } catch (e) {
     logError('merch-checklists.ensureType', e);
   }
 }
+
+// Normalize the full checklist payload
+function normalizeChecklist(body = {}) {
+  const type = body.checklist_type === 'checkin_only' ? 'checkin_only' : 'standard';
+  const isCheckinOnly = type === 'checkin_only';
+  const mode = ['before', 'after', 'both'].includes(body.category_photo_mode) ? body.category_photo_mode : 'both';
+  return {
+    checklist_type: type,
+    require_checkin_photo: body.require_checkin_photo ?? true,
+    require_checkout_photo: body.require_checkout_photo ?? false,
+    require_stock_count: isCheckinOnly ? false : !!body.require_stock_count,
+    require_validity_check: isCheckinOnly ? false : !!body.require_validity_check,
+    require_extra_point: isCheckinOnly ? false : !!body.require_extra_point,
+    require_category_photos: isCheckinOnly ? false : (body.require_category_photos !== false),
+    category_photo_mode: isCheckinOnly ? 'both' : mode,
+    min_category_photos_before: mode === 'after' ? 0 : Math.max(1, parseInt(body.min_category_photos_before) || 1),
+    min_category_photos_after: mode === 'before' ? 0 : Math.max(1, parseInt(body.min_category_photos_after) || 1),
+    stock_count_frequency: body.stock_count_frequency || 'every_visit',
+    validity_check_frequency: body.validity_check_frequency || 'every_visit',
+  };
+}
+
 
 // Middleware: attach orgId to every request
 router.use(async (req, res, next) => {
