@@ -394,7 +394,7 @@ function ExtraPointPhotoGate({ catId, routeBrandId, categoryName, routeId, pdvNa
         route_brand_id: routeBrandId,
         exposure_point: 'extra',
         photo_url: effective[0],
-        latitude: pos?.coords.latitude, longitude: pos?.coords.longitude,
+        latitude: pos?.lat, longitude: pos?.lng,
       };
 
       await queueApiCall({
@@ -491,7 +491,7 @@ function CategoryAfterPhotoGate({ catId, routeBrandId, categoryName, routeId, pd
 
       const body = {
         routeId, catId, route_brand_id: routeBrandId, photo_url: effective[0], photos: effective,
-        latitude: pos?.coords.latitude, longitude: pos?.coords.longitude,
+        latitude: pos?.lat, longitude: pos?.lng,
       };
 
       await queueApiCall({
@@ -640,8 +640,8 @@ function CategoryExtraPhotosPanel({
     (async () => {
       try {
         const pos = await import('@/lib/photo-perf').then(m => m.getCachedGeolocation({ timeoutMs: 1500 })).catch(() => null);
-        const lat = pos?.coords?.latitude;
-        const lng = pos?.coords?.longitude;
+        const lat = pos?.lat;
+        const lng = pos?.lng;
         const type = mode === 'before' ? 'category_before' : 'category_after';
         const endpoint = mode === 'before' ? 'photo' : 'after-photo';
         
