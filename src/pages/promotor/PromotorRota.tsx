@@ -1533,10 +1533,13 @@ export default function PromotorRota() {
                       qualityConfig={photoQualityConfig}
                       photoMode={photoMode}
                       minPhotos={Math.max(1, parseInt((rb || route as any)?.min_category_photos_before, 10) || 1)}
-                      onUnlocked={() => { 
-                        setOptimisticBeforeUnlock(prev => ({ ...prev, [categoryKey]: true })); 
-                        // Não damos refetch aqui para não perder o estado offline do DOM se a rede estiver oscilando
-                        // O CategoryPreparation já chamou queueApiCall
+                      onUnlocked={() => {
+                        setOptimisticBeforeUnlock(prev => ({ ...prev, [categoryKey]: true }));
+                        // O card já reage ao estado otimista acima; o refetch atrasado
+                        // serve só para atualizar campos que só existem no servidor
+                        // (ex.: progress_pct da rota/marca), sem sobrescrever a UI
+                        // otimista antes da chamada enfileirada ter chance de processar.
+                        setTimeout(() => refetch(), 1000);
                       }}
                       onPointTypeSet={() => { /* offline-first state handled in component */ }}
                       facialRequired={facialRequired}
@@ -1558,7 +1561,10 @@ export default function PromotorRota() {
                       brandName={currentBrand?.brand_name || route.brand_name}
                       promotorName={route.promotor_name}
                       qualityConfig={photoQualityConfig}
-                      onPhotoTaken={() => setExtraGroupPhotos(prev => ({ ...prev, [extraPhotoKey]: true }))}
+                      onPhotoTaken={() => {
+                        setExtraGroupPhotos(prev => ({ ...prev, [extraPhotoKey]: true }));
+                        setTimeout(() => refetch(), 1000);
+                      }}
                       onCaptureOptimistic={(url, type) => setOptimisticPhotos(prev => [...prev, { photo_url: url, photo_type: type, category_id: catId, route_brand_id: routeBrandId }])}
                     />
                   )}
@@ -1745,7 +1751,13 @@ export default function PromotorRota() {
                           p.photo_type === 'category_before'
                         )?.photo_url ?? null)
                       }
-                      onCompleted={() => { setOptimisticAfterPhoto(p => ({ ...p, [afterPhotoKey]: true })); }}
+                      onCompleted={() => {
+                        setOptimisticAfterPhoto(p => ({ ...p, [afterPhotoKey]: true }));
+                        // O card fica verde na hora pelo estado otimista acima; o refetch
+                        // atrasado atualiza a barra de progresso (route.progress_pct), que
+                        // só é recalculada no servidor após a chamada enfileirada processar.
+                        setTimeout(() => refetch(), 1000);
+                      }}
                       onCaptureOptimistic={(url, type) => setOptimisticPhotos(prev => [...prev, { photo_url: url, photo_type: type, category_id: catId, route_brand_id: routeBrandId }])}
                     />
                   )}
