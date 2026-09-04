@@ -154,11 +154,16 @@ function normalizeBrandChecklists(mb) {
 }
 
 // Retorna os checklists da marca aplicáveis numa data (0=Dom..6=Sáb).
-// Checklist sem dias definidos aplica-se em todas as datas geradas.
+// Checklist sem dias definidos aplica-se em todas as datas geradas (catch-all).
+// Quando um checklist é restrito a dias específicos que incluem essa data,
+// ele tem prioridade exclusiva sobre os catch-all — evita que um checklist
+// antigo "todos os dias" seja mesclado (e dilua as regras) com um checklist
+// novo criado especificamente para aquele dia.
 function checklistsForWeekday(entries, weekday) {
   if (!entries || entries.length === 0) return [];
-  const applicable = entries.filter((c) => !c.weekdays || c.weekdays.length === 0 || c.weekdays.includes(weekday));
-  return applicable;
+  const specific = entries.filter((c) => Array.isArray(c.weekdays) && c.weekdays.length > 0 && c.weekdays.includes(weekday));
+  if (specific.length > 0) return specific;
+  return entries.filter((c) => !c.weekdays || c.weekdays.length === 0);
 }
 
 function mergePhotoModes(modes) {
@@ -181,7 +186,7 @@ async function computeMergedChecklist(checklistIds) {
   if (rows.length === 0) return null;
 
   const anyTrue = (field, def = false) => rows.some((r) => (r[field] === undefined || r[field] === null ? def : r[field]) === true);
-  const maxInt = (field, def) => rows.reduce((acc, r) => {
+  const maxInt = (rowSet, field, def) => rowSet.reduce((acc, r) => {
     const v = r[field] == null ? def : parseInt(r[field], 10);
     return Number.isFinite(v) ? Math.max(acc, v) : acc;
   }, 0);
@@ -190,6 +195,12 @@ async function computeMergedChecklist(checklistIds) {
   const allCheckinOnly = rows.every((r) => (r.checklist_type || 'standard') === 'checkin_only');
   const effChecklistType = allCheckinOnly && rows.length > 0 ? 'checkin_only' : 'standard';
 
+  // Só checklists que de fato exigem foto de categoria devem influenciar o modo
+  // (antes/depois/ambos) e os mínimos — do contrário, um checklist "irrelevante"
+  // (ex.: apenas check-in/checkout) força o modo padrão 'both' no merge e anula
+  // uma configuração explícita de "somente depois" de outro checklist aplicável.
+  const photoRows = effChecklistType === 'standard' ? rows.filter((r) => r.require_category_photos !== false) : [];
+
   return {
     checklist_ids: ids,
     eff_require_checkin_photo: anyTrue('require_checkin_photo', true),
@@ -197,10 +208,10 @@ async function computeMergedChecklist(checklistIds) {
     eff_require_stock_count: effChecklistType === 'standard' ? anyTrue('require_stock_count', false) : false,
     eff_require_validity_check: effChecklistType === 'standard' ? anyTrue('require_validity_check', false) : false,
     eff_require_extra_point: anyTrue('require_extra_point', false),
-    eff_require_category_photos: effChecklistType === 'standard' ? anyTrue('require_category_photos', true) : false,
-    eff_category_photo_mode: mergePhotoModes(rows.map((r) => r.category_photo_mode || 'both')) || 'both',
-    eff_min_category_photos_before: maxInt('min_category_photos_before', 1) || 0,
-    eff_min_category_photos_after: maxInt('min_category_photos_after', 1) || 0,
+    eff_require_category_photos: photoRows.length > 0,
+    eff_category_photo_mode: (photoRows.length > 0 ? mergePhotoModes(photoRows.map((r) => r.category_photo_mode || 'both')) : null) || 'both',
+    eff_min_category_photos_before: photoRows.length > 0 ? maxInt(photoRows, 'min_category_photos_before', 1) : 0,
+    eff_min_category_photos_after: photoRows.length > 0 ? maxInt(photoRows, 'min_category_photos_after', 1) : 0,
     eff_checklist_type: effChecklistType,
   };
 }
