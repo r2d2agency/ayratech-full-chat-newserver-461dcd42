@@ -326,7 +326,7 @@ function CategoryPreparation({ category, catId, routeBrandId, categoryName, rout
               handleUploadPhoto(submittedPhotos);
             }}
             cameraProps={{
-              watermark: { pdvName, brandName, promotorName, photoType: 'Categoria (antes)' },
+              watermark: { pdvName, brandName, promotorName, categoryName, photoType: 'Categoria (antes)' },
               customTokenGetter: () => localStorage.getItem('promotor_token') || localStorage.getItem('auth_token'),
               qualityConfig,
               allowManualUpload: false,
@@ -441,7 +441,7 @@ function ExtraPointPhotoGate({ catId, routeBrandId, categoryName, routeId, pdvNa
           isSending={isSending}
           onSubmit={handleUploadPhoto}
           cameraProps={{
-            watermark: { pdvName, brandName, photoType: 'Ponto Extra' },
+            watermark: { pdvName, brandName, promotorName, categoryName, photoType: 'Ponto Extra' },
             customTokenGetter: () => localStorage.getItem('promotor_token') || localStorage.getItem('auth_token'),
             qualityConfig,
             allowManualUpload: false,
@@ -543,7 +543,7 @@ function CategoryAfterPhotoGate({ catId, routeBrandId, categoryName, routeId, pd
           isSending={isSending || setCategoryAfterPhoto.isPending}
           onSubmit={handleUpload}
           cameraProps={{
-            watermark: { pdvName, brandName, promotorName, photoType: 'Categoria (depois)' },
+            watermark: { pdvName, brandName, promotorName, categoryName, photoType: 'Categoria (depois)' },
             customTokenGetter: () => localStorage.getItem('promotor_token') || localStorage.getItem('auth_token'),
             qualityConfig,
             allowManualUpload: false,
@@ -1635,6 +1635,7 @@ export default function PromotorRota() {
                       pdvName={route.pdv_name}
                       brandName={currentBrand?.brand_name || route.brand_name}
                       promotorName={route.promotor_name}
+                      categoryName={category}
                       qualityConfig={photoQualityConfig}
                       onUploaded={(url, type) => {
                         if (url && type) {

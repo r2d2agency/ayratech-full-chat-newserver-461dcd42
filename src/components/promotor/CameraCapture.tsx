@@ -20,6 +20,7 @@ interface WatermarkData {
   pdvName?: string;
   promotorName?: string;
   brandName?: string;
+  categoryName?: string;
   photoType?: string;
   latitude?: number;
   longitude?: number;
@@ -154,6 +155,7 @@ function applyWatermark(
   if (watermark.pdvName) lines.push(`PDV: ${watermark.pdvName}`);
   if (watermark.brandName) lines.push(`Marca: ${watermark.brandName}`);
   if (watermark.promotorName) lines.push(`Promotor: ${watermark.promotorName}`);
+  if (watermark.categoryName) lines.push(`Categoria: ${watermark.categoryName}`);
   lines.push(`${dateStr} ${timeStr}`);
   if (watermark.photoType) lines.push(`Tipo: ${watermark.photoType}`);
   if (watermark.latitude && watermark.longitude) {
@@ -632,6 +634,7 @@ export function CameraCapture({
                   {watermark.pdvName && <div>PDV: <span className="font-medium">{watermark.pdvName}</span></div>}
                   {watermark.brandName && <div>Marca: <span className="font-medium">{watermark.brandName}</span></div>}
                   {watermark.promotorName && <div>Promotor: <span className="font-medium">{watermark.promotorName}</span></div>}
+                  {watermark.categoryName && <div>Categoria: <span className="font-medium">{watermark.categoryName}</span></div>}
                   {watermark.photoType && <div>Tipo: <span className="font-medium">{watermark.photoType}</span></div>}
                   <div>
                     GPS: <span className="font-medium">
