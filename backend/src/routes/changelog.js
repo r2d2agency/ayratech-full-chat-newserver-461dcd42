@@ -82,6 +82,20 @@ const SEED_ENTRIES = [
     solution_text: "Corrigido dos dois lados (app e servidor). O nome do promotor agora é gravado corretamente na marca d'água de toda foto de categoria.",
     ref: '0bdb0a01',
   },
+  {
+    entry_date: '2026-09-04', type: 'bug', area: 'Ponto e escala',
+    title: 'Escala diária cadastrada era ignorada ao bater o ponto',
+    problem_text: "A consulta que busca o horário da escala diária de um colaborador usava um nome de coluna que não existe na tabela (start_time/end_time em vez de shift_start/shift_end). O erro ficava só nos logs — o ponto continuava funcionando, mas sempre com o horário padrão da jornada, ignorando qualquer escala específica cadastrada para aquele dia.",
+    solution_text: 'Corrigido o nome das colunas na consulta. A escala diária cadastrada volta a ser respeitada ao bater o ponto e na tela inicial do promotor.',
+    ref: '49ddc98e',
+  },
+  {
+    entry_date: '2026-09-04', type: 'bug', area: "Fotos e marca d'água",
+    title: 'Fotos travadas "sincronizando" em iPhones mais antigos',
+    problem_text: "Em aparelhos com pouca memória (ex.: iPhone XR), as fotos tiradas offline ficavam presas na fila de sincronização e o botão \"Sincronizar\" só retornava erro. A causa era um bug conhecido do Safari/WebKit ao guardar o arquivo da foto (Blob) diretamente no armazenamento offline do aparelho: sob pouca memória, o arquivo ficava corrompido ou nem conseguia ser salvo, e o envio chegava incompleto ao servidor.",
+    solution_text: 'A foto agora é guardada offline em um formato que não sofre desse bug do Safari, sem depender de armazenar o arquivo bruto. Fotos pendentes voltam a sincronizar normalmente mesmo em aparelhos mais antigos.',
+    ref: 'e4e12f13',
+  },
 ];
 
 async function ensureChangelogTable() {
@@ -102,15 +116,21 @@ async function ensureChangelogTable() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
-    const count = await query('SELECT COUNT(*)::int AS n FROM product_changelog');
-    if (count.rows[0]?.n === 0) {
-      for (const e of SEED_ENTRIES) {
-        await query(
-          `INSERT INTO product_changelog (entry_date, type, area, title, problem_text, solution_text, ref)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [e.entry_date, e.type, e.area, e.title, e.problem_text, e.solution_text, e.ref]
-        );
-      }
+    // Semeia apenas as entradas cujo `ref` ainda não existe na tabela — assim,
+    // novas entradas adicionadas a SEED_ENTRIES entram no próximo restart do
+    // backend mesmo em bancos que já têm registros de deploys anteriores
+    // (checar só "tabela vazia" fazia entradas novas nunca aparecerem depois
+    // do primeiro seed).
+    for (const e of SEED_ENTRIES) {
+      const existing = e.ref
+        ? await query('SELECT 1 FROM product_changelog WHERE ref = $1 LIMIT 1', [e.ref])
+        : { rows: [] };
+      if (existing.rows.length > 0) continue;
+      await query(
+        `INSERT INTO product_changelog (entry_date, type, area, title, problem_text, solution_text, ref)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [e.entry_date, e.type, e.area, e.title, e.problem_text, e.solution_text, e.ref]
+      );
     }
     ensured = true;
   } catch (e) {
