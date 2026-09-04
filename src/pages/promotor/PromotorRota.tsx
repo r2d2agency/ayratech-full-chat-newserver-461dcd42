@@ -1544,7 +1544,7 @@ export default function PromotorRota() {
                       routeId={id!}
                       pdvName={route.pdv_name}
                       brandName={currentBrand?.brand_name || route.brand_name}
-                      promotorName={route.promotor_name}
+                      promotorName={route.promoter_name}
                       qualityConfig={photoQualityConfig}
                       photoMode={photoMode}
                       minPhotos={Math.max(1, parseInt((rb || route as any)?.min_category_photos_before, 10) || 1)}
@@ -1574,7 +1574,7 @@ export default function PromotorRota() {
                       routeId={id!}
                       pdvName={route.pdv_name}
                       brandName={currentBrand?.brand_name || route.brand_name}
-                      promotorName={route.promotor_name}
+                      promotorName={route.promoter_name}
                       qualityConfig={photoQualityConfig}
                       onPhotoTaken={() => {
                         setExtraGroupPhotos(prev => ({ ...prev, [extraPhotoKey]: true }));
@@ -1655,7 +1655,7 @@ export default function PromotorRota() {
                       unlockAfterUrl={catStatus?.category_after_photo || null}
                       pdvName={route.pdv_name}
                       brandName={currentBrand?.brand_name || route.brand_name}
-                      promotorName={route.promotor_name}
+                      promotorName={route.promoter_name}
                       categoryName={category}
                       qualityConfig={photoQualityConfig}
                       onUploaded={(url, type) => {
@@ -1754,7 +1754,7 @@ export default function PromotorRota() {
                       routeId={id!}
                       pdvName={route.pdv_name}
                       brandName={currentBrand?.brand_name || route.brand_name}
-                      promotorName={route.promotor_name}
+                      promotorName={route.promoter_name}
                       qualityConfig={photoQualityConfig}
                       minPhotos={minAfterPhotos}
                       afterOnly={photoMode === 'after'}
@@ -2787,7 +2787,7 @@ export default function PromotorRota() {
           onOpenChange={(open) => { if (!open) { setShowFaceVerify(false); setFaceVerifyAction(null); } }}
           storedDescriptor={facialConfig?.descriptor || []}
           storedPhotoUrl={facialConfig?.photo_url}
-          personName={route?.promotor_name}
+          personName={route?.promoter_name}
           threshold={facialConfig?.min_confidence || 70}
           onResult={(result) => {
             setShowFaceVerify(false);

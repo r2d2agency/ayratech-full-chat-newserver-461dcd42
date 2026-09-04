@@ -2991,6 +2991,7 @@ router.get('/promotor/routes/:id', promotorAuth, async (req, res) => {
          CASE WHEN p.type IS NOT NULL THEN p.type ELSE 'pdv' END as pdv_type,
          p.geofence_polygon as pdv_geofence_polygon,
          b.name as brand_name,
+         e.full_name as promoter_name,
          COALESCE(bc.name, bc2.name) as checklist_name,
          COALESCE(r.eff_checklist_type, bc.checklist_type, bc2.checklist_type, 'standard') as checklist_type,
          COALESCE(r.eff_require_checkin_photo, bc.require_checkin_photo, bc2.require_checkin_photo, true) as require_checkin_photo,
@@ -3008,6 +3009,7 @@ router.get('/promotor/routes/:id', promotorAuth, async (req, res) => {
          LEFT JOIN merch_brands b ON b.id = r.brand_id
          LEFT JOIN brand_checklists bc ON bc.id = r.checklist_id
          LEFT JOIN brand_checklists bc2 ON bc2.brand_id = r.brand_id AND bc2.active = true
+         LEFT JOIN employees e ON e.id = r.promoter_id
          WHERE r.id=$1 AND (
            r.promoter_id=$2
            OR EXISTS (
@@ -3025,6 +3027,7 @@ router.get('/promotor/routes/:id', promotorAuth, async (req, res) => {
              'pdv'::text as pdv_type,
              NULL::jsonb as pdv_geofence_polygon,
              b.name as brand_name,
+             e.full_name as promoter_name,
              NULL::text as checklist_name,
              'standard'::text as checklist_type,
              true as require_checkin_photo,
@@ -3039,6 +3042,7 @@ router.get('/promotor/routes/:id', promotorAuth, async (req, res) => {
              FROM merch_routes r
              LEFT JOIN pdvs p ON p.id = r.pdv_id
              LEFT JOIN merch_brands b ON b.id = r.brand_id
+             LEFT JOIN employees e ON e.id = r.promoter_id
              WHERE r.id=$1 AND (
                r.promoter_id=$2
                OR EXISTS (
@@ -3055,6 +3059,7 @@ router.get('/promotor/routes/:id', promotorAuth, async (req, res) => {
                'pdv'::text as pdv_type,
                NULL::jsonb as pdv_geofence_polygon,
                NULL::text as brand_name,
+               e.full_name as promoter_name,
                NULL::text as checklist_name,
                'standard'::text as checklist_type,
                true as require_checkin_photo,
@@ -3068,6 +3073,7 @@ router.get('/promotor/routes/:id', promotorAuth, async (req, res) => {
                'both'::text as category_photo_mode
                FROM merch_routes r
                LEFT JOIN pdvs p ON p.id = r.pdv_id
+               LEFT JOIN employees e ON e.id = r.promoter_id
                WHERE r.id=$1 AND r.promoter_id=$2`, [req.params.id, req.employeeId]
             );
           } else {
@@ -3100,9 +3106,11 @@ router.get('/promotor/routes/:id', promotorAuth, async (req, res) => {
            p.latitude as pdv_lat, p.longitude as pdv_lng, p.radius_meters as pdv_radius,
            CASE WHEN p.type IS NOT NULL THEN p.type ELSE 'pdv' END as pdv_type,
            p.geofence_polygon as pdv_geofence_polygon,
+           e.full_name as promoter_name,
            'standard' as checklist_type
            FROM merch_routes r
            LEFT JOIN pdvs p ON p.id = r.pdv_id
+           LEFT JOIN employees e ON e.id = r.promoter_id
            WHERE r.id=$1`, [req.params.id]
         );
       } catch (e) {
@@ -3112,9 +3120,11 @@ router.get('/promotor/routes/:id', promotorAuth, async (req, res) => {
              p.latitude as pdv_lat, p.longitude as pdv_lng, p.radius_meters as pdv_radius,
              'pdv'::text as pdv_type,
              NULL::jsonb as pdv_geofence_polygon,
+             e.full_name as promoter_name,
              'standard' as checklist_type
              FROM merch_routes r
              LEFT JOIN pdvs p ON p.id = r.pdv_id
+             LEFT JOIN employees e ON e.id = r.promoter_id
              WHERE r.id=$1`, [req.params.id]
           );
         } else {
