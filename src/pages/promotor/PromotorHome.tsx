@@ -1641,7 +1641,7 @@ export default function PromotorHome() {
                     setPdvCheckinPhoto(url);
                     if (actionPdv?.pdv_id) setTimeout(() => { void handlePdvCheckin(actionPdv.pdv_id, url); }, 0);
                   }}
-                  watermark={{ pdvName: actionPdv?.pdv_name || '', brandName: '', photoType: 'Check-in PDV' }}
+                  watermark={{ pdvName: actionPdv?.pdv_name || '', brandName: '', promotorName: employee?.full_name, photoType: 'Check-in PDV' }}
                   customTokenGetter={() => localStorage.getItem('promotor_token')}
                   buttonLabel="Tirar foto da fachada da loja"
                   disabled={pdvCheckinLoading}
@@ -1683,7 +1683,7 @@ export default function PromotorHome() {
               ) : (
                 <CameraCapture
                   onCapture={setPdvCheckoutPhoto}
-                  watermark={{ pdvName: actionPdv?.pdv_name || '', brandName: '', photoType: 'Checkout PDV' }}
+                  watermark={{ pdvName: actionPdv?.pdv_name || '', brandName: '', promotorName: employee?.full_name, photoType: 'Checkout PDV' }}
                   customTokenGetter={() => localStorage.getItem('promotor_token')}
                   buttonLabel="Tirar foto de saída da loja"
                 />
