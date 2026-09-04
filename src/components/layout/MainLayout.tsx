@@ -70,6 +70,7 @@ export function MainLayout({ children }: MainLayoutProps) {
         <p className="text-[10px] text-muted-foreground/60 italic">
           © {new Date().getFullYear()} Ayratech • Todos os direitos reservados
         </p>
+        <p className="text-[10px] text-muted-foreground/40">TNS R2D2</p>
       </footer>
       <GroupSecretaryPopup />
 
