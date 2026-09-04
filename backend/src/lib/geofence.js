@@ -47,16 +47,28 @@ function distanceToPolygonCentroid(lat, lng, polygon) {
 function validatePdvLocation({ userLat, userLng, pdvLat, pdvLng, radiusMeters, polygon }) {
   const uLat = Number(userLat), uLng = Number(userLng);
   const hasUser = isFinite(uLat) && isFinite(uLng);
+  const pLat = Number(pdvLat), pLng = Number(pdvLng);
+  const hasPdvCenter = isFinite(pLat) && isFinite(pLng);
 
   if (Array.isArray(polygon) && polygon.length >= 3) {
     if (!hasUser) return { status: 'unknown', mode: 'polygon', distance: null };
     const inside = pointInPolygon(uLat, uLng, polygon);
     const distance = distanceToPolygonCentroid(uLat, uLng, polygon);
-    return { status: inside ? 'inside' : 'outside', mode: 'polygon', distance };
+    if (inside) return { status: 'inside', mode: 'polygon', distance };
+    // Fallback: o raio cadastrado (a partir do centro do PDV) funciona como
+    // tolerância extra — cobre imprecisão no desenho manual do polígono
+    // (ex.: imagem de satélite desalinhada) sem exigir redesenhar o perímetro.
+    if (hasPdvCenter) {
+      const radius = Number(radiusMeters) > 0 ? Number(radiusMeters) : 200;
+      const radiusDistance = haversineMeters(uLat, uLng, pLat, pLng);
+      if (radiusDistance <= radius) {
+        return { status: 'inside', mode: 'radius', distance: radiusDistance };
+      }
+    }
+    return { status: 'outside', mode: 'polygon', distance };
   }
 
-  const pLat = Number(pdvLat), pLng = Number(pdvLng);
-  if (!isFinite(pLat) || !isFinite(pLng)) {
+  if (!hasPdvCenter) {
     return { status: 'unknown', mode: 'none', distance: null };
   }
   if (!hasUser) return { status: 'unknown', mode: 'radius', distance: null };
