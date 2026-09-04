@@ -393,9 +393,9 @@ router.get('/home', authenticatePromotor, async (req, res) => {
     let scheduleEnd = null;
     
     // 1. Check daily assignment
-    if (assignment.rows[0]?.start_time && assignment.rows[0]?.end_time) {
-      scheduleStart = assignment.rows[0].start_time;
-      scheduleEnd = assignment.rows[0].end_time;
+    if (assignment.rows[0]?.shift_start && assignment.rows[0]?.shift_end) {
+      scheduleStart = assignment.rows[0].shift_start;
+      scheduleEnd = assignment.rows[0].shift_end;
     } else {
       // 2. Check recurring schedule (Escala)
       try {
@@ -631,13 +631,13 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
     try {
       // Prioritize daily assignment (highest priority)
       const assignment = await query(
-        `SELECT start_time, end_time FROM collaborator_daily_assignments 
+        `SELECT shift_start, shift_end FROM collaborator_daily_assignments
          WHERE employee_id = $1 AND assignment_date = $2 LIMIT 1`,
         [req.employeeId, today]
       );
-      if (assignment.rows[0]?.start_time && assignment.rows[0]?.end_time) {
-        scheduleStart = assignment.rows[0].start_time;
-        scheduleEnd = assignment.rows[0].end_time;
+      if (assignment.rows[0]?.shift_start && assignment.rows[0]?.shift_end) {
+        scheduleStart = assignment.rows[0].shift_start;
+        scheduleEnd = assignment.rows[0].shift_end;
       } else {
         // Check for recurring work schedule (Escala recorrente)
         const dowMap = { 0: 'dom', 1: 'seg', 2: 'ter', 3: 'qua', 4: 'qui', 5: 'sex', 6: 'sab' };
