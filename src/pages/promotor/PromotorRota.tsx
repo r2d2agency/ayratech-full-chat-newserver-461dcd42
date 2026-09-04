@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useOfflineSync } from "@/hooks/use-offline-sync";
 import { useParams, useNavigate } from "react-router-dom";
 import { PromotorLayout } from "./PromotorLayout";
@@ -51,30 +51,14 @@ function PhotoApprovalCapture({
   submitLabel?: string; // ignored — kept for backward compatibility
   accentColorClass?: string;
 }) {
-  const submittedRef = useRef(false);
-
-  // Se o pai limpar `photos` de fora (ex.: após uma falha de envio, para
-  // permitir nova tentativa), a trava de "já enviei" precisa ser rearmada —
-  // sem isso, tirar outra foto nunca reagendaria o envio automático.
-  useEffect(() => {
-    if (photos.length === 0) submittedRef.current = false;
-  }, [photos.length]);
-
   const reachedMin = photos.length >= min;
   const needsMore = photos.length < min;
 
   const handleCapture = (url: string) => {
-    const next = [...photos, url];
-    onPhotosChange(next);
-    if (next.length >= min && !submittedRef.current) {
-      submittedRef.current = true;
-      // Pass the freshly captured array — parent's `photos` state may not be flushed yet
-      setTimeout(() => onSubmit(next), 0);
-    }
+    onPhotosChange([...photos, url]);
   };
 
   const removeAt = (i: number) => {
-    submittedRef.current = false;
     onPhotosChange(photos.filter((_, idx) => idx !== i));
   };
 
@@ -117,8 +101,22 @@ function PhotoApprovalCapture({
         />
       )}
 
-      {!needsMore && isSending && (
-        <p className="text-[11px] text-center text-muted-foreground">Enviando...</p>
+      {/* Confirmação explícita: o mínimo já foi atingido, mas o envio só
+          acontece quando o promotor confirma — nada de disparo automático
+          invisível que pode nunca completar sem feedback nenhum. */}
+      {reachedMin && (
+        <Button
+          type="button"
+          className="w-full h-11 bg-green-600 hover:bg-green-700 text-white"
+          onClick={() => onSubmit(photos)}
+          disabled={isSending}
+        >
+          {isSending ? (
+            <>Enviando...</>
+          ) : (
+            <><Check className="h-4 w-4 mr-1.5" /> Confirmar {photos.length > 1 ? `${photos.length} fotos` : 'foto'}</>
+          )}
+        </Button>
       )}
 
     </div>
