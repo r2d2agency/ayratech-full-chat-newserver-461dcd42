@@ -75,6 +75,7 @@ import RHRastreamento from "./pages/RHRastreamento";
 import RHBiometria from "./pages/RHBiometria";
 import RHMapaOperacional from "./pages/RHMapaOperacional";
 import RHLogs from "./pages/RHLogs";
+import RHChangelog from "./pages/RHChangelog";
 import RHIndicadores from "./pages/RHIndicadores";
 import RHExamesOcupacionais from "./pages/RHExamesOcupacionais";
 import RHEPIs from "./pages/RHEPIs";
@@ -309,6 +310,7 @@ const App = () => (
             <Route path="/rh/rastreamento" element={<ProtectedRoute><RHRastreamento /></ProtectedRoute>} />
             <Route path="/rh/mapa" element={<ProtectedRoute><RHMapaOperacional /></ProtectedRoute>} />
             <Route path="/rh/logs" element={<ProtectedRoute><RHLogs /></ProtectedRoute>} />
+            <Route path="/rh/changelog" element={<ProtectedRoute><RHChangelog /></ProtectedRoute>} />
             <Route path="/rh/indicadores" element={<ProtectedRoute><RHIndicadores /></ProtectedRoute>} />
             <Route path="/rh/exames" element={<ProtectedRoute><RHExamesOcupacionais /></ProtectedRoute>} />
             <Route path="/rh/epis" element={<ProtectedRoute><RHEPIs /></ProtectedRoute>} />
