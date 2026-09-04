@@ -2,7 +2,12 @@ import Dexie, { type Table } from 'dexie';
 
 export interface PendingUpload {
   id?: number;
-  file: Blob;
+  // Bytes do arquivo. Guardamos como ArrayBuffer (e não Blob) porque o WebKit/Safari
+  // (especialmente em aparelhos iOS mais antigos e com pouca RAM) tem um bug conhecido
+  // de corrupção/truncamento de Blobs persistidos no IndexedDB sob pressão de memória —
+  // isso causava uploads que chegavam truncados no servidor ("Unexpected end of form").
+  // ArrayBuffer é clonado de forma estruturada pelo IndexedDB e não sofre desse problema.
+  fileData: ArrayBuffer;
   fileName: string;
   fileType: string;
   timestamp: number;
@@ -10,7 +15,9 @@ export interface PendingUpload {
   status: 'pending' | 'uploading' | 'failed';
   error?: string;
   // This is used to map the local temporary ID to the final server URL
-  localId: string; 
+  localId: string;
+  /** @deprecated Registros antigos (antes da migração para fileData) guardavam um Blob aqui. Mantido só para leitura retrocompatível. */
+  file?: Blob;
 }
 
 export interface PendingApiCall {

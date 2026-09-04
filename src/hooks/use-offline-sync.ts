@@ -66,8 +66,11 @@ export function useOfflineSync() {
     // Actually, state is better for reactivity.
     
     const upload = await db.pending_uploads.where('localId').equals(localId).first();
-    if (upload && upload.file) {
-      const url = URL.createObjectURL(upload.file);
+    const blob = upload?.fileData
+      ? new Blob([upload.fileData], { type: upload.fileType || 'application/octet-stream' })
+      : upload?.file;
+    if (blob) {
+      const url = URL.createObjectURL(blob);
       urlsToRevoke.current.add(url);
       
       // Update state and return the URL immediately
@@ -143,12 +146,16 @@ export function useOfflineSync() {
           return;
         }
 
-        if (!upload.file || (typeof upload.file.size === 'number' && upload.file.size <= 0)) {
+        const blobSource = upload.fileData
+          ? new Blob([upload.fileData], { type: upload.fileType || 'application/octet-stream' })
+          : upload.file;
+        if (!blobSource || (typeof blobSource.size === 'number' && blobSource.size <= 0)) {
           throw new Error('Arquivo offline não está mais disponível neste aparelho');
         }
+        const fileToUpload = new File([blobSource], upload.fileName, { type: upload.fileType || blobSource.type });
 
         const formData = new FormData();
-        formData.append('file', upload.file, upload.fileName);
+        formData.append('file', fileToUpload, upload.fileName);
         const authToken = getCurrentOfflineToken() || upload.token;
 
         const response = await fetch(`${API_URL}/api/uploads`, {
@@ -367,11 +374,17 @@ export function useOfflineSync() {
 
   const queueUpload = useCallback(async (file: File, token: string | null): Promise<string> => {
     const localId = `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Convert file to base64 for persistent storage if it's small, 
-    // or keep as Blob/File if Dexie handles it (it does in IndexedDB)
+
+    // Guardamos os bytes como ArrayBuffer (não Blob/File) — no Safari/iOS,
+    // especialmente em aparelhos com pouca RAM, gravar um Blob direto no
+    // IndexedDB pode falhar ou ficar corrompido/truncado sob pressão de
+    // memória ("Error preparing Blob/File data to be stored in object store",
+    // ou upload truncado no servidor com "Unexpected end of form"). ArrayBuffer
+    // usa structured clone puro e não sofre desse problema.
+    const fileData = await file.arrayBuffer();
+
     await db.pending_uploads.add({
-      file: file,
+      fileData,
       fileName: file.name,
       fileType: file.type,
       timestamp: Date.now(),

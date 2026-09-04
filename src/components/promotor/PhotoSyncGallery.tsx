@@ -98,7 +98,7 @@ export function PhotoSyncGallery() {
                   </div>
                   <p className="text-[11px] font-medium truncate">{upload.fileName || "Foto sem nome"}</p>
                   <p className="text-[10px] text-muted-foreground">
-                    {upload.fileType || "image/*"} • {Math.max(1, Math.round((upload.file?.size || 0) / 1024))} KB
+                    {upload.fileType || "image/*"} • {Math.max(1, Math.round((upload.fileData?.byteLength || upload.file?.size || 0) / 1024))} KB
                   </p>
                   {upload.error && (
                     <div className="rounded border border-destructive/30 bg-destructive/5 p-1.5 text-[10px] text-destructive flex items-start gap-1">
