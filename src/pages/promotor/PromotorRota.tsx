@@ -1639,10 +1639,11 @@ export default function PromotorRota() {
                       qualityConfig={photoQualityConfig}
                       onUploaded={(url, type) => {
                         if (url && type) {
+                          // Não marcamos a categoria como concluída aqui incondicionalmente:
+                          // adicionar à lista otimista já faz `afterPhotoCount` (e portanto
+                          // `hasAfterPhoto`) recalcular corretamente contra o mínimo exigido
+                          // pelo checklist — uma única foto extra não deve pular esse mínimo.
                           setOptimisticPhotos(prev => [...prev, { photo_url: url, photo_type: type, category_id: catId, route_brand_id: routeBrandId }]);
-                           if (type === 'category_after') {
-                             setOptimisticAfterPhoto(prev => ({ ...prev, [afterPhotoKey]: true }));
-                           }
                         }
                         refetch();
                       }}
