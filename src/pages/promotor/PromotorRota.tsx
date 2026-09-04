@@ -53,6 +53,13 @@ function PhotoApprovalCapture({
 }) {
   const submittedRef = useRef(false);
 
+  // Se o pai limpar `photos` de fora (ex.: após uma falha de envio, para
+  // permitir nova tentativa), a trava de "já enviei" precisa ser rearmada —
+  // sem isso, tirar outra foto nunca reagendaria o envio automático.
+  useEffect(() => {
+    if (photos.length === 0) submittedRef.current = false;
+  }, [photos.length]);
+
   const reachedMin = photos.length >= min;
   const needsMore = photos.length < min;
 
@@ -243,8 +250,11 @@ function CategoryPreparation({ category, catId, routeBrandId, categoryName, rout
       setIsSending(false);
       onCaptureOptimistic?.(effective[0], 'category_before');
       onUnlocked();
-    } catch {
+    } catch (e: any) {
       setIsSending(false);
+      setPhotos([]);
+      toast.error('Falha ao enviar a foto ANTES. Tire a foto novamente.');
+      logger.error('[CategoryPreparation] Falha ao enviar foto', { message: e?.message, routeId, catId });
     }
   };
 
@@ -401,8 +411,11 @@ function ExtraPointPhotoGate({ catId, routeBrandId, categoryName, routeId, pdvNa
       setIsSending(false);
       onCaptureOptimistic?.(effective[0], 'extra_point');
       onPhotoTaken();
-    } catch { 
-      setIsSending(false); 
+    } catch (e: any) {
+      setIsSending(false);
+      setPhotos([]);
+      toast.error('Falha ao enviar a foto do ponto extra. Tire a foto novamente.');
+      logger.error('[ExtraPointPhotoGate] Falha ao enviar foto', { message: e?.message, routeId, catId });
     }
   };
 
@@ -487,15 +500,19 @@ function CategoryAfterPhotoGate({ catId, routeBrandId, categoryName, routeId, pd
         url: `/api/merch/promotor/routes/${routeId}/categories/${catId}/after-photo`,
         method: 'POST',
         body,
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('promotor_token') || localStorage.getItem('auth_token')}` }
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('promotor_token') || localStorage.getItem('auth_token')}` },
+        dependsOnUploadId: effective[0]?.startsWith('local-file://') ? effective[0].replace('local-file://', '') : undefined
       });
-      
+
       setPhotos([]);
       setIsSending(false);
       onCaptureOptimistic?.(effective[0], 'category_after');
       onCompleted();
-    } catch { 
-      setIsSending(false); 
+    } catch (e: any) {
+      setIsSending(false);
+      setPhotos([]);
+      toast.error('Falha ao enviar a foto DEPOIS. Tire a foto novamente.');
+      logger.error('[CategoryAfterPhotoGate] Falha ao enviar foto', { message: e?.message, routeId, catId });
     }
   };
 
