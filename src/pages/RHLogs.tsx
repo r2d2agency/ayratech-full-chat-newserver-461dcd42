@@ -44,6 +44,31 @@ const LEVEL_COLORS: Record<string, string> = {
   fatal: "bg-purple-600",
 };
 
+// Resume o objeto `device` (userAgent/platform) enviado pelo app cliente numa
+// label curta e legível, tipo "iPhone · Safari" — antes só dava pra ver isso
+// abrindo o JSON bruto em "Dados Adicionais".
+function summarizeDevice(device: any): string | null {
+  if (!device) return null;
+  const ua: string = device.userAgent || "";
+  let os = device.platform || "";
+  if (/iphone/i.test(ua)) os = "iPhone";
+  else if (/ipad/i.test(ua)) os = "iPad";
+  else if (/android/i.test(ua)) os = "Android";
+  else if (/windows/i.test(ua)) os = "Windows";
+  else if (/mac ?os/i.test(ua)) os = "Mac";
+
+  let browser = "";
+  if (/CriOS/i.test(ua)) browser = "Chrome";
+  else if (/FxiOS/i.test(ua)) browser = "Firefox";
+  else if (/EdgiOS|Edg\//i.test(ua)) browser = "Edge";
+  else if (/safari/i.test(ua) && !/chrome/i.test(ua)) browser = "Safari";
+  else if (/chrome/i.test(ua)) browser = "Chrome";
+  else if (/firefox/i.test(ua)) browser = "Firefox";
+
+  const parts = [os, browser].filter(Boolean);
+  return parts.length ? parts.join(" · ") : (ua ? ua.slice(0, 40) : null);
+}
+
 export default function RHLogs() {
   const [levelFilter, setLevelFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
@@ -59,11 +84,15 @@ export default function RHLogs() {
   const filteredLogs = logs?.filter(log => {
     if (!search) return true;
     const s = search.toLowerCase();
+    const deviceLabel = summarizeDevice(log.device) || "";
     return (
       (log.message?.toLowerCase().includes(s)) ||
       (log.event?.toLowerCase().includes(s)) ||
       (log.user_email?.toLowerCase().includes(s)) ||
-      (log.employee_name?.toLowerCase().includes(s))
+      (log.employee_name?.toLowerCase().includes(s)) ||
+      (log.employee_id?.toLowerCase?.().includes(s)) ||
+      deviceLabel.toLowerCase().includes(s) ||
+      (log.device?.userAgent?.toLowerCase().includes(s))
     );
   }) || [];
 
@@ -136,22 +165,23 @@ export default function RHLogs() {
                       <TableHead className="w-[100px]">Nível</TableHead>
                       <TableHead>Evento / Mensagem</TableHead>
                       <TableHead>Usuário</TableHead>
+                      <TableHead className="w-[140px]">Dispositivo</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {loadingLogs ? (
                       <TableRow>
-                        <TableCell colSpan={4} className="text-center py-8">Carregando logs...</TableCell>
+                        <TableCell colSpan={5} className="text-center py-8">Carregando logs...</TableCell>
                       </TableRow>
                     ) : filteredLogs.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">Nenhum log recente.</TableCell>
+                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Nenhum log recente.</TableCell>
                       </TableRow>
                     ) : (
                       filteredLogs.map((log, idx) => (
-                        <TableRow 
-                          key={log.id || idx} 
-                          className="cursor-pointer hover:bg-muted/50" 
+                        <TableRow
+                          key={log.id || `${log.ts}-${idx}`}
+                          className="cursor-pointer hover:bg-muted/50"
                           onClick={() => setSelectedLog(log)}
                         >
                           <TableCell className="whitespace-nowrap font-mono text-xs">
@@ -167,7 +197,10 @@ export default function RHLogs() {
                             <span className="text-muted-foreground">{log.message || (log.error ? log.error.message : '')}</span>
                           </TableCell>
                           <TableCell className="text-xs max-w-[200px] truncate">
-                            {log.user_email || log.employee_name || "Sistema"}
+                            {log.user_email || log.employee_name || (log.employee_id ? `Colaborador ${String(log.employee_id).slice(0, 8)}` : "Sistema")}
+                          </TableCell>
+                          <TableCell className="text-xs max-w-[140px] truncate text-muted-foreground">
+                            {summarizeDevice(log.device) || (log.source === 'client' ? '—' : 'Servidor')}
                           </TableCell>
                         </TableRow>
                       ))
@@ -266,8 +299,22 @@ export default function RHLogs() {
                   </div>
                   <div className="space-y-1">
                     <span className="text-muted-foreground block text-xs flex items-center gap-1"><User className="h-3 w-3" /> Usuário/Colaborador</span>
-                    <span>{selectedLog.user_email || selectedLog.employee_name || "Sistema"}</span>
+                    <span>
+                      {selectedLog.employee_name || selectedLog.user_email || "Sistema"}
+                      {selectedLog.employee_name && selectedLog.user_email && (
+                        <span className="text-muted-foreground text-xs ml-1">({selectedLog.user_email})</span>
+                      )}
+                      {!selectedLog.employee_name && !selectedLog.user_email && selectedLog.employee_id && (
+                        <span className="text-xs ml-1">ID: {selectedLog.employee_id}</span>
+                      )}
+                    </span>
                   </div>
+                  {(selectedLog.device || selectedLog.source === 'client') && (
+                    <div className="space-y-1">
+                      <span className="text-muted-foreground block text-xs flex items-center gap-1"><Smartphone className="h-3 w-3" /> Dispositivo</span>
+                      <span>{summarizeDevice(selectedLog.device) || "Desconhecido"}</span>
+                    </div>
+                  )}
                   {selectedLog.ip && (
                     <div className="space-y-1">
                       <span className="text-muted-foreground block text-xs flex items-center gap-1"><ShieldCheck className="h-3 w-3" /> Endereço IP</span>
@@ -305,13 +352,13 @@ export default function RHLogs() {
                 )}
 
                 {/* Demais campos do payload */}
-                {Object.keys(selectedLog).filter(k => !['id', 'ts', 'level', 'event', 'message', 'error', 'userId', 'user_email', 'employee_name', 'ip'].includes(k)).length > 0 && (
+                {Object.keys(selectedLog).filter(k => !['id', 'ts', 'level', 'event', 'message', 'error', 'userId', 'user_email', 'employee_name', 'employee_id', 'ip', 'device'].includes(k)).length > 0 && (
                   <div className="space-y-2">
                     <h4 className="text-sm font-semibold flex items-center gap-1"><Info className="h-4 w-4" /> Dados Adicionais</h4>
                     <pre className="p-3 bg-slate-900 text-slate-100 rounded-md text-xs overflow-x-auto">
                       {JSON.stringify(
                         Object.fromEntries(
-                          Object.entries(selectedLog).filter(([k]) => !['id', 'ts', 'level', 'event', 'message', 'error', 'userId', 'user_email', 'employee_name', 'ip'].includes(k))
+                          Object.entries(selectedLog).filter(([k]) => !['id', 'ts', 'level', 'event', 'message', 'error', 'userId', 'user_email', 'employee_name', 'employee_id', 'ip', 'device'].includes(k))
                         ), 
                         null, 
                         2

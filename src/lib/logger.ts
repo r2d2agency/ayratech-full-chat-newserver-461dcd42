@@ -30,6 +30,45 @@ const getUserEmail = (): string | null => {
   }
 };
 
+// Muitos colaboradores do app do promotor fazem login só com CPF e nunca têm
+// e-mail cadastrado — nesse caso getUserEmail() volta null e o log ficava sem
+// nenhuma identificação ("Sistema"). O nome fica disponível de qualquer forma.
+const getUserName = (): string | null => {
+  try {
+    const promoter = localStorage.getItem('promotor_employee');
+    if (promoter) {
+      const p = JSON.parse(promoter);
+      if (p?.name) return p.name;
+    }
+    const agency = localStorage.getItem('agency_user');
+    if (agency) {
+      const a = JSON.parse(agency);
+      if (a?.name) return a.name;
+    }
+    const supermarket = localStorage.getItem('supermarket_user');
+    if (supermarket) {
+      const s = JSON.parse(supermarket);
+      if (s?.name) return s.name;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const getUserId = (): string | null => {
+  try {
+    const promoter = localStorage.getItem('promotor_employee');
+    if (promoter) {
+      const p = JSON.parse(promoter);
+      if (p?.id) return p.id;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
 const getDeviceInfo = () => ({
   userAgent: navigator.userAgent,
   language: navigator.language,
@@ -47,6 +86,8 @@ export const logger = {
       (console as any)[consoleMethod](`[${level.toUpperCase()}] ${message}`, context);
 
       const email = getUserEmail();
+      const name = getUserName();
+      const employeeId = getUserId();
       const device = getDeviceInfo();
 
       // Remote persistence to our backend logs
@@ -57,6 +98,8 @@ export const logger = {
         payload: {
           message,
           user_email: email,
+          employee_name: name,
+          employee_id: employeeId,
           device,
           context,
           error: stack_trace ? { stack: stack_trace } : undefined

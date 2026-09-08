@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { query } from '../db.js';
 import { authenticate } from '../middleware/auth.js';
 import { logInfo, logError, logWarn } from '../logger.js';
+import { setRequestContext } from '../request-context.js';
 import { validatePdvLocation, ensurePdvGeofenceColumn } from '../lib/geofence.js';
 
 const router = express.Router();
@@ -176,6 +177,16 @@ const authenticatePromotor = async (req, res, next) => {
     if (decoded.appType !== 'promotor') return res.status(403).json({ error: 'Token inválido para este app' });
     req.employeeId = decoded.employeeId;
     req.organizationId = decoded.organizationId;
+
+    // Enriquece os logs estruturados desta requisição — sem isso, todo erro
+    // do app do promotor aparecia nos logs sem nenhuma identificação de quem
+    // o causou ("Usuário/Colaborador: Sistema"), mesmo com o colaborador
+    // autenticado.
+    setRequestContext({
+      employee_id: decoded.employeeId,
+      organization_id: decoded.organizationId,
+    });
+
     next();
   } catch (e) {
     return res.status(401).json({ error: 'Token inválido ou expirado' });

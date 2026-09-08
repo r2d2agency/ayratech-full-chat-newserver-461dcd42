@@ -2723,12 +2723,43 @@ router.get('/runtime-logs', async (req, res) => {
   try {
     const { getRecentLogs } = await import('../logger.js');
     const { level, limit, event_prefix } = req.query;
-    const logs = getRecentLogs({
+    const safeLimit = parseInt(limit) || 100;
+    const memoryLogs = getRecentLogs({
       level,
-      limit: parseInt(limit) || 100,
+      limit: safeLimit,
       eventPrefixes: event_prefix ? [event_prefix] : []
     });
-    res.json(logs);
+
+    // Erros/fatais também ficam persistidos no banco (ver logger.js) — o
+    // buffer em memória acima é pequeno e compartilhado com todos os níveis,
+    // então um erro visível agora pode sumir da lista minutos depois (ou some
+    // de vez após um restart do servidor). Mesclamos os dois aqui para que
+    // filtrar por "Erros" sempre mostre um histórico confiável.
+    let dbLogs = [];
+    if (!level || level === 'all' || level === 'error' || level === 'fatal') {
+      try {
+        const params = [];
+        let sql = 'SELECT payload FROM system_error_logs WHERE 1=1';
+        if (level && level !== 'all') { params.push(level); sql += ` AND level = $${params.length}`; }
+        if (event_prefix) { params.push(`${event_prefix}%`); sql += ` AND event ILIKE $${params.length}`; }
+        params.push(safeLimit);
+        sql += ` ORDER BY ts DESC LIMIT $${params.length}`;
+        const r = await query(sql, params);
+        dbLogs = r.rows.map((row) => row.payload).filter(Boolean);
+      } catch {
+        // Tabela pode ainda não existir se nenhum erro foi persistido ainda.
+      }
+    }
+
+    const merged = new Map();
+    for (const l of [...dbLogs, ...memoryLogs]) {
+      merged.set(l.id || `${l.ts}-${l.event}`, l);
+    }
+    const combined = Array.from(merged.values())
+      .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime())
+      .slice(0, safeLimit);
+
+    res.json(combined);
   } catch (err) {
     console.error('Runtime logs error:', err);
     res.status(500).json({ error: 'Erro ao buscar logs em tempo real' });

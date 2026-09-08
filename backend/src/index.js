@@ -139,6 +139,10 @@ app.use((req, res, next) => {
 
   requestContext.run(
     {
+      // Preserva ip/method/url/requestId do primeiro requestContext.run() acima —
+      // um .run() aninhado cria um store novo e descartava esses campos, então
+      // logs de erro nunca tinham o IP de quem fez a requisição.
+      ...(requestContext.getStore() || {}),
       request_id: requestId,
       http_method: req.method,
       http_path: req.originalUrl,
