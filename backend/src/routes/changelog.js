@@ -110,6 +110,13 @@ const SEED_ENTRIES = [
     solution_text: 'Esse caso específico (conexão do aparelho caindo no meio do envio) agora é tratado como aviso e não entra mais no histórico de erros.',
     ref: 'b8a068fe',
   },
+  {
+    entry_date: '2026-09-08', type: 'bug', area: 'Logs e diagnóstico',
+    title: 'Botão "Ver Logs deste Aparelho" não fazia nada',
+    problem_text: 'Na aba "Dispositivos dos Promotores", clicar em "Ver Logs deste Aparelho" não levava para a aba de Logs — o clique simplesmente não tinha efeito nenhum, mesmo o filtro de busca mudando por baixo.',
+    solution_text: 'Corrigida a troca de aba (antes dependia de um detalhe do HTML que não existia). O botão agora leva direto para os logs filtrados daquele colaborador.',
+    ref: '6be1ae24',
+  },
 ];
 
 async function ensureChangelogTable() {
