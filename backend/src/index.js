@@ -83,7 +83,7 @@ import { executeSecretaryDigest } from './secretary-digest-scheduler.js';
 import { checkInactivityTimeouts } from './lib/ai-agent-processor.js';
 import { executeScoreCalculation } from './score-scheduler.js';
 import { requestContext } from './request-context.js';
-import { log, logError } from './logger.js';
+import { log, logError, logWarn } from './logger.js';
 
 // dotenv already loaded via 'dotenv/config' import at top
 
@@ -515,15 +515,32 @@ app.get('/api/debug/google-config', (req, res) => {
 
 // Global error handler with CORS headers
 app.use((err, req, res, next) => {
+  // Cliente fechou a conexão no meio do envio (rede móvel instável, app
+  // fechado, etc.) — comum em uploads/logs de aparelhos com sinal fraco.
+  // Não é um bug do servidor: loga como aviso (não persiste como "error" no
+  // histórico — ver logger.js) e não tenta escrever numa conexão que já
+  // fechou do outro lado.
+  const isClientAbort = err?.type === 'request.aborted' || err?.code === 'ECONNABORTED' || err?.message === 'request aborted';
+  if (isClientAbort) {
+    logWarn('http.client_aborted', {
+      http_method: req.method,
+      http_path: req.originalUrl,
+      status_code: err?.status || 400,
+    });
+    return;
+  }
+
   logError('http.unhandled_error', err, {
     status_code: err?.status || 500,
   });
-  
+
+  if (res.headersSent) return next(err);
+
   // Ensure CORS headers are set even on errors
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
-  
+
   res.status(err.status || 500).json({
     error: err.message || 'Internal Server Error',
     requestId: req.requestId || null,
