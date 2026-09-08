@@ -103,6 +103,13 @@ const SEED_ENTRIES = [
     solution_text: 'Erros e falhas agora ficam gravados no banco de dados (não somem mais com o tempo nem em reinícios), o app do promotor passa a identificar o colaborador em cada log, e o aparelho (ex.: "iPhone · Safari") agora aparece numa coluna própria e entra na busca.',
     ref: '6c3526f7',
   },
+  {
+    entry_date: '2026-09-08', type: 'bug', area: 'Logs e diagnóstico',
+    title: 'Queda de conexão de rede sendo registrada como erro do servidor',
+    problem_text: 'Quando o celular de um promotor perde conexão no meio do envio de um log (rede móvel instável), o servidor registrava isso como um erro real — o que, com a gravação permanente de erros que acabamos de ativar, começaria a encher o histórico com ruído de rede em vez de problemas de verdade.',
+    solution_text: 'Esse caso específico (conexão do aparelho caindo no meio do envio) agora é tratado como aviso e não entra mais no histórico de erros.',
+    ref: 'b8a068fe',
+  },
 ];
 
 async function ensureChangelogTable() {
