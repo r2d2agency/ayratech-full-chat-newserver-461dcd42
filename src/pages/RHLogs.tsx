@@ -70,6 +70,7 @@ function summarizeDevice(device: any): string | null {
 }
 
 export default function RHLogs() {
+  const [activeTab, setActiveTab] = useState("logs");
   const [levelFilter, setLevelFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [selectedLog, setSelectedLog] = useState<any>(null);
@@ -115,7 +116,7 @@ export default function RHLogs() {
           </div>
         </div>
 
-        <Tabs defaultValue="logs" className="w-full">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid w-full max-w-md grid-cols-2">
             <TabsTrigger value="logs" className="flex gap-2 items-center">
               <Monitor className="h-4 w-4" /> Logs em Tempo Real
@@ -251,15 +252,14 @@ export default function RHLogs() {
                         </span>
                       </div>
                       <div className="pt-2 border-t border-border mt-2">
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           className="w-full h-7 text-[10px] gap-1"
                           onClick={() => {
                             setLevelFilter("all");
-                            setSearch(dev.employee_email);
-                            const logsTab = document.querySelector('[value="logs"]') as HTMLButtonElement;
-                            logsTab?.click();
+                            setSearch(dev.employee_email || dev.employee_name || "");
+                            setActiveTab("logs");
                           }}
                         >
                           <Activity className="h-3 w-3" /> Ver Logs deste Aparelho
