@@ -96,6 +96,13 @@ const SEED_ENTRIES = [
     solution_text: 'A foto agora é guardada offline em um formato que não sofre desse bug do Safari, sem depender de armazenar o arquivo bruto. Fotos pendentes voltam a sincronizar normalmente mesmo em aparelhos mais antigos.',
     ref: 'e4e12f13',
   },
+  {
+    entry_date: '2026-09-08', type: 'bug', area: 'Logs e diagnóstico',
+    title: 'Logs de erro sem usuário, sem dispositivo e sumindo da lista',
+    problem_text: 'Na Central de Logs, ao filtrar por "Erros" e abrir um item, os demais somiam da lista ao fechar. Além disso, quase todo erro aparecia como "Sistema", sem indicar qual promotor ou aparelho causou o problema. A causa raiz: os erros ficavam só num buffer temporário na memória do servidor (apagado a cada reinício e sob volume normal de tráfego), e o app do promotor nunca anexava a identificação do colaborador aos logs, mesmo autenticado.',
+    solution_text: 'Erros e falhas agora ficam gravados no banco de dados (não somem mais com o tempo nem em reinícios), o app do promotor passa a identificar o colaborador em cada log, e o aparelho (ex.: "iPhone · Safari") agora aparece numa coluna própria e entra na busca.',
+    ref: '6c3526f7',
+  },
 ];
 
 async function ensureChangelogTable() {
