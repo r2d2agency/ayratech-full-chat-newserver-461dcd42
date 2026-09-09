@@ -117,6 +117,13 @@ const SEED_ENTRIES = [
     solution_text: 'Corrigida a troca de aba (antes dependia de um detalhe do HTML que não existia). O botão agora leva direto para os logs filtrados daquele colaborador.',
     ref: '6be1ae24',
   },
+  {
+    entry_date: '2026-09-09', type: 'bug', area: "Fotos e sincronização",
+    title: 'App do promotor lento e fotos travando na fila em aparelhos mais fracos',
+    problem_text: 'Em aparelhos mais antigos/com menos memória (ex.: iPhone XR), o app ficava lento para tirar e enviar fotos, e elas às vezes ficavam paradas na fila de envio sem nenhum erro aparecer. A causa: cada parte da tela (cabeçalho, galeria de fotos pendentes, câmera) rodava sua própria sincronização em segundo plano, de forma independente — em vez de uma só, várias rodavam ao mesmo tempo disputando o armazenamento do aparelho, o que piorava exatamente quando havia mais fotos acumuladas (justamente quando o aparelho já estava com dificuldade).',
+    solution_text: 'A sincronização agora roda uma única vez e é compartilhada por toda a tela. Também foi adicionada uma medição de tempo que registra um aviso na Central de Logs quando enfileirar ou enviar uma foto demora mais que o esperado, para facilitar identificar esse tipo de lentidão no futuro.',
+    ref: '03d35530',
+  },
 ];
 
 async function ensureChangelogTable() {
