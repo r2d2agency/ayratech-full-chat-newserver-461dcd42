@@ -3016,7 +3016,14 @@ router.get('/promotor/routes/:id', promotorAuth, async (req, res) => {
              SELECT 1 FROM route_person_assignments rpa
               WHERE rpa.route_id = r.id AND rpa.employee_id = $2 AND COALESCE(rpa.active, true) = true
            )
-         )`, [req.params.id, req.employeeId]
+         )
+         -- Se a marca tiver mais de um checklist ativo (ex.: um recém-criado
+         -- "somente depois" convivendo com um antigo "ambos"), bc2 casa com
+         -- todos e essa query sem ORDER BY/LIMIT retornava linhas duplicadas —
+         -- routeRes.rows[0] pegava uma delas em ordem arbitrária do Postgres,
+         -- às vezes o checklist errado (antigo) em vez do mais recente.
+         ORDER BY bc2.created_at DESC NULLS LAST
+         LIMIT 1`, [req.params.id, req.employeeId]
       );
     } catch (e) {
       if (e?.code === '42703' || e?.code === '42P01') {
