@@ -213,7 +213,7 @@ function SmartRedirect() {
   const isPWA = window.matchMedia('(display-mode: standalone)').matches
     || (navigator as any).standalone === true;
   const isPromotorDomain = hostname.startsWith('promotor.');
-  const isAccessDomain = hostname.includes('access.ayratech.app') || hostname.includes('acesso.ayratech.app') || hostname.includes('admin.ayratech.app');
+  const isAccessDomain = hostname.includes('access.ayratech.app') || hostname.includes('acesso.ayratech.app');
   const isSupermarketDomain = hostname.startsWith('supermercado.') || isAccessDomain;
   const isAccessPromotorDomain = hostname.startsWith('parceiro.') || hostname.startsWith('acesso-promotor.');
   
