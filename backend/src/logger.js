@@ -18,13 +18,16 @@ function pushRuntimeLog(line) {
   if (runtimeLogBuffer.length > LOG_BUFFER_MAX) runtimeLogBuffer.length = LOG_BUFFER_MAX;
 }
 
-// Erros e falhas ("error"/"fatal") também são persistidos no banco. O buffer
-// acima é pequeno (500 linhas) e compartilhado por TODOS os níveis — sob
-// volume normal de logs de rotina (http.request/http.response, sync, etc.),
-// um erro visto agora pode sumir da lista em poucos minutos, e some de vez
-// quando o servidor reinicia. Persistir só error/fatal evita esse acúmulo de
-// escrita para os níveis mais barulhentos (info/debug), que continuam só em
-// memória.
+// Erros, falhas e avisos ("error"/"fatal"/"warn") também são persistidos no
+// banco. O buffer acima é pequeno (500 linhas) e compartilhado por TODOS os
+// níveis — sob volume normal de logs de rotina (http.request/http.response,
+// sync, etc.), um erro visto agora pode sumir da lista em poucos minutos, e
+// some de vez quando o servidor reinicia. "warn" entra aqui de propósito:
+// é o nível usado para sinalizar operações lentas (ex.: fila de fotos
+// travando num aparelho específico) que nunca lançam uma exceção de verdade
+// — sem persistir, esse tipo de problema nunca deixaria rastro para
+// investigar depois do fato. Só info/debug (bem mais barulhentos) continuam
+// só em memória.
 let ensuredErrorLogsTable = false;
 async function ensureSystemErrorLogsTable(pool) {
   if (ensuredErrorLogsTable) return;
@@ -52,7 +55,7 @@ async function ensureSystemErrorLogsTable(pool) {
 // volta, o que tentaria persistir de novo — risco de loop. Com pool.query()
 // direto, uma falha aqui só cai no catch abaixo e vira um console.error simples.
 async function persistIfSevere(line) {
-  if (line.level !== 'error' && line.level !== 'fatal') return;
+  if (line.level !== 'error' && line.level !== 'fatal' && line.level !== 'warn') return;
   try {
     const { pool } = await import('./db.js');
     await ensureSystemErrorLogsTable(pool);

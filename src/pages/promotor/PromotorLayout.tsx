@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useBranding } from "@/hooks/use-branding";
 import { Home, FileText, Clock, Upload, Settings, LogOut, Bell, X, Users, RefreshCw, WifiOff } from "lucide-react";
-import { useOfflineSync } from "@/hooks/use-offline-sync";
+import { useOfflineSync, OfflineSyncProvider } from "@/hooks/use-offline-sync";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/lib/offline-db";
 import { cn } from "@/lib/utils";
@@ -37,6 +37,19 @@ function parseSafe(val: unknown, mask: string) {
 }
 
 export function PromotorLayout({ children }: PromotorLayoutProps) {
+  return (
+    <OfflineSyncProvider>
+      <PromotorLayoutInner>{children}</PromotorLayoutInner>
+    </OfflineSyncProvider>
+  );
+}
+
+// A instância compartilhada de sincronização offline (useOfflineSync) vive no
+// OfflineSyncProvider acima — assim o cabeçalho (indicador de sync) e todo o
+// conteúdo da página (captura de câmera, galeria de fotos pendentes, etc.)
+// reusam a MESMA instância em vez de cada um rodar seu próprio loop de
+// sincronização em paralelo. Ver o comentário em use-offline-sync.ts.
+function PromotorLayoutInner({ children }: PromotorLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { branding } = useBranding();

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { db, type PendingApiCall, type PendingUpload } from '@/lib/offline-db';
 import { api, API_URL, getAuthToken } from '@/lib/api';
 
@@ -49,7 +49,10 @@ export function useOnlineStatus() {
   return isOnline;
 }
 
-export function useOfflineSync() {
+// A lógica completa fica aqui, numa função interna — useOfflineSync() (a API
+// pública, no fim do arquivo) só decide se cria uma instância nova ou reusa
+// a instância compartilhada do OfflineSyncProvider.
+function useOfflineSyncState() {
   const isOnline = useOnlineStatus();
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState<{ total: number; done: number; failed: number }>({ total: 0, done: 0, failed: 0 });
@@ -146,18 +149,27 @@ export function useOfflineSync() {
           return;
         }
 
-        const blobSource = upload.fileData
+        // Monta o Blob direto do ArrayBuffer e manda pro FormData assim mesmo
+        // (sem embrulhar num File extra) — um passo a menos de cópia em
+        // memória, o que importa em aparelhos mais fracos como o iPhone XR.
+        // FormData.append(name, blob, filename) já manda o nome do arquivo
+        // sem precisar de um objeto File de verdade.
+        const blob = upload.fileData
           ? new Blob([upload.fileData], { type: upload.fileType || 'application/octet-stream' })
           : upload.file;
-        if (!blobSource || (typeof blobSource.size === 'number' && blobSource.size <= 0)) {
+        if (!blob || (typeof blob.size === 'number' && blob.size <= 0)) {
           throw new Error('Arquivo offline não está mais disponível neste aparelho');
         }
-        const fileToUpload = new File([blobSource], upload.fileName, { type: upload.fileType || blobSource.type });
 
         const formData = new FormData();
-        formData.append('file', fileToUpload, upload.fileName);
+        formData.append('file', blob, upload.fileName);
         const authToken = getCurrentOfflineToken() || upload.token;
 
+        // Telemetria de duração — nada aqui lança exceção quando fica lento
+        // (só quando falha de vez), então sem isso um travamento de rede/
+        // aparelho fraco nunca aparecia nos logs. "warn" acima de 8s fica
+        // persistido e visível na Central de Logs, com o aparelho identificado.
+        const uploadStartedAt = Date.now();
         const response = await fetch(`${API_URL}/api/uploads`, {
           method: 'POST',
           headers: {
@@ -169,6 +181,14 @@ export function useOfflineSync() {
           },
           body: formData
         });
+        const uploadDurationMs = Date.now() - uploadStartedAt;
+        if (uploadDurationMs > 8000) {
+          logger.warn('[OfflineSync] Upload demorou mais que o esperado', {
+            id: upload.id,
+            duration_ms: uploadDurationMs,
+            file_size_kb: Math.round((blob.size || 0) / 1024),
+          });
+        }
 
         if (!response.ok) {
           const errorMessage = await readResponseError(response);
@@ -380,7 +400,10 @@ export function useOfflineSync() {
     // IndexedDB pode falhar ou ficar corrompido/truncado sob pressão de
     // memória ("Error preparing Blob/File data to be stored in object store",
     // ou upload truncado no servidor com "Unexpected end of form"). ArrayBuffer
-    // usa structured clone puro e não sofre desse problema.
+    // usa structured clone puro e não sofre desse problema — o preço é uma
+    // cópia extra em memória, que pode pesar em aparelhos mais fracos. Medimos
+    // aqui pra saber se é isso que está deixando algum aparelho lento.
+    const queueStartedAt = Date.now();
     const fileData = await file.arrayBuffer();
 
     await db.pending_uploads.add({
@@ -392,6 +415,15 @@ export function useOfflineSync() {
       status: 'pending',
       localId
     });
+
+    const queueDurationMs = Date.now() - queueStartedAt;
+    if (queueDurationMs > 1500) {
+      logger.warn('[OfflineSync] Enfileirar foto demorou mais que o esperado', {
+        localId,
+        duration_ms: queueDurationMs,
+        file_size_kb: Math.round((file.size || 0) / 1024),
+      });
+    }
 
     if (isOnline) {
       setTimeout(() => sync(), 100);
@@ -440,4 +472,38 @@ export function useOfflineSync() {
   }, [isOnline, sync]);
 
   return { isOnline, isSyncing, syncProgress, queueUpload, queueApiCall, sync, getLocalFileUrl };
+}
+
+type OfflineSyncApi = ReturnType<typeof useOfflineSyncState>;
+const OfflineSyncContext = createContext<OfflineSyncApi | null>(null);
+
+// Cada componente que chamava useOfflineSync() diretamente (layout, galeria
+// de fotos pendentes, cada <LocalImage>, captura de câmera...) criava sua
+// PRÓPRIA instância independente — com seu próprio setInterval de retry a
+// cada 30s, seus próprios listeners de online/offline, e seu próprio sync()
+// concorrente. Com poucas fotos pendentes isso passa despercebido; com uma
+// fila maior (justamente o cenário de um aparelho mais lento, como o iPhone
+// XR, que não dá conta de sincronizar rápido) isso vira várias sincronizações
+// duplicadas rodando ao mesmo tempo, todas disputando o mesmo IndexedDB —
+// piorando exatamente o problema que estavam tentando resolver.
+//
+// OfflineSyncProvider roda a lógica UMA vez só e compartilha o resultado via
+// contexto. useOfflineSync() continua com a mesma assinatura de sempre — quem
+// já a chamava não precisa mudar nada — mas agora reaproveita a instância do
+// provider quando ela existe, e só cria uma instância própria (comportamento
+// antigo) como fallback para quem estiver fora dele.
+export function OfflineSyncProvider({ children }: { children: ReactNode }) {
+  const state = useOfflineSyncState();
+  return (
+    <OfflineSyncContext.Provider value={state}>
+      {children}
+    </OfflineSyncContext.Provider>
+  );
+}
+
+export function useOfflineSync() {
+  const shared = useContext(OfflineSyncContext);
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const own = shared ? null : useOfflineSyncState();
+  return shared || own!;
 }

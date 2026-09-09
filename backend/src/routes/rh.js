@@ -2736,7 +2736,7 @@ router.get('/runtime-logs', async (req, res) => {
     // de vez após um restart do servidor). Mesclamos os dois aqui para que
     // filtrar por "Erros" sempre mostre um histórico confiável.
     let dbLogs = [];
-    if (!level || level === 'all' || level === 'error' || level === 'fatal') {
+    if (!level || level === 'all' || level === 'error' || level === 'fatal' || level === 'warn') {
       try {
         const params = [];
         let sql = 'SELECT payload FROM system_error_logs WHERE 1=1';
