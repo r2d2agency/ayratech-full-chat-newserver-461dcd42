@@ -18,10 +18,19 @@ const PUNCH_LABELS: Record<string, string> = {
   entrada: '🟢 Entrada', saida_intervalo: '🟡 Saída Intervalo', retorno_intervalo: '🔵 Retorno', saida: '🔴 Saída', extraordinaria: '⚪ Extra', ajuste: '🔧 Ajuste'
 };
 
+// date-fns formata usando o fuso horário do próprio navegador/aparelho —
+// se o dispositivo estiver com fuso diferente (ou mal configurado), a data
+// e hora do ponto podem aparecer erradas, sobretudo perto da meia-noite.
+// Convertendo explicitamente para América/São Paulo antes de formatar, a
+// exibição fica correta independente do fuso do aparelho.
+function toSaoPauloDate(d: Date): Date {
+  return new Date(d.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+}
+
 function safeFormatDate(value: any, fmt: string, fallback = '—'): string {
   if (!value) return fallback;
   const d = new Date(String(value).replace(' ', 'T'));
-  return d && !Number.isNaN(d.getTime()) ? format(d, fmt) : fallback;
+  return d && !Number.isNaN(d.getTime()) ? format(toSaoPauloDate(d), fmt) : fallback;
 }
 
 export default function PromotorPonto() {

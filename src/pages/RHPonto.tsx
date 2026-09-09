@@ -44,8 +44,21 @@ const DIVERGENCE_ICONS: Record<string, { icon: typeof AlertTriangle; color: stri
 
 type PeriodPreset = 'hoje' | 'semana' | 'mes' | 'mes_anterior' | 'personalizado';
 
+// new Date()/date-fns usam o fuso horário do navegador de quem está vendo a
+// tela — um admin acessando fora do fuso de Brasília (ou com o relógio do
+// aparelho mal configurado) via "Hoje"/formatação de data via um dia
+// diferente do real, fazendo batidas somem/apareçam no dia errado. Essas
+// duas funções forçam América/São Paulo independente do fuso do navegador.
+function nowSaoPaulo(): Date {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+}
+
+function toSaoPauloDate(d: Date): Date {
+  return new Date(d.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+}
+
 function getPeriodDates(preset: PeriodPreset): { start: string; end: string } {
-  const now = new Date();
+  const now = nowSaoPaulo();
   switch (preset) {
     case 'hoje':
       return { start: format(now, 'yyyy-MM-dd'), end: format(now, 'yyyy-MM-dd') };
@@ -84,7 +97,7 @@ function parseDateValue(value: unknown): Date | null {
 
 function formatDateValue(value: unknown, mask: string, fallback = '—') {
   const parsed = parseDateValue(value);
-  return parsed ? format(parsed, mask) : fallback;
+  return parsed ? format(toSaoPauloDate(parsed), mask) : fallback;
 }
 
 function getPunchTimestamp(punch: any) {
@@ -95,12 +108,12 @@ export default function RHPonto() {
   const overtimePendingCount = useOvertimePendingCount();
   const [employeeFilter, setEmployeeFilter] = useState("");
   const [periodPreset, setPeriodPreset] = useState<PeriodPreset>('mes');
-  const [customStart, setCustomStart] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
-  const [customEnd, setCustomEnd] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [customStart, setCustomStart] = useState(format(startOfMonth(nowSaoPaulo()), 'yyyy-MM-dd'));
+  const [customEnd, setCustomEnd] = useState(format(nowSaoPaulo(), 'yyyy-MM-dd'));
   const [dialogOpen, setDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("consolidated");
   const [reportType, setReportType] = useState<'todos' | 'horas_extras' | 'faltas'>('todos');
-  const [form, setForm] = useState<any>({ employee_id: "", record_date: format(new Date(), "yyyy-MM-dd"), entry1: "08:00", exit1: "12:00", entry2: "13:00", exit2: "17:00", entry3: "", exit3: "", status: "normal", justification: "" });
+  const [form, setForm] = useState<any>({ employee_id: "", record_date: format(nowSaoPaulo(), "yyyy-MM-dd"), entry1: "08:00", exit1: "12:00", entry2: "13:00", exit2: "17:00", entry3: "", exit3: "", status: "normal", justification: "" });
   const { toast } = useToast();
 
   const { start: startDate, end: endDate } = useMemo(() => {
@@ -121,21 +134,22 @@ export default function RHPonto() {
   const [punchDialogOpen, setPunchDialogOpen] = useState(false);
   const [punchForm, setPunchForm] = useState<any>({
     id: null, employee_id: "", punch_type: "entrada",
-    date: format(new Date(), "yyyy-MM-dd"), time: "08:00",
+    date: format(nowSaoPaulo(), "yyyy-MM-dd"), time: "08:00",
     adjustment_reason: "",
   });
   const openNewPunch = () => {
-    setPunchForm({ id: null, employee_id: employeeFilter || "", punch_type: "entrada", date: format(new Date(), "yyyy-MM-dd"), time: "08:00", adjustment_reason: "" });
+    setPunchForm({ id: null, employee_id: employeeFilter || "", punch_type: "entrada", date: format(nowSaoPaulo(), "yyyy-MM-dd"), time: "08:00", adjustment_reason: "" });
     setPunchDialogOpen(true);
   };
   const openEditPunch = (p: any) => {
     const dt = parseDateValue(getPunchTimestamp(p));
+    const dtSp = dt ? toSaoPauloDate(dt) : null;
     setPunchForm({
       id: p.id,
       employee_id: p.employee_id,
       punch_type: p.punch_type,
-      date: dt ? format(dt, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd"),
-      time: dt ? format(dt, "HH:mm") : "08:00",
+      date: dtSp ? format(dtSp, "yyyy-MM-dd") : format(nowSaoPaulo(), "yyyy-MM-dd"),
+      time: dtSp ? format(dtSp, "HH:mm") : "08:00",
       adjustment_reason: p.adjustment_reason || "",
     });
     setPunchDialogOpen(true);
