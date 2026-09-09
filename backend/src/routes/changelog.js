@@ -124,6 +124,20 @@ const SEED_ENTRIES = [
     solution_text: 'A sincronização agora roda uma única vez e é compartilhada por toda a tela. Também foi adicionada uma medição de tempo que registra um aviso na Central de Logs quando enfileirar ou enviar uma foto demora mais que o esperado, para facilitar identificar esse tipo de lentidão no futuro.',
     ref: '03d35530',
   },
+  {
+    entry_date: '2026-09-09', type: 'bug', area: "Fotos e sincronização",
+    title: 'Foto de categoria não entrava no Book de Fotos em rotas com várias marcas',
+    problem_text: 'Em rotas configuradas com mais de uma marca, salvar a foto de "antes" ou "depois" de uma categoria falhava ao tentar espelhar a foto no Book de Fotos (o sistema tentava gravar sem saber a marca da foto, o que não é permitido). A foto em si era salva normalmente, mas não aparecia no Book.',
+    solution_text: 'Corrigido para descobrir a marca correta da foto mesmo em rotas multi-marca, do mesmo jeito que já funcionava em outro ponto do sistema.',
+    ref: 'd027c8d8',
+  },
+  {
+    entry_date: '2026-09-09', type: 'bug', area: "Fotos e sincronização",
+    title: 'Uma única foto corrompida no aparelho travava a fila inteira de envio',
+    problem_text: 'Quando alguma foto ficava presa num formato antigo/corrompido no armazenamento do aparelho (situação já corrigida para fotos novas), o sistema travava ao tentar destravar essa foto — e, ao travar, nenhuma outra foto daquele aparelho conseguia ser enviada, mesmo fotos novas e sem problema nenhum.',
+    solution_text: 'Agora, quando isso acontece, apenas a foto realmente corrompida é descartada (com aviso registrado) — as demais continuam sincronizando normalmente.',
+    ref: 'd027c8d8',
+  },
 ];
 
 async function ensureChangelogTable() {
