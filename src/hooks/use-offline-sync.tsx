@@ -30,6 +30,79 @@ async function readResponseError(response: Response) {
   }
 }
 
+// Reseta o status de fotos travadas em 'uploading'/'failed' para 'pending'.
+// modify() em lote roda numa única transação: se UM registro estiver
+// corrompido (ex.: um Blob antigo ilegível no Safari, de antes da foto
+// passar a ser guardada como ArrayBuffer), a transação inteira falha e
+// NENHUM item é resetado — travando a sincronização por completo, até para
+// fotos novas e saudáveis, sem gerar nenhum erro visível no fluxo normal.
+// Por isso, quando o lote falha, cai para um reset item a item — o que
+// isola e remove só o registro irrecuperável.
+async function resetStuckUploads() {
+  try {
+    await db.pending_uploads.where('status').anyOf('failed', 'uploading').modify({ status: 'pending' });
+    return;
+  } catch (err: any) {
+    logger.warn('[OfflineSync] Reset em lote de fotos falhou, tentando item a item', { error: err?.message });
+  }
+
+  const stuck = await db.pending_uploads.where('status').anyOf('failed', 'uploading').toArray();
+  for (const item of stuck) {
+    if (!item.id) continue;
+    try {
+      await db.pending_uploads.update(item.id, { status: 'pending' });
+    } catch (err: any) {
+      // Esse registro específico está corrompido e nunca vai conseguir
+      // sincronizar (o dado armazenado no aparelho está ilegível) — melhor
+      // remover e avisar do que travar a fila pra sempre.
+      logger.error('[OfflineSync] Foto irrecuperável neste aparelho, removida da fila', {
+        id: item.id,
+        localId: item.localId,
+        fileName: item.fileName,
+        error: err?.message,
+      });
+      await db.pending_uploads.delete(item.id).catch(() => {});
+
+      // Chamadas de API que dependem dessa foto nunca vão resolver a
+      // referência local (ela nunca vai existir no servidor) — sem isso,
+      // ficariam reenfileiradas pra sempre esperando um upload que não vai
+      // acontecer.
+      const stuckCalls = await db.pending_api_calls.where('dependsOnUploadId').equals(item.localId).toArray();
+      for (const call of stuckCalls) {
+        if (!call.id) continue;
+        await db.pending_api_calls.update(call.id, {
+          status: 'failed',
+          error: 'Foto não pôde ser recuperada neste aparelho — registre novamente.',
+        }).catch(() => {});
+      }
+    }
+  }
+}
+
+async function resetStuckApiCalls() {
+  try {
+    await db.pending_api_calls.where('status').anyOf('failed', 'processing').modify({ status: 'pending' });
+    return;
+  } catch (err: any) {
+    logger.warn('[OfflineSync] Reset em lote de chamadas de API falhou, tentando item a item', { error: err?.message });
+  }
+
+  const stuck = await db.pending_api_calls.where('status').anyOf('failed', 'processing').toArray();
+  for (const item of stuck) {
+    if (!item.id) continue;
+    try {
+      await db.pending_api_calls.update(item.id, { status: 'pending' });
+    } catch (err: any) {
+      logger.error('[OfflineSync] Chamada de API irrecuperável, removida da fila', {
+        id: item.id,
+        url: item.url,
+        error: err?.message,
+      });
+      await db.pending_api_calls.delete(item.id).catch(() => {});
+    }
+  }
+}
+
 export function useOnlineStatus() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
@@ -105,8 +178,17 @@ function useOfflineSyncState() {
     try {
     // Recupera itens travados em 'uploading'/'processing' de execuções anteriores
     // e reprocessa também os 'failed' — retry automático a cada sync.
-    await db.pending_uploads.where('status').anyOf('failed', 'uploading').modify({ status: 'pending' });
-    await db.pending_api_calls.where('status').anyOf('failed', 'processing').modify({ status: 'pending' });
+    //
+    // modify() em lote roda numa única transação: se UM registro estiver
+    // corrompido (ex.: um Blob antigo ilegível no Safari, de antes da foto
+    // passar a ser guardada como ArrayBuffer), a transação inteira falha e
+    // NENHUM item é resetado — travando a sincronização por completo, até
+    // para fotos novas e saudáveis, sem gerar nenhum erro visível no fluxo
+    // normal (só nos logs). Por isso cada tabela cai para um reset item a
+    // item quando o lote falha, removendo (e avisando) só o registro
+    // irrecuperável em vez de travar todo mundo.
+    await resetStuckUploads();
+    await resetStuckApiCalls();
 
     const pendingUploads = await db.pending_uploads.where('status').equals('pending').toArray();
     const pendingCalls = await db.pending_api_calls.where('status').equals('pending').toArray();

@@ -3907,11 +3907,24 @@ router.post('/promotor/routes/:routeId/categories/:catId/photo', promotorAuth, a
         const routeInfo = await query('SELECT organization_id, brand_id, pdv_id, promoter_id FROM merch_routes WHERE id=$1', [req.params.routeId]);
         if (routeInfo.rows.length) {
           const r = routeInfo.rows[0];
-          await query(
-            `INSERT INTO live_photo_books (organization_id, brand_id, pdv_id, route_id, category_id, photo_type, photo_url, promoter_id, captured_at, upload_source)
-             VALUES ($1,$2,$3,$4,$5,'before',$6,$7,NOW(),'app')`,
-            [r.organization_id, r.brand_id, r.pdv_id, req.params.routeId, catId, pUrl, r.promoter_id]
-          );
+          // Rotas multi-marca não têm brand_id em merch_routes (fica null) — o
+          // real dono da foto é resolvido via route_brand_id -> route_brands.
+          // Sem isso, o INSERT abaixo violava a constraint NOT NULL de brand_id
+          // e a foto de "antes" nunca era espelhada no Book de Fotos.
+          let brandForBook = r.brand_id;
+          if (route_brand_id) {
+            try {
+              const rb = await query('SELECT brand_id FROM route_brands WHERE id=$1', [route_brand_id]);
+              if (rb.rows[0]?.brand_id) brandForBook = rb.rows[0].brand_id;
+            } catch {}
+          }
+          if (brandForBook) {
+            await query(
+              `INSERT INTO live_photo_books (organization_id, brand_id, pdv_id, route_id, category_id, photo_type, photo_url, promoter_id, captured_at, upload_source)
+               VALUES ($1,$2,$3,$4,$5,'before',$6,$7,NOW(),'app')`,
+              [r.organization_id, brandForBook, r.pdv_id, req.params.routeId, catId, pUrl, r.promoter_id]
+            );
+          }
         }
       } catch {}
     }
@@ -4035,11 +4048,24 @@ router.post('/promotor/routes/:routeId/categories/:catId/after-photo', promotorA
         const routeInfo = await query('SELECT organization_id, brand_id, pdv_id, promoter_id FROM merch_routes WHERE id=$1', [req.params.routeId]);
         if (routeInfo.rows.length) {
           const r = routeInfo.rows[0];
-          await query(
-            `INSERT INTO live_photo_books (organization_id, brand_id, pdv_id, route_id, category_id, photo_type, photo_url, promoter_id, captured_at, upload_source)
-             VALUES ($1,$2,$3,$4,$5,'after',$6,$7,NOW(),'app')`,
-            [r.organization_id, r.brand_id, r.pdv_id, req.params.routeId, catId, pUrl, r.promoter_id]
-          );
+          // Rotas multi-marca não têm brand_id em merch_routes (fica null) — o
+          // real dono da foto é resolvido via route_brand_id -> route_brands.
+          // Sem isso, o INSERT abaixo violava a constraint NOT NULL de brand_id
+          // e a foto de "depois" nunca era espelhada no Book de Fotos.
+          let brandForBook = r.brand_id;
+          if (route_brand_id) {
+            try {
+              const rb = await query('SELECT brand_id FROM route_brands WHERE id=$1', [route_brand_id]);
+              if (rb.rows[0]?.brand_id) brandForBook = rb.rows[0].brand_id;
+            } catch {}
+          }
+          if (brandForBook) {
+            await query(
+              `INSERT INTO live_photo_books (organization_id, brand_id, pdv_id, route_id, category_id, photo_type, photo_url, promoter_id, captured_at, upload_source)
+               VALUES ($1,$2,$3,$4,$5,'after',$6,$7,NOW(),'app')`,
+              [r.organization_id, brandForBook, r.pdv_id, req.params.routeId, catId, pUrl, r.promoter_id]
+            );
+          }
         }
       } catch {}
     }
