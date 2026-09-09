@@ -389,7 +389,14 @@ function useOfflineSyncState() {
         await api(call.url, {
           method: call.method as any,
           body,
-          headers: call.headers
+          headers: call.headers,
+          // silent: o catch logo abaixo já registra a falha com o contexto
+          // da fila offline (id, url, erro). Sem isso, toda falha de rede
+          // aqui era gravada DUAS vezes na Central de Logs — uma genérica
+          // por dentro do api() ("[API NETWORK]"), outra por aqui
+          // ("[OfflineSync] Erro na chamada API") — dificultando saber
+          // quantos incidentes realmente aconteceram.
+          silent: true,
         });
 
         await db.pending_api_calls.delete(call.id!);
