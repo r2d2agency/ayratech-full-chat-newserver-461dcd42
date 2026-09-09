@@ -138,6 +138,13 @@ const SEED_ENTRIES = [
     solution_text: 'Agora, quando isso acontece, apenas a foto realmente corrompida é descartada (com aviso registrado) — as demais continuam sincronizando normalmente.',
     ref: 'd027c8d8',
   },
+  {
+    entry_date: '2026-09-09', type: 'melhoria', area: 'Logs e diagnóstico',
+    title: 'Queda de conexão no envio de checklist aparecia duplicada nos logs',
+    problem_text: 'Quando a conexão caía durante o envio automático de uma ação da rota (ex.: marcar o tipo de ponto), o mesmo problema de rede aparecia duas vezes na Central de Logs, com nomes de evento diferentes — dificultando saber se eram dois problemas distintos ou um só.',
+    solution_text: 'O registro duplicado foi removido; a falha de rede continua sendo tratada e reenviada automaticamente do mesmo jeito, só não aparece mais em dobro.',
+    ref: 'bc697e0e',
+  },
 ];
 
 async function ensureChangelogTable() {
