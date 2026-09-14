@@ -162,7 +162,7 @@ export default function PromotorConfig() {
     setConfirmUpdateOpen(false);
     toast({ title: 'Tentando enviar itens pendentes...', description: 'Aguarde alguns segundos e verifique novamente.' });
     try {
-      await sync();
+      await sync({ force: true });
       const remaining = await checkPending();
       if (remaining === 0) {
         toast({ title: '✅ Tudo sincronizado!', description: 'Agora é seguro atualizar.' });
@@ -479,7 +479,7 @@ export default function PromotorConfig() {
                   return;
                 }
                 toast({ title: 'Iniciando envio em lote...', description: `${totalQueue} item(ns) na fila.` });
-                await sync();
+                await sync({ force: true });
                 const [u, c] = await Promise.all([db.pending_uploads.count(), db.pending_api_calls.count()]);
                 const remaining = u + c;
                 if (remaining === 0) {

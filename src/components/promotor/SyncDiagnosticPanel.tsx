@@ -143,7 +143,7 @@ export function SyncDiagnosticPanel() {
               size="sm" 
               variant="outline" 
               className="w-full text-xs h-8 border-yellow-300 bg-yellow-100 hover:bg-yellow-200 text-yellow-800"
-              onClick={() => sync()}
+              onClick={() => sync({ force: true })}
               disabled={isSyncing || !isOnline}
             >
               {isSyncing ? <Loader2 className="h-3 w-3 animate-spin mr-2" /> : <RefreshCw className="h-3 w-3 mr-2" />}

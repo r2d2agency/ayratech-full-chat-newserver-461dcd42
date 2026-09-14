@@ -30,6 +30,15 @@ async function readResponseError(response: Response) {
   }
 }
 
+// Depois de tantas tentativas automáticas seguidas falhando, paramos de
+// insistir sozinhos (a cada 30s) numa foto que aparentemente nunca vai
+// conseguir subir daquele aparelho — ela fica visível como "Falhou" na
+// galeria, com um botão para descartar ou (via "Reenviar" manual) tentar de
+// novo do zero. Sem esse limite, uma foto permanentemente quebrada (ex.:
+// algum bloqueio de rede específico daquele envio) ficava repetindo o mesmo
+// erro genérico pra sempre, sem nenhum jeito de destravar a fila.
+const MAX_UPLOAD_ATTEMPTS = 6;
+
 // Reseta o status de fotos travadas em 'uploading'/'failed' para 'pending'.
 // modify() em lote roda numa única transação: se UM registro estiver
 // corrompido (ex.: um Blob antigo ilegível no Safari, de antes da foto
@@ -38,9 +47,17 @@ async function readResponseError(response: Response) {
 // fotos novas e saudáveis, sem gerar nenhum erro visível no fluxo normal.
 // Por isso, quando o lote falha, cai para um reset item a item — o que
 // isola e remove só o registro irrecuperável.
-async function resetStuckUploads() {
+//
+// `force` (clique manual em "Reenviar"): reseta e zera as tentativas de
+// TODOS os itens, mesmo os que já bateram o limite — é um pedido explícito
+// do usuário, diferente do retry automático silencioso.
+async function resetStuckUploads(force = false) {
+  const withinLimit = (u: PendingUpload) => force || (u.attempts || 0) < MAX_UPLOAD_ATTEMPTS;
   try {
-    await db.pending_uploads.where('status').anyOf('failed', 'uploading').modify({ status: 'pending' });
+    await db.pending_uploads
+      .where('status').anyOf('failed', 'uploading')
+      .and(withinLimit)
+      .modify(force ? { status: 'pending', attempts: 0 } : { status: 'pending' });
     return;
   } catch (err: any) {
     logger.warn('[OfflineSync] Reset em lote de fotos falhou, tentando item a item', { error: err?.message });
@@ -48,9 +65,9 @@ async function resetStuckUploads() {
 
   const stuck = await db.pending_uploads.where('status').anyOf('failed', 'uploading').toArray();
   for (const item of stuck) {
-    if (!item.id) continue;
+    if (!item.id || !withinLimit(item)) continue;
     try {
-      await db.pending_uploads.update(item.id, { status: 'pending' });
+      await db.pending_uploads.update(item.id, force ? { status: 'pending', attempts: 0 } : { status: 'pending' });
     } catch (err: any) {
       // Esse registro específico está corrompido e nunca vai conseguir
       // sincronizar (o dado armazenado no aparelho está ilegível) — melhor
@@ -167,7 +184,8 @@ function useOfflineSyncState() {
     };
   }, []);
 
-  const sync = useCallback(async () => {
+  const sync = useCallback(async (options?: { force?: boolean }) => {
+    const force = options?.force === true;
     if (!isOnline) return;
     // Ref-based lock: state (`isSyncing`) fica desatualizado em closures e
     // permite execuções paralelas de sync() que duplicam uploads.
@@ -187,7 +205,7 @@ function useOfflineSyncState() {
     // normal (só nos logs). Por isso cada tabela cai para um reset item a
     // item quando o lote falha, removendo (e avisando) só o registro
     // irrecuperável em vez de travar todo mundo.
-    await resetStuckUploads();
+    await resetStuckUploads(force);
     await resetStuckApiCalls();
 
     const pendingUploads = await db.pending_uploads.where('status').equals('pending').toArray();
@@ -323,8 +341,22 @@ function useOfflineSyncState() {
         await db.pending_uploads.delete(upload.id!);
         setSyncProgress(p => ({ ...p, done: p.done + 1 }));
       } catch (err: any) {
-        logger.error('[OfflineSync] Erro no upload', { id: upload.id, error: err.message });
-        await db.pending_uploads.update(upload.id!, { status: 'failed', error: err.message });
+        const attempts = (upload.attempts || 0) + 1;
+        const cappedOut = attempts >= MAX_UPLOAD_ATTEMPTS;
+        logger.error('[OfflineSync] Erro no upload', {
+          id: upload.id,
+          error: err.message,
+          attempts,
+          cappedOut,
+          fileSizeKb: Math.round((upload.fileData?.byteLength || upload.file?.size || 0) / 1024),
+        });
+        await db.pending_uploads.update(upload.id!, {
+          status: 'failed',
+          attempts,
+          error: cappedOut
+            ? `${err.message} — falhou ${attempts}x, parou de tentar sozinho. Toque em "Reenviar" ou descarte a foto.`
+            : err.message,
+        });
         setSyncProgress(p => ({ ...p, failed: p.failed + 1 }));
       }
     };
@@ -536,6 +568,24 @@ function useOfflineSyncState() {
 
   }, [isOnline, sync]);
 
+  // Descarta manualmente uma foto pendente que não consegue subir (ex.:
+  // atingiu MAX_UPLOAD_ATTEMPTS). Sem isso não havia nenhum jeito de
+  // destravar a fila a não ser reinstalar o app — a foto ficava presa pra
+  // sempre. O promotor precisa tirar essa foto de novo depois.
+  const discardUpload = useCallback(async (localId: string) => {
+    const upload = await db.pending_uploads.where('localId').equals(localId).first();
+    if (upload?.id) await db.pending_uploads.delete(upload.id);
+
+    const stuckCalls = await db.pending_api_calls.where('dependsOnUploadId').equals(localId).toArray();
+    for (const call of stuckCalls) {
+      if (!call.id) continue;
+      await db.pending_api_calls.update(call.id, {
+        status: 'failed',
+        error: 'Foto descartada pelo usuário — registre novamente.',
+      }).catch(() => {});
+    }
+  }, []);
+
   // Auto-sync when coming online
   useEffect(() => {
     if (isOnline) {
@@ -560,7 +610,7 @@ function useOfflineSyncState() {
     return () => clearInterval(interval);
   }, [isOnline, sync]);
 
-  return { isOnline, isSyncing, syncProgress, queueUpload, queueApiCall, sync, getLocalFileUrl };
+  return { isOnline, isSyncing, syncProgress, queueUpload, queueApiCall, sync, getLocalFileUrl, discardUpload };
 }
 
 type OfflineSyncApi = ReturnType<typeof useOfflineSyncState>;

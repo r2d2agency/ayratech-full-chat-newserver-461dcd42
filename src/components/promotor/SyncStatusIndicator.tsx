@@ -19,7 +19,7 @@ export function SyncStatusIndicator({ className }: { className?: string }) {
           "gap-1.5 py-1 px-3 border-yellow-500/50 bg-yellow-500/10 text-yellow-700 font-medium cursor-pointer animate-pulse h-7", 
           className
         )}
-        onClick={() => isOnline && sync()}
+        onClick={() => isOnline && sync({ force: true })}
       >
         <RefreshCw className={cn("h-3.5 w-3.5", isSyncing && "animate-spin")} />
         {isOnline

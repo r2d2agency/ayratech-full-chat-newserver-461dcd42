@@ -5,7 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LocalImage } from "@/components/promotor/LocalImage";
-import { Camera, Clock, Loader2, RefreshCw, TriangleAlert, WifiOff } from "lucide-react";
+import { Camera, Clock, Loader2, RefreshCw, TriangleAlert, Trash2, WifiOff } from "lucide-react";
+import { toast } from "sonner";
 
 function formatWhen(timestamp?: number) {
   if (!timestamp) return "";
@@ -17,7 +18,13 @@ function formatWhen(timestamp?: number) {
 }
 
 export function PhotoSyncGallery() {
-  const { isOnline, isSyncing, sync } = useOfflineSync();
+  const { isOnline, isSyncing, sync, discardUpload } = useOfflineSync();
+
+  const handleDiscard = async (localId: string) => {
+    if (!window.confirm('Descartar esta foto? Ela não será enviada e você vai precisar tirar de novo.')) return;
+    await discardUpload(localId);
+    toast.success('Foto descartada.');
+  };
 
   const pendingUploads = useLiveQuery(
     () => db.pending_uploads.orderBy("timestamp").reverse().toArray(),
@@ -49,7 +56,7 @@ export function PhotoSyncGallery() {
             size="sm"
             variant="outline"
             className="h-7 text-xs"
-            onClick={() => sync()}
+            onClick={() => sync({ force: true })}
             disabled={!isOnline || isSyncing}
           >
             {isSyncing ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <RefreshCw className="h-3.5 w-3.5 mr-1" />}
@@ -105,6 +112,16 @@ export function PhotoSyncGallery() {
                       <TriangleAlert className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
                       <span>{upload.error}</span>
                     </div>
+                  )}
+                  {isFailed && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="w-full h-6 text-[10px] text-destructive hover:text-destructive gap-1"
+                      onClick={() => handleDiscard(upload.localId)}
+                    >
+                      <Trash2 className="h-3 w-3" /> Descartar foto
+                    </Button>
                   )}
                 </div>
               </div>

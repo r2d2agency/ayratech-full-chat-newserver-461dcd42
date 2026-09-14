@@ -14,6 +14,12 @@ export interface PendingUpload {
   token: string | null;
   status: 'pending' | 'uploading' | 'failed';
   error?: string;
+  // Conta quantas vezes o envio já foi tentado e falhou. Sem isso, uma foto
+  // que nunca vai conseguir subir (ex.: bloqueio de rede específico daquele
+  // envio) ficava sendo retentada silenciosamente para sempre a cada 30s,
+  // sem nunca dar nenhum sinal claro de que algo está permanentemente
+  // quebrado — só o mesmo erro genérico de rede se repetindo.
+  attempts?: number;
   // This is used to map the local temporary ID to the final server URL
   localId: string;
   /** @deprecated Registros antigos (antes da migração para fileData) guardavam um Blob aqui. Mantido só para leitura retrocompatível. */
