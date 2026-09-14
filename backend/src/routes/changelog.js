@@ -173,6 +173,13 @@ const SEED_ENTRIES = [
     solution_text: 'Depois de 6 tentativas automáticas seguidas falhando, o app para de insistir sozinho e mostra um aviso claro. Um botão "Descartar foto" foi adicionado na galeria de pendentes para remover manualmente uma foto travada, e o botão "Sincronizar"/"Reenviar" sempre força uma nova tentativa, mesmo além desse limite.',
     ref: 'd6556536',
   },
+  {
+    entry_date: '2026-09-14', type: 'melhoria', area: 'Checklist e conclusão de categoria',
+    title: 'Checkout da loja esperava a foto terminar de subir para ser registrado',
+    problem_text: 'Ao fazer o checkout de uma loja com foto de fachada, o registro só chegava ao sistema depois que a foto terminasse de subir por completo — então, mesmo com boa conexão, o PDV podia continuar aparecendo como "não finalizado" por alguns segundos (ou mais, em conexão ruim) depois do promotor já ter saído do local.',
+    solution_text: 'O checkout agora é registrado na hora. A foto continua subindo em segundo plano e é anexada automaticamente ao checkout assim que o envio terminar — o promotor não precisa mais esperar a foto para finalizar a loja.',
+    ref: '4371e5a3',
+  },
 ];
 
 async function ensureChangelogTable() {
