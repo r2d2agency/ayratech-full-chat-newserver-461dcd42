@@ -145,6 +145,34 @@ const SEED_ENTRIES = [
     solution_text: 'O registro duplicado foi removido; a falha de rede continua sendo tratada e reenviada automaticamente do mesmo jeito, só não aparece mais em dobro.',
     ref: 'bc697e0e',
   },
+  {
+    entry_date: '2026-09-09', type: 'bug', area: 'Acesso e login',
+    title: 'admin.ayratech.app redirecionava para a tela errada',
+    problem_text: 'Ao acessar a raiz de admin.ayratech.app, o sistema forçava o redirecionamento para a tela de acesso do supermercado, impedindo chegar à tela normal de login/entrada.',
+    solution_text: 'O domínio admin.ayratech.app foi removido dessa regra por engano configurada — agora abre normalmente a tela de login.',
+    ref: 'ba4d29ae',
+  },
+  {
+    entry_date: '2026-09-09', type: 'bug', area: 'Ponto e escala',
+    title: 'Data/hora das batidas de ponto podia aparecer errada',
+    problem_text: 'Tanto na tela do promotor ("Meu Ponto") quanto no painel admin (RH > Ponto), os horários das batidas eram formatados usando o fuso horário do próprio navegador/aparelho de quem estava vendo a tela, em vez de sempre usar o horário de Brasília — o que podia mostrar a data errada, principalmente em batidas perto da meia-noite.',
+    solution_text: 'A exibição agora é sempre convertida para o fuso de América/São Paulo, independente do fuso configurado no aparelho.',
+    ref: '57ac988b',
+  },
+  {
+    entry_date: '2026-09-14', type: 'bug', area: 'Checklist e conclusão de categoria',
+    title: 'Checklist "somente foto Depois" recém-criado não era respeitado',
+    problem_text: 'Quando uma marca tinha mais de um checklist ativo ao mesmo tempo (ex.: um antigo "ambos" continuando ativo enquanto um novo "somente Depois" era criado), a tela do promotor podia aplicar o checklist errado de forma praticamente aleatória — continuando a pedir a foto de Antes mesmo com a regra nova configurada para só exigir a de Depois.',
+    solution_text: 'Corrigido para sempre priorizar o checklist ativo mais recente quando há mais de um configurado para a mesma marca.',
+    ref: 'ecac4707',
+  },
+  {
+    entry_date: '2026-09-14', type: 'melhoria', area: "Fotos e sincronização",
+    title: 'Foto que nunca conseguia subir travava a fila para sempre, sem jeito de destravar',
+    problem_text: 'Quando uma foto falhava de forma permanente (ex.: algum bloqueio de rede específico daquele envio, mesmo com conexão boa e estável), o app ficava tentando enviá-la sozinho a cada 30 segundos para sempre, sempre com o mesmo erro genérico — sem avisar claramente que aquilo nunca ia funcionar e sem nenhum jeito de remover a foto, a não ser reinstalar o app.',
+    solution_text: 'Depois de 6 tentativas automáticas seguidas falhando, o app para de insistir sozinho e mostra um aviso claro. Um botão "Descartar foto" foi adicionado na galeria de pendentes para remover manualmente uma foto travada, e o botão "Sincronizar"/"Reenviar" sempre força uma nova tentativa, mesmo além desse limite.',
+    ref: 'd6556536',
+  },
 ];
 
 async function ensureChangelogTable() {
