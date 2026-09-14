@@ -4327,6 +4327,44 @@ router.post('/promotor/pdv-checkout', promotorAuth, async (req, res) => {
   } catch (err) { logError('promotor.pdv_checkout', err); res.status(500).json({ error: 'Erro' }); }
 });
 
+// Anexa a foto do checkout DEPOIS do checkout já ter sido registrado — usado
+// quando o promotor sai da loja com a foto ainda subindo em segundo plano.
+// O checkout em si não espera mais a foto (ver pdv-checkout acima); esta
+// rota só é chamada pela fila offline assim que o upload da foto terminar.
+router.post('/promotor/pdv-checkout/photo', promotorAuth, async (req, res) => {
+  try {
+    const { pdv_id, photo_url } = req.body;
+    if (!pdv_id || !photo_url) return res.status(400).json({ error: 'pdv_id e photo_url obrigatórios' });
+
+    const nowBR = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+    const todayStr = `${nowBR.getFullYear()}-${String(nowBR.getMonth()+1).padStart(2,'0')}-${String(nowBR.getDate()).padStart(2,'0')}`;
+
+    const result = await query(
+      `UPDATE pdv_visits SET checkout_photo_url=$4, updated_at=NOW()
+       WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3 RETURNING id`,
+      [req.employeeId, pdv_id, todayStr, photo_url]
+    );
+    if (!result.rows.length) {
+      return res.json({ ok: true, message: 'Checkout do PDV não encontrado para hoje — foto não anexada' });
+    }
+
+    const lastRoute = await query(
+      `SELECT id FROM merch_routes WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3
+       ORDER BY checkout_at DESC NULLS LAST LIMIT 1`,
+      [req.employeeId, pdv_id, todayStr]
+    );
+    if (lastRoute.rows.length) {
+      await query(
+        `INSERT INTO route_photos (route_id, photo_type, photo_url, upload_source, uploaded_by)
+         VALUES ($1,'checkout',$2,'app',$3)`,
+        [lastRoute.rows[0].id, photo_url, req.employeeId]
+      );
+    }
+
+    res.json({ ok: true });
+  } catch (err) { logError('promotor.pdv_checkout_photo', err); res.status(500).json({ error: 'Erro' }); }
+});
+
 // Promotor: Check remaining routes at PDV
 router.get('/promotor/pdv-status', promotorAuth, async (req, res) => {
   try {

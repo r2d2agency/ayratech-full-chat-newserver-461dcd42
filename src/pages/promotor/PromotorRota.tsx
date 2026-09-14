@@ -1330,23 +1330,39 @@ export default function PromotorRota() {
         navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 })
       ).catch(() => null);
 
-      const body = {
-        pdv_id: route.pdv_id,
-        latitude: pos?.coords.latitude,
-        longitude: pos?.coords.longitude,
-        photo_url: pdvCheckoutPhoto || undefined,
-        status_override: !pdvCheckoutPhoto ? 'awaiting_photo' : 'completed',
-        notes: actionForm.pdv_notes,
-      };
+      // A foto do checkout normalmente ainda é uma referência local (o
+      // upload real ainda não terminou) neste momento — antes, o checkout
+      // inteiro ficava preso na fila esperando o upload, então o PDV só
+      // aparecia como finalizado no sistema depois que a foto terminasse de
+      // subir. Agora o checkout é enviado na hora (com photo_url vazio se a
+      // foto ainda não subiu) e a foto é anexada depois, separadamente,
+      // assim que o upload terminar — sem travar o promotor.
+      const hasPendingPhoto = !!pdvCheckoutPhoto?.startsWith('local-file://');
 
-      // Always use background queue for PDV checkout for performance
+      const authHeaders = { 'Authorization': `Bearer ${localStorage.getItem('promotor_token') || localStorage.getItem('auth_token')}` };
+
       queueApiCall({
         url: '/api/merch/promotor/pdv-checkout',
         method: 'POST',
-        body,
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('promotor_token') || localStorage.getItem('auth_token')}` },
-        dependsOnUploadId: pdvCheckoutPhoto?.startsWith('local-file://') ? pdvCheckoutPhoto.replace('local-file://', '') : undefined
+        body: {
+          pdv_id: route.pdv_id,
+          latitude: pos?.coords.latitude,
+          longitude: pos?.coords.longitude,
+          photo_url: hasPendingPhoto ? undefined : (pdvCheckoutPhoto || undefined),
+          notes: actionForm.pdv_notes,
+        },
+        headers: authHeaders,
       });
+
+      if (hasPendingPhoto) {
+        queueApiCall({
+          url: '/api/merch/promotor/pdv-checkout/photo',
+          method: 'POST',
+          body: { pdv_id: route.pdv_id, photo_url: pdvCheckoutPhoto },
+          headers: authHeaders,
+          dependsOnUploadId: pdvCheckoutPhoto!.replace('local-file://', ''),
+        });
+      }
       // Removed toast per user request
 
       setShowPdvCheckout(false);
