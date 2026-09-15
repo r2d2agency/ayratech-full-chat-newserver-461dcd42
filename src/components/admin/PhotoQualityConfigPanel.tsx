@@ -33,7 +33,11 @@ export function PhotoQualityConfigPanel() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    api<{ config: PhotoQualityConfig }>("/api/merchandising/photo-quality-config")
+    // A rota fica montada em /api/merch (merch-routes.js), não
+    // /api/merchandising — o painel apontava para um endpoint que não
+    // existe, então as alterações nunca eram salvas nem carregadas (o GET
+    // falhava silenciosamente e sempre mostrava os valores padrão).
+    api<{ config: PhotoQualityConfig }>("/api/merch/photo-quality-config")
       .then((res) => { if (res?.config) setConfig(res.config); })
       .catch(() => { /* use defaults */ });
   }, []);
@@ -41,7 +45,7 @@ export function PhotoQualityConfigPanel() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await api("/api/merchandising/photo-quality-config", { method: "PUT", body: config });
+      await api("/api/merch/photo-quality-config", { method: "PUT", body: config });
       toast.success("Configuração de qualidade de foto salva!");
     } catch {
       toast.error("Erro ao salvar configuração");
