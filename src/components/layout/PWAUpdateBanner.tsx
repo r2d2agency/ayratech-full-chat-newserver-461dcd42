@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useRegisterSW } from "virtual:pwa-register/react";
 import { RefreshCw, Download, Sparkles, CheckCircle2, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -25,6 +26,29 @@ export function PWAUpdateBanner() {
   const [progress, setProgress] = useState(0);
   const [done, setDone] = useState(false);
   const [newVersion, setNewVersion] = useState<{ web: string, promoter: string } | null>(null);
+  const { updateServiceWorker, needRefresh } = useRegisterSW({
+    immediate: true,
+    onNeedRefresh() {
+      setShowPopup(true);
+    },
+  });
+
+  useEffect(() => {
+    if (!needRefresh || updating) return;
+
+    // Aplica sozinho quando não há dados aguardando envio. Se houver fotos,
+    // mantém o aviso para evitar recarregar o app durante a sincronização.
+    void Promise.all([db.pending_uploads.count(), db.pending_api_calls.count()])
+      .then(([uploads, calls]) => {
+        if (uploads + calls === 0) {
+          setUpdating(true);
+          updateServiceWorker(true);
+        } else {
+          setShowPopup(true);
+        }
+      })
+      .catch(() => setShowPopup(true));
+  }, [needRefresh, updating, updateServiceWorker]);
 
   const checkVersion = useCallback(async () => {
     try {
@@ -65,10 +89,24 @@ export function PWAUpdateBanner() {
     // Initial check
     checkVersion();
 
-    // Check every 5 minutes
-    const interval = setInterval(checkVersion, 5 * 60 * 1000);
+    // iOS/Safari verifica o worker principalmente ao voltar ao primeiro plano.
+    const refreshServiceWorker = () => {
+      void navigator.serviceWorker?.getRegistration().then((registration) => {
+        void registration?.update();
+      });
+      void checkVersion();
+    };
+    window.addEventListener("focus", refreshServiceWorker);
+    document.addEventListener("visibilitychange", refreshServiceWorker);
 
-    return () => clearInterval(interval);
+    // Fallback para sessões longas abertas no mesmo aparelho.
+    const interval = setInterval(refreshServiceWorker, 5 * 60 * 1000);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", refreshServiceWorker);
+      document.removeEventListener("visibilitychange", refreshServiceWorker);
+    };
   }, [checkVersion]);
 
   const [pendingCount, setPendingCount] = useState(0);
@@ -103,18 +141,20 @@ export function PWAUpdateBanner() {
     }, 200);
 
     try {
-      // Clear all caches
-      if ("caches" in window) {
-        const cacheNames = await caches.keys();
-        await Promise.all(cacheNames.map((name) => caches.delete(name)));
+      if (needRefresh) {
+        // Usa o fluxo oficial do vite-plugin-pwa: o worker novo assume o
+        // controle sem apagar o IndexedDB das fotos pendentes.
+        setProgress(100);
+        setDone(true);
+        if (newVersion) {
+          localStorage.setItem('app-version', JSON.stringify(newVersion));
+        }
+        setTimeout(() => updateServiceWorker(true), 400);
+        return;
       }
 
-      // Unregister all service workers to ensure fresh start
-      if ("serviceWorker" in navigator) {
-        const registrations = await navigator.serviceWorker.getRegistrations();
-        await Promise.all(registrations.map(reg => reg.unregister()));
-      }
-
+      // Fallback para versões detectadas pelo version.json quando o worker
+      // ainda não sinalizou atualização.
       setProgress(100);
       setDone(true);
       
@@ -128,7 +168,7 @@ export function PWAUpdateBanner() {
       console.error("[PWA] Update failed:", err);
       window.location.reload();
     }
-  }, [newVersion, confirmForce]);
+  }, [newVersion, confirmForce, needRefresh, updateServiceWorker]);
 
   if (!showPopup) return null;
 
