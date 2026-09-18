@@ -19,6 +19,9 @@ const isPreviewHost =
   window.location.hostname.includes("lovableproject.com");
 
 const shouldWatchForUpdates = !isInIframe;
+// Emergency guard: automatic update prompts are disabled until the PWA update
+// flow is stabilized. Updates remain available from the manual app settings.
+const AUTO_UPDATE_PROMPT_ENABLED = false;
 
 export function PWAUpdateBanner() {
   const [showPopup, setShowPopup] = useState(false);
@@ -30,12 +33,12 @@ export function PWAUpdateBanner() {
   const { updateServiceWorker, needRefresh } = useRegisterSW({
     immediate: true,
     onNeedRefresh() {
-      setShowPopup(true);
+      if (AUTO_UPDATE_PROMPT_ENABLED) setShowPopup(true);
     },
   });
 
   useEffect(() => {
-    if (!needRefresh || updating || deferredUpdate) return;
+    if (!AUTO_UPDATE_PROMPT_ENABLED || !needRefresh || updating || deferredUpdate) return;
 
     // Mostra o aviso, mas não inicia a atualização sozinho. Assim o
     // colaborador pode continuar trabalhando e escolher o momento seguro,
@@ -67,7 +70,7 @@ export function PWAUpdateBanner() {
         }
       }
 
-      if (hasUpdate && !deferredUpdate) {
+      if (hasUpdate && !deferredUpdate && AUTO_UPDATE_PROMPT_ENABLED) {
         setNewVersion(data);
         setShowPopup(true);
       }
