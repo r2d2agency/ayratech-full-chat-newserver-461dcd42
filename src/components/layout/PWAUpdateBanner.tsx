@@ -37,19 +37,11 @@ export function PWAUpdateBanner() {
   useEffect(() => {
     if (!needRefresh || updating || deferredUpdate) return;
 
-    // Aplica sozinho quando não há dados aguardando envio. Se houver fotos,
-    // mantém o aviso para evitar recarregar o app durante a sincronização.
-    void Promise.all([db.pending_uploads.count(), db.pending_api_calls.count()])
-      .then(([uploads, calls]) => {
-        if (uploads + calls === 0) {
-          setUpdating(true);
-          updateServiceWorker(true);
-        } else {
-          setShowPopup(true);
-        }
-      })
-      .catch(() => setShowPopup(true));
-  }, [needRefresh, updating, deferredUpdate, updateServiceWorker]);
+    // Mostra o aviso, mas não inicia a atualização sozinho. Assim o
+    // colaborador pode continuar trabalhando e escolher o momento seguro,
+    // sem ficar preso em "0%" caso o worker não consiga assumir o controle.
+    setShowPopup(true);
+  }, [needRefresh, updating, deferredUpdate]);
 
   const checkVersion = useCallback(async () => {
     try {
