@@ -22,6 +22,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Progress } from "@/components/ui/progress";
 import { useLiveQuery } from "dexie-react-hooks";
 import { cn } from "@/lib/utils";
+import { formatAppVersion, loadAppVersion, type AppVersion } from "@/lib/app-version";
 
 export default function PromotorConfig() {
   const [updating, setUpdating] = useState(false);
@@ -31,6 +32,7 @@ export default function PromotorConfig() {
   const [hardResetConfirmText, setHardResetConfirmText] = useState('');
   const [hardResetting, setHardResetting] = useState(false);
   const [queueCount, setQueueCount] = useState(0);
+  const [appVersion, setAppVersion] = useState<AppVersion | null>(null);
   const { sync, isSyncing, syncProgress } = useOfflineSync();
   const { data: settings } = usePromotorSettings();
   const updateSettings = usePromotorUpdateSettings();
@@ -43,6 +45,9 @@ export default function PromotorConfig() {
   const liveFailedUploads = useLiveQuery(() => db.pending_uploads.where('status').equals('failed').count(), [], 0);
   const totalQueue = (livePendingUploads || 0) + (livePendingCalls || 0);
 
+  useEffect(() => {
+    void loadAppVersion().then(setAppVersion);
+  }, []);
 
   const [theme, setTheme] = useState(settings?.theme || 'auto');
   const [notifications, setNotifications] = useState(settings?.notifications_enabled !== false);
@@ -550,7 +555,7 @@ export default function PromotorConfig() {
               <span className="flex items-center gap-2"><Download className="h-4 w-4" /> PWA</span>
               <span className={pwaInstalled ? 'text-green-600' : 'text-muted-foreground'}>{pwaInstalled ? 'Instalado' : 'Navegador'}</span>
             </div>
-            <p className="text-xs text-muted-foreground">Versão do App: 2.1.0</p>
+            <p className="text-xs text-muted-foreground">{formatAppVersion(appVersion)}</p>
           </CardContent>
         </Card>
       </div>

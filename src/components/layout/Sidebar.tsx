@@ -1,6 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { formatAppVersion, loadAppVersion, type AppVersion } from "@/lib/app-version";
 import {
   BarChart3,
   Bot,
@@ -517,7 +518,7 @@ function SidebarContentComponent({ isExpanded, isSuperadmin, onNavigate }: Sideb
         {isExpanded && (
           <div className="text-center space-y-0.5">
             <p className="text-xs font-medium text-primary">TNS R2D2</p>
-            <p className="text-xs text-muted-foreground">Versão 1.0.0</p>
+            <p className="text-xs text-muted-foreground">{formatAppVersion(appVersion)}</p>
           </div>
         )}
       </div>
@@ -529,6 +530,11 @@ export function Sidebar() {
   const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [appVersion, setAppVersion] = useState<AppVersion | null>(null);
+
+  useEffect(() => {
+    void loadAppVersion().then(setAppVersion);
+  }, []);
 
   useEffect(() => {
     checkSuperadmin();

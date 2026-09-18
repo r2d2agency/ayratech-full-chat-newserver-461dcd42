@@ -53,7 +53,7 @@ export function PWAUpdateBanner() {
 
   const checkVersion = useCallback(async () => {
     try {
-      const response = await fetch('/version.json?t=' + Date.now());
+      const response = await fetch('/version.json?t=' + Date.now(), { cache: "no-store" });
       if (!response.ok) return;
       
       const data = await response.json();

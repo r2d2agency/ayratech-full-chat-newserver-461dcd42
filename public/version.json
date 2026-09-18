@@ -1,5 +1,11 @@
 {
-  "web": "1.0.0",
-  "promoter": "1.0.0",
-  "timestamp": 1716984000000
+  "version": "1.0.0",
+  "commit": "8061afb223ee4c019b54dda391a752a61e09edb2",
+  "commitShort": "8061afb2",
+  "buildId": "1.0.0-8061afb2",
+  "buildTime": "2026-09-18T19:39:37.478Z",
+  "dirty": true,
+  "web": "1.0.0-8061afb2",
+  "promoter": "1.0.0-8061afb2",
+  "timestamp": 1789760377478
 }

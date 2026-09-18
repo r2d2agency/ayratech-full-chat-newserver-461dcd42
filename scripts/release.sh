@@ -3,14 +3,24 @@
 # Script para gerar uma nova versão (release) do sistema
 # Uso: ./scripts/release.sh [versão]
 
-# Se não passar versão, usa timestamp
-VERSION=${1:-"v$(date +%Y%m%d%H%M)"}
+# Usa SemVer do package.json e o commit para identificar o release.
+PACKAGE_VERSION=$(node -p "require('./package.json').version")
+COMMIT=$(git rev-parse HEAD)
+COMMIT_SHORT=$(git rev-parse --short HEAD)
+BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+VERSION=${1:-"${PACKAGE_VERSION}-${COMMIT_SHORT}"}
 
+export BUILD_ID="$VERSION"
 echo "🚀 Iniciando release versão: $VERSION"
 
 # 1. Build do Frontend
 echo "📦 Construindo imagem do Frontend..."
-docker build -t app-frontend:$VERSION -f Dockerfile .
+docker build -t app-frontend:$VERSION -f Dockerfile \
+  --build-arg BUILD_COMMIT="$COMMIT" \
+  --build-arg BUILD_COMMIT_SHORT="$COMMIT_SHORT" \
+  --build-arg BUILD_TIME="$BUILD_TIME" \
+  --build-arg BUILD_ID="$VERSION" \
+  .
 docker tag app-frontend:$VERSION app-frontend:latest
 
 # 2. Build do Backend
