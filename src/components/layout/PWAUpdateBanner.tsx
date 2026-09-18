@@ -135,28 +135,19 @@ export function PWAUpdateBanner() {
 
     try {
       if (needRefresh) {
-        // Usa o fluxo oficial do vite-plugin-pwa: o worker novo assume o
-        // controle sem apagar o IndexedDB das fotos pendentes.
-        setProgress(100);
-        setDone(true);
-        if (newVersion) {
-          localStorage.setItem('app-version', JSON.stringify(newVersion));
-        }
-        setTimeout(() => updateServiceWorker(true), 400);
+        // Solicita que o worker aguardando assuma o controle. Não marca como
+        // concluído antes do reload, pois o worker pode continuar aguardando.
+        setProgress(90);
+        setTimeout(() => updateServiceWorker(true), 300);
+      setTimeout(() => window.location.reload(), 5000);
         return;
       }
 
-      // Fallback para versões detectadas pelo version.json quando o worker
-      // ainda não sinalizou atualização.
-      setProgress(100);
-      setDone(true);
-      
-      // Store the new version before reloading
-      if (newVersion) {
-        localStorage.setItem('app-version', JSON.stringify(newVersion));
-      }
-      
-      setTimeout(() => window.location.reload(), 1000);
+      // Fallback para versão detectada pelo version.json. Recarrega sem
+      // exibir "concluída" antes de a nova página ser carregada.
+      setProgress(90);
+      setTimeout(() => window.location.reload(), 500);
+      return;
     } catch (err) {
       console.error("[PWA] Update failed:", err);
       window.location.reload();
