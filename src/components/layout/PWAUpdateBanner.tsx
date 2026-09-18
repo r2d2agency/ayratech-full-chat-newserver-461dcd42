@@ -26,6 +26,7 @@ export function PWAUpdateBanner() {
   const [progress, setProgress] = useState(0);
   const [done, setDone] = useState(false);
   const [newVersion, setNewVersion] = useState<{ web: string, promoter: string } | null>(null);
+  const [deferredUpdate, setDeferredUpdate] = useState(false);
   const { updateServiceWorker, needRefresh } = useRegisterSW({
     immediate: true,
     onNeedRefresh() {
@@ -34,7 +35,7 @@ export function PWAUpdateBanner() {
   });
 
   useEffect(() => {
-    if (!needRefresh || updating) return;
+    if (!needRefresh || updating || deferredUpdate) return;
 
     // Aplica sozinho quando não há dados aguardando envio. Se houver fotos,
     // mantém o aviso para evitar recarregar o app durante a sincronização.
@@ -48,7 +49,7 @@ export function PWAUpdateBanner() {
         }
       })
       .catch(() => setShowPopup(true));
-  }, [needRefresh, updating, updateServiceWorker]);
+  }, [needRefresh, updating, deferredUpdate, updateServiceWorker]);
 
   const checkVersion = useCallback(async () => {
     try {
@@ -74,14 +75,14 @@ export function PWAUpdateBanner() {
         }
       }
 
-      if (hasUpdate) {
+      if (hasUpdate && !deferredUpdate) {
         setNewVersion(data);
         setShowPopup(true);
       }
     } catch (err) {
       console.error("[PWA] Error checking version:", err);
     }
-  }, []);
+  }, [deferredUpdate]);
 
   useEffect(() => {
     if (!shouldWatchForUpdates) return;
@@ -241,7 +242,7 @@ export function PWAUpdateBanner() {
               variant="ghost"
               size="sm"
               className="text-muted-foreground"
-              onClick={() => { setShowPopup(false); setConfirmForce(false); }}
+              onClick={() => { setDeferredUpdate(true); setShowPopup(false); setConfirmForce(false); }}
             >
               {confirmForce ? "Cancelar e sincronizar depois" : "Depois"}
             </Button>
