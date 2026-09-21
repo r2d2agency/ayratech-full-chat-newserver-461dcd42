@@ -1324,7 +1324,8 @@ router.post('/routes/bulk-delete', async (req, res) => {
     await tryDel(`DELETE FROM merch_route_authors WHERE route_id = ANY($1::uuid[])`, [allIds]);
     await tryDel(`DELETE FROM merch_route_assignment_history WHERE route_id = ANY($1::uuid[])`, [allIds]);
     await tryDel(`DELETE FROM merch_route_photos WHERE route_id = ANY($1::uuid[])`, [allIds]);
-    await tryDel(`DELETE FROM merch_route_categories WHERE route_id = ANY($1::uuid[])`, [allIds]);
+    // merch_route_categories não existe em instalações antigas; não tente
+    // executar a exclusão diretamente para não gerar db.query_failed 42P01.
 
     const del = await query(
       `DELETE FROM merch_routes WHERE id = ANY($1::uuid[])`,
@@ -1369,7 +1370,7 @@ router.delete('/routes/:id', async (req, res) => {
     await tryDel(`DELETE FROM merch_route_authors WHERE route_id = ANY($1::uuid[])`, [ids]);
     await tryDel(`DELETE FROM merch_route_assignment_history WHERE route_id = ANY($1::uuid[])`, [ids]);
     await tryDel(`DELETE FROM merch_route_photos WHERE route_id = ANY($1::uuid[])`, [ids]);
-    await tryDel(`DELETE FROM merch_route_categories WHERE route_id = ANY($1::uuid[])`, [ids]);
+    // merch_route_categories pode não existir em instalações antigas.
 
     const del = await query(`DELETE FROM merch_routes WHERE id = ANY($1::uuid[]) AND organization_id=$2`, [ids, orgId]);
     res.json({ ok: true, deleted: del.rowCount });
