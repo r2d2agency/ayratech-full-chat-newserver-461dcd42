@@ -973,8 +973,9 @@ router.post('/overtime-request', authenticatePromotor, async (req, res) => {
     try {
       const admins = await query(
         `SELECT e.id FROM employees e
-         JOIN users u ON u.id = e.user_id
-         WHERE e.organization_id = $1 AND u.role IN ('owner','admin')`,
+         JOIN organization_members om ON om.user_id = e.user_id
+         WHERE e.organization_id = $1 AND om.organization_id = $1
+           AND om.role IN ('owner','admin')`,
         [req.organizationId]
       );
       admins.rows.forEach(r => notifyIds.add(r.id));
