@@ -728,9 +728,16 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
     const toleranceAfter = tolerance;
 
 
-    const isWithinSchedule = currentMinutes >= (scheduleStartMin - toleranceBefore) && currentMinutes <= (scheduleEndMin + toleranceAfter);
+    // A tolerância limita somente a entrada antecipada. Atraso de entrada
+    // deve ser registrado normalmente e apenas identificado para o RH.
+    const isBeforeAllowedStart = currentMinutes < (scheduleStartMin - toleranceBefore);
+    const isAfterWorkday = currentMinutes > (scheduleEndMin + toleranceAfter);
+    const lateMinutes = currentMinutes > scheduleStartMin
+      ? currentMinutes - scheduleStartMin
+      : 0;
+    const isWithinSchedule = !isBeforeAllowedStart && !isAfterWorkday;
 
-    if (!isWithinSchedule) {
+    if (isBeforeAllowedStart || isAfterWorkday) {
       // Check for approved overtime request for today
       const otReq = await query(
         `SELECT id, requested_start, requested_end FROM overtime_requests
@@ -928,7 +935,12 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
       );
     }
 
-    res.json(result.rows[0]);
+    res.json({
+      ...result.rows[0],
+      is_late: lateMinutes > 0,
+      late_minutes: lateMinutes,
+      schedule: { start: scheduleStart, end: scheduleEnd },
+    });
   } catch (err) {
     logError('promotor.punch', err);
     res.status(500).json({ error: 'Erro ao registrar ponto' });
