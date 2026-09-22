@@ -724,6 +724,48 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
       }
     }
 
+    // Impede retorno antes do intervalo mínimo configurado no RH.
+    if (punch_type === 'retorno_intervalo') {
+      try {
+        const orgScheduleRes = await query(`SELECT work_schedule FROM organizations WHERE id = $1`, [req.organizationId]);
+        const rawSchedule = orgScheduleRes.rows[0]?.work_schedule;
+        const orgSchedule = typeof rawSchedule === 'string' ? JSON.parse(rawSchedule) : (rawSchedule || {});
+        const toMinutes = (value) => {
+          const [hours, minutes] = String(value || '').split(':').map(Number);
+          return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 60 + minutes : null;
+        };
+        const lunchStart = toMinutes(orgSchedule.lunch_start);
+        const lunchEnd = toMinutes(orgSchedule.lunch_end);
+        const minimumBreak = lunchStart !== null && lunchEnd !== null && lunchEnd > lunchStart
+          ? lunchEnd - lunchStart
+          : 0;
+        if (minimumBreak > 0) {
+          const lastBreak = await query(`
+            SELECT punched_at,
+                   FLOOR(EXTRACT(EPOCH FROM (NOW() - punched_at)) / 60) AS elapsed_minutes
+            FROM time_punches
+            WHERE employee_id = $1 AND punched_at::date = $2 AND punch_type = 'saida_intervalo'
+            ORDER BY punched_at DESC LIMIT 1`, [req.employeeId, today]);
+          const breakOut = lastBreak.rows[0];
+          if (breakOut) {
+            const elapsed = Math.max(0, Number(breakOut.elapsed_minutes) || 0);
+            if (elapsed < minimumBreak) {
+              const allowedAt = breakOutMinutes + minimumBreak;
+              return res.status(403).json({
+                error: `Intervalo de almoço ainda não cumprido. Aguarde mais ${minimumBreak - elapsed} minuto(s).`,
+                code: 'MINIMUM_BREAK_NOT_REACHED',
+                minimum_break_minutes: minimumBreak,
+                elapsed_break_minutes: Math.max(0, elapsed),
+                allowed_return_time: `${String(Math.floor(allowedAt / 60) % 24).padStart(2, '0')}:${String(allowedAt % 60).padStart(2, '0')}`,
+              });
+            }
+          }
+        }
+      } catch (e) {
+        if (!['42P01', '42703'].includes(e.code)) throw e;
+      }
+    }
+
     const toleranceBefore = tolerance;
     const toleranceAfter = tolerance;
 
