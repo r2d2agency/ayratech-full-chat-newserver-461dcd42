@@ -750,7 +750,7 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
           if (breakOut) {
             const elapsed = Math.max(0, Number(breakOut.elapsed_minutes) || 0);
             if (elapsed < minimumBreak) {
-              const allowedAt = breakOutMinutes + minimumBreak;
+              const allowedAt = currentMinutes + (minimumBreak - elapsed);
               return res.status(403).json({
                 error: `Intervalo de almoço ainda não cumprido. Aguarde mais ${minimumBreak - elapsed} minuto(s).`,
                 code: 'MINIMUM_BREAK_NOT_REACHED',
