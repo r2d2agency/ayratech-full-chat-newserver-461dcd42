@@ -760,6 +760,15 @@ export default function PromotorHome() {
         });
         return;
       }
+      if (errorCode === 'MINIMUM_BREAK_NOT_REACHED') {
+        toast({
+          title: '⏱️ Intervalo de almoço ainda não cumprido',
+          description: err.message || 'Aguarde o tempo mínimo de almoço antes de bater o retorno.',
+          variant: 'destructive',
+          duration: 12000,
+        });
+        return;
+      }
       if (err.message?.includes('horário de trabalho') || err.message?.includes('OUTSIDE_SCHEDULE') || errorCode === 'OUTSIDE_SCHEDULE') {
         setOvertimeDialog(true);
       }
