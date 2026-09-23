@@ -1014,7 +1014,10 @@ router.post('/time-records', async (req, res) => {
          entry3=EXCLUDED.entry3, exit3=EXCLUDED.exit3, total_hours=EXCLUDED.total_hours,
          overtime_hours=EXCLUDED.overtime_hours, status=EXCLUDED.status, justification=EXCLUDED.justification, updated_at=NOW()
        RETURNING *`,
-      [orgId, d.employee_id, d.record_date, d.entry1, d.exit1, d.entry2, d.exit2, d.entry3, d.exit3, d.total_hours || 0, d.overtime_hours || 0, d.status || 'normal', d.justification]
+      [orgId, d.employee_id, d.record_date,
+        d.entry1 || null, d.exit1 || null, d.entry2 || null, d.exit2 || null,
+        d.entry3 || null, d.exit3 || null, d.total_hours || 0, d.overtime_hours || 0,
+        d.status || 'normal', d.justification]
     );
     res.json(result.rows[0]);
   } catch (err) {
