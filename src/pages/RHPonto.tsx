@@ -233,7 +233,36 @@ export default function RHPonto() {
   };
 
   const handleSave = async () => {
-    if (!form.employee_id || !form.record_date) { toast({ title: "Selecione o colaborador e a data", variant: "destructive" }); return; }
+    if (!form.employee_id || !form.record_date) {
+      toast({ title: "Selecione o colaborador e a data", variant: "destructive" });
+      return;
+    }
+
+    const pairs = [
+      ['entry1', 'exit1', '1º período'],
+      ['entry2', 'exit2', 'intervalo'],
+      ['entry3', 'exit3', '3º período'],
+    ] as const;
+    const incomplete = pairs.find(([entry, exit]) => Boolean(form[entry]) !== Boolean(form[exit]));
+    if (incomplete) {
+      toast({
+        title: "Horário incompleto",
+        description: `Preencha a hora inicial e a hora final do ${incomplete[2]} ou deixe os dois campos vazios.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const hasHours = pairs.some(([entry, exit]) => form[entry] && form[exit]);
+    if (!hasHours) {
+      toast({
+        title: "Informe os horários",
+        description: "Preencha pelo menos uma hora inicial e uma hora final para lançar o ponto.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const totalMinutes = calcMinutes(form);
     const totalH = totalMinutes / 60;
     const overtime = Math.max(0, totalH - 8);
@@ -241,8 +270,12 @@ export default function RHPonto() {
       await saveMut.mutateAsync({ ...form, total_hours: totalH, overtime_hours: overtime });
       toast({ title: "Ponto registrado!" });
       setDialogOpen(false);
-    } catch {
-      toast({ title: "Erro ao registrar ponto", variant: "destructive" });
+    } catch (error: any) {
+      toast({
+        title: "Não foi possível salvar o ajuste",
+        description: error?.message || "Verifique os horários informados e tente novamente.",
+        variant: "destructive",
+      });
     }
   };
 
