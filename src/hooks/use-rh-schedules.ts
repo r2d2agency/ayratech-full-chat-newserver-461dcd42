@@ -41,7 +41,12 @@ export function useRemoveAssignment() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api(`/api/rh/employee-schedules/${id}`, { method: 'DELETE' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['rh-schedule-assignments'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['rh-schedule-assignments'] });
+      // A remoção altera a escala exibida no cadastro do colaborador.
+      // Invalide o prefixo para atualizar qualquer funcionário aberto no momento.
+      qc.invalidateQueries({ queryKey: ['rh-employee-schedule'] });
+    },
   });
 }
 
