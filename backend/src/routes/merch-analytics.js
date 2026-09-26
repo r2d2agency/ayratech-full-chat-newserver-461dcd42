@@ -275,7 +275,11 @@ router.get('/report/pdv', async (req, res) => {
     if (promoter_id) { filters += ` AND r.promoter_id = $${idx}`; params.push(promoter_id); idx++; }
 
     const rows = (await query(`
-      SELECT p.id as pdv_id, p.name as pdv_name, p.city, p.network,
+      SELECT p.id as pdv_id, p.name as pdv_name, p.city,
+        (SELECT STRING_AGG(DISTINCT mr.name, ', ' ORDER BY mr.name)
+         FROM merch_rede_pdvs mrp
+         JOIN merch_redes mr ON mr.id = mrp.rede_id
+         WHERE mrp.pdv_id = p.id AND mr.organization_id = p.organization_id) as network,
         COUNT(DISTINCT r.id) as total_visits,
         COUNT(DISTINCT r.brand_id) as brands_served,
         COUNT(DISTINCT r.promoter_id) as promoters,
@@ -284,7 +288,7 @@ router.get('/report/pdv', async (req, res) => {
       FROM merch_routes r
       JOIN pdvs p ON p.id = r.pdv_id
       WHERE r.organization_id = $1 ${filters}
-      GROUP BY p.id, p.name, p.city, p.network
+      GROUP BY p.id, p.name, p.city
       ORDER BY total_visits DESC
       LIMIT 200
     `, params)).rows;

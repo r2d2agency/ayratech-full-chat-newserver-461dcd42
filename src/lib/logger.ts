@@ -114,9 +114,7 @@ export const logger = {
       };
 
       // Non-blocking fire and forget
-      fetch(`${import { loadAppVersion } from '@/lib/app-version';
-
-.meta.env.VITE_API_URL || ''}${endpoint}`, {
+      fetch(`${import.meta.env.VITE_API_URL || ''}${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
