@@ -124,8 +124,14 @@ export function useOnlineStatus() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
+    const handleOnline = () => {
+      logger.info('connectivity_changed', { event_name: 'connectivity_changed', state: 'online', online: true });
+      setIsOnline(true);
+    };
+    const handleOffline = () => {
+      logger.warn('connectivity_changed', { event_name: 'connectivity_changed', state: 'offline', online: false });
+      setIsOnline(false);
+    };
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
@@ -515,6 +521,15 @@ function useOfflineSyncState() {
 
   const queueUpload = useCallback(async (file: File, token: string | null): Promise<string> => {
     const localId = `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const queueStartedAt = Date.now();
+
+    await logger.info('photo_queue_started', {
+      event_name: 'photo_queue_started',
+      local_id: localId,
+      file_size_kb: Math.round((file.size || 0) / 1024),
+      file_type: file.type,
+      online: navigator.onLine,
+    });
 
     // Guardamos os bytes como ArrayBuffer (não Blob/File) — no Safari/iOS,
     // especialmente em aparelhos com pouca RAM, gravar um Blob direto no
@@ -524,20 +539,40 @@ function useOfflineSyncState() {
     // usa structured clone puro e não sofre desse problema — o preço é uma
     // cópia extra em memória, que pode pesar em aparelhos mais fracos. Medimos
     // aqui pra saber se é isso que está deixando algum aparelho lento.
-    const queueStartedAt = Date.now();
     const fileData = await file.arrayBuffer();
 
-    await db.pending_uploads.add({
-      fileData,
-      fileName: file.name,
-      fileType: file.type,
-      timestamp: Date.now(),
-      token,
-      status: 'pending',
-      localId
-    });
+    try {
+      await db.pending_uploads.add({
+        fileData,
+        fileName: file.name,
+        fileType: file.type,
+        timestamp: Date.now(),
+        token,
+        status: 'pending',
+        localId
+      });
+    } catch (error: any) {
+      await logger.error('photo_queue_failed', {
+        event_name: 'photo_queue_failed',
+        local_id: localId,
+        file_size_kb: Math.round((file.size || 0) / 1024),
+        duration_ms: Date.now() - queueStartedAt,
+        online: navigator.onLine,
+        error_name: error?.name,
+        error_message: error?.message,
+      }, error instanceof Error ? error : undefined);
+      throw new Error('Não foi possível salvar a foto na fila offline. Tente novamente.');
+    }
 
     const queueDurationMs = Date.now() - queueStartedAt;
+    await logger.info('photo_queued', {
+      event_name: 'photo_queued',
+      local_id: localId,
+      duration_ms: queueDurationMs,
+      file_size_kb: Math.round((file.size || 0) / 1024),
+      online: navigator.onLine,
+    });
+
     if (queueDurationMs > 1500) {
       logger.warn('[OfflineSync] Enfileirar foto demorou mais que o esperado', {
         localId,

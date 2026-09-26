@@ -1,3 +1,5 @@
+import { loadAppVersion } from '@/lib/app-version';
+
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 
 interface LogData {
@@ -89,6 +91,7 @@ export const logger = {
       const name = getUserName();
       const employeeId = getUserId();
       const device = getDeviceInfo();
+      const appVersion = await loadAppVersion();
 
       // Remote persistence to our backend logs
       const endpoint = '/api/rh/client-logs';
@@ -101,13 +104,19 @@ export const logger = {
           employee_name: name,
           employee_id: employeeId,
           device,
+          app_version: appVersion?.version || null,
+          build_id: appVersion?.buildId || null,
+          build_time: appVersion?.buildTime || null,
+          commit_short: appVersion?.commitShort || null,
           context,
           error: stack_trace ? { stack: stack_trace } : undefined
         }
       };
 
       // Non-blocking fire and forget
-      fetch(`${import.meta.env.VITE_API_URL || ''}${endpoint}`, {
+      fetch(`${import { loadAppVersion } from '@/lib/app-version';
+
+.meta.env.VITE_API_URL || ''}${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

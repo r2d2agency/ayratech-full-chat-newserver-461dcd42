@@ -111,7 +111,7 @@ export default function RHPonto() {
   const [customStart, setCustomStart] = useState(format(startOfMonth(nowSaoPaulo()), 'yyyy-MM-dd'));
   const [customEnd, setCustomEnd] = useState(format(nowSaoPaulo(), 'yyyy-MM-dd'));
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState("consolidated");
+  const [activeTab, setActiveTab] = useState("validation");
   const [reportType, setReportType] = useState<'todos' | 'horas_extras' | 'faltas'>('todos');
   const [form, setForm] = useState<any>({ employee_id: "", record_date: format(nowSaoPaulo(), "yyyy-MM-dd"), entry1: "08:00", exit1: "12:00", entry2: "13:00", exit2: "17:00", entry3: "", exit3: "", status: "normal", justification: "" });
   const { toast } = useToast();
@@ -226,7 +226,7 @@ export default function RHPonto() {
   };
 
   const formatMinutesToHHMM = (m: number) => {
-    if (!m || m <= 0) return '—';
+    if (!m || m <= 0) return '00:00';
     const h = Math.floor(m / 60);
     const mm = m % 60;
     return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
@@ -502,6 +502,7 @@ export default function RHPonto() {
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="flex-wrap h-auto">
+            <TabsTrigger value="validation" className="gap-2"><CheckCircle2 className="h-4 w-4" /> Validação diária</TabsTrigger>
             <TabsTrigger value="consolidated" className="gap-2"><CalendarDays className="h-4 w-4" /> Consolidado ({filteredConsolidated.length})</TabsTrigger>
             <TabsTrigger value="app" className="gap-2"><Smartphone className="h-4 w-4" /> App ({appPunches.length})</TabsTrigger>
             <TabsTrigger value="manual" className="gap-2"><Clock className="h-4 w-4" /> Manual ({filteredRecords.length})</TabsTrigger>
@@ -510,6 +511,32 @@ export default function RHPonto() {
               {overtimePendingCount > 0 && <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-4 min-w-4">{overtimePendingCount}</Badge>}
             </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="validation">
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-primary" /> Validação diária por funcionário</CardTitle></CardHeader>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader><TableRow><TableHead>Data</TableHead><TableHead>Colaborador</TableHead><TableHead>Realizado</TableHead><TableHead>Planejado</TableHead><TableHead>Saldo</TableHead><TableHead>Situação</TableHead></TableRow></TableHeader>
+                  <TableBody>
+                    {loadingConsolidated ? <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Carregando...</TableCell></TableRow> : filteredConsolidated.length === 0 ? <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Nenhum registro encontrado</TableCell></TableRow> : filteredConsolidated.map((c: any, idx: number) => {
+                      const punches = Array.isArray(c.punches) ? c.punches : [];
+                      const incomplete = punches.length % 2 !== 0;
+                      const realized = Number(c.total_minutes) || 0;
+                      const hasSchedule = c.daily_hours !== null && c.daily_hours !== undefined;
+                      const planned = hasSchedule ? Number(c.daily_hours) * 60 : 0;
+                      const balance = realized - planned;
+                      const balanceLabel = hasSchedule ? `${balance >= 0 ? '+' : '-'}${formatMinutesToHHMM(Math.abs(balance))}` : '—';
+                      const status = incomplete ? 'Incompleto' : !hasSchedule ? 'Sem escala' : balance > 0 ? 'Hora extra' : balance < 0 ? 'Déficit' : 'Normal';
+                      return <TableRow key={idx} className={incomplete ? 'bg-yellow-50/50 dark:bg-yellow-950/10' : ''}>
+                        <TableCell>{formatDateValue(c.record_date, 'dd/MM/yyyy')}</TableCell><TableCell className="font-medium">{c.employee_name}</TableCell><TableCell>{c.formatted_hours || formatMinutesToHHMM(realized)}</TableCell><TableCell>{hasSchedule ? formatMinutesToHHMM(planned) : '—'}</TableCell><TableCell className={balance > 0 ? 'text-green-600 font-semibold' : balance < 0 ? 'text-red-600 font-semibold' : ''}>{incomplete ? '—' : balanceLabel}</TableCell><TableCell><Badge variant={incomplete ? 'secondary' : balance < 0 ? 'destructive' : 'outline'}>{status}</Badge></TableCell>
+                      </TableRow>;
+                    })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           <TabsContent value="overtime">
             <Card>

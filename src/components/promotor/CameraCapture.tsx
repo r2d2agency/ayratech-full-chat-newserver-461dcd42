@@ -315,21 +315,60 @@ export function CameraCapture({
 
   // Comprime e envia o canvas já com watermark aplicada
   const uploadCanvas = async (canvas: HTMLCanvasElement) => {
+    const processingStartedAt = Date.now();
+    await logger.info('photo_processing_started', {
+      event_name: 'photo_processing_started',
+      category: watermark.categoryName,
+      photo_type: watermark.photoType,
+      online: navigator.onLine,
+    });
+
     const blob = await compressWebP(
       canvas,
       config.compression_quality,
       config.max_file_size_kb,
     );
     if (!blob) {
-      toast.error("Erro ao comprimir imagem");
-      return;
+      await logger.error('photo_processing_failed', {
+        event_name: 'photo_processing_failed',
+        stage: 'compression',
+        category: watermark.categoryName,
+        photo_type: watermark.photoType,
+        duration_ms: Date.now() - processingStartedAt,
+        online: navigator.onLine,
+      });
+      toast.error("Erro ao comprimir imagem. Tente novamente.");
+      throw new Error('Não foi possível comprimir a foto.');
     }
     const file = new File([blob], `photo_${Date.now()}.webp`, { type: "image/webp" });
     const token = (customTokenGetter ? customTokenGetter() : null)
       || localStorage.getItem('promotor_token')
       || localStorage.getItem('auth_token');
-    const localRef = await queueUpload(file, token);
-    onCapture(localRef);
+    try {
+      const localRef = await queueUpload(file, token);
+      await logger.info('photo_processing_completed', {
+        event_name: 'photo_processing_completed',
+        category: watermark.categoryName,
+        photo_type: watermark.photoType,
+        local_id: localRef.replace('local-file://', ''),
+        file_size_kb: Math.round(file.size / 1024),
+        duration_ms: Date.now() - processingStartedAt,
+        online: navigator.onLine,
+      });
+      onCapture(localRef);
+    } catch (error: any) {
+      await logger.error('photo_processing_failed', {
+        event_name: 'photo_processing_failed',
+        stage: 'queue',
+        category: watermark.categoryName,
+        photo_type: watermark.photoType,
+        duration_ms: Date.now() - processingStartedAt,
+        online: navigator.onLine,
+        error_name: error?.name,
+        error_message: error?.message,
+      }, error instanceof Error ? error : undefined);
+      throw error;
+    }
   };
 
   const processAndUpload = async (canvas: HTMLCanvasElement) => {
@@ -342,6 +381,15 @@ export function CameraCapture({
       await stampCanvas(canvas);
       await uploadCanvas(canvas);
     } catch (err: any) {
+      await logger.error('photo_processing_failed', {
+        event_name: 'photo_processing_failed',
+        stage: 'capture_pipeline',
+        category: watermark.categoryName,
+        photo_type: watermark.photoType,
+        online: navigator.onLine,
+        error_name: err?.name,
+        error_message: err?.message,
+      }, err instanceof Error ? err : undefined);
       toast.error(err.message || "Erro ao processar foto");
     } finally {
       setIsProcessing(false);

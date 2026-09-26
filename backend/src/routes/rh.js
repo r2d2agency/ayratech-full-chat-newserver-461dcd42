@@ -1034,12 +1034,14 @@ router.get('/consolidated-timesheet', async (req, res) => {
     const { employee_id, start_date, end_date } = req.query;
 
     let sql = `
-      SELECT 
+      SELECT
         tp.employee_id,
         e.full_name as employee_name,
         e.cpf,
         e.position,
         e.work_schedule,
+        schedule.daily_hours,
+        schedule.schedule_name,
         (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date as record_date,
         json_agg(json_build_object(
           'id', tp.id, 'punch_type', tp.punch_type, 'punched_at', tp.punched_at,
@@ -1051,19 +1053,32 @@ router.get('/consolidated-timesheet', async (req, res) => {
       FROM time_punches tp
       JOIN employees e ON e.id = tp.employee_id
       LEFT JOIN pdvs p ON p.id = tp.pdv_id
+      LEFT JOIN LATERAL (
+        SELECT ws.daily_hours, ws.name AS schedule_name, ws.workdays
+        FROM employee_schedules es
+        JOIN work_schedules ws ON ws.id = es.schedule_id
+        WHERE es.employee_id = tp.employee_id
+          AND es.organization_id = tp.organization_id
+          AND es.active = true
+          AND es.start_date <= (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date
+          AND (es.end_date IS NULL OR es.end_date >= (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date)
+        ORDER BY es.start_date DESC
+        LIMIT 1
+      ) schedule ON true
       WHERE tp.organization_id = $1`;
     const params = [orgId];
     let idx = 2;
     if (employee_id) { sql += ` AND tp.employee_id = $${idx++}`; params.push(employee_id); }
     
     // Default to today if no dates provided to ensure something appears
-    const sd = start_date || new Date().toISOString().slice(0, 10);
-    const ed = end_date || new Date().toISOString().slice(0, 10);
+    const saoPauloToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+    const sd = start_date || saoPauloToday();
+    const ed = end_date || saoPauloToday();
     
     sql += ` AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date >= $${idx++}`; params.push(sd);
     sql += ` AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date <= $${idx++}`; params.push(ed);
     
-    sql += ` GROUP BY tp.employee_id, e.full_name, e.cpf, e.position, e.work_schedule, (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date
+    sql += ` GROUP BY tp.employee_id, e.full_name, e.cpf, e.position, e.work_schedule, schedule.daily_hours, schedule.schedule_name, (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date
              ORDER BY (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date DESC, e.full_name`;
     const result = await query(sql, params);
     

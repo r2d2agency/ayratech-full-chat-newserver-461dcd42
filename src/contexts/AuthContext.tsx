@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { authApi, setAuthToken, clearAuthToken, getAuthToken, AUTH_INVALID_EVENT } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
+import { logger } from '@/lib/logger';
 
 interface ModulesEnabled {
   campaigns: boolean;
@@ -126,14 +127,37 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, [toast, user]);
 
   const login = async (email: string, password: string) => {
-    const { user: userData, token } = await authApi.login(email, password);
+    const startedAt = Date.now();
+    await logger.info('login_started', {
+      event_name: 'login_started',
+      online: navigator.onLine,
+      method: 'password',
+    });
+    try {
+      const { user: userData, token } = await authApi.login(email, password);
     setAuthToken(token);
     const u = userData as any;
     setUser(u);
     if (u.organization_id) {
       sessionStorage.setItem('user_org_id', u.organization_id);
     }
-    toast({ title: 'Login realizado com sucesso!' });
+      await logger.info('login_succeeded', {
+        event_name: 'login_succeeded',
+        online: navigator.onLine,
+        duration_ms: Date.now() - startedAt,
+        organization_id: u.organization_id || null,
+      });
+      toast({ title: 'Login realizado com sucesso!' });
+    } catch (error: any) {
+      await logger.warn('login_failed', {
+        event_name: 'login_failed',
+        online: navigator.onLine,
+        duration_ms: Date.now() - startedAt,
+        error_name: error?.name,
+        error_message: error?.message,
+      });
+      throw error;
+    }
   };
 
   const register = async (email: string, password: string, name: string, planId?: string) => {

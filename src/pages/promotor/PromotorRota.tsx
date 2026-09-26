@@ -236,7 +236,7 @@ function CategoryPreparation({ category, catId, routeBrandId, categoryName, rout
       };
 
       // Always use background queue for photo-related actions for performance
-      queueApiCall({
+      await queueApiCall({
         url: `/api/merch/promotor/routes/${routeId}/categories/${catId}/photo`,
         method: 'POST',
         body: { ...body, routeId, catId },
@@ -244,6 +244,12 @@ function CategoryPreparation({ category, catId, routeBrandId, categoryName, rout
         dependsOnUploadId: effective[0]?.startsWith('local-file://') ? effective[0].replace('local-file://', '') : undefined
       });
       
+      await logger.info('category_advanced', {
+        event_name: 'category_advanced', route_id: routeId, category_id: catId,
+        category_name: categoryName, photo_type: 'category_before',
+        local_id: effective[0]?.replace('local-file://', '') || null,
+        online: navigator.onLine,
+      });
       setPhotos([]);
       setIsSending(false);
       onCaptureOptimistic?.(effective[0], 'category_before');
@@ -251,7 +257,8 @@ function CategoryPreparation({ category, catId, routeBrandId, categoryName, rout
     } catch (e: any) {
       setIsSending(false);
       setPhotos([]);
-      toast.error('Falha ao enviar a foto ANTES. Tire a foto novamente.');
+      toast.error('Falha ao salvar a foto ANTES. A categoria permanece bloqueada; tente novamente.');
+      await logger.error('category_blocked', { event_name: 'category_blocked', reason: e?.message, route_id: routeId, category_id: catId, category_name: categoryName, photo_type: 'category_before', online: navigator.onLine });
       logger.error('[CategoryPreparation] Falha ao enviar foto', { message: e?.message, routeId, catId });
     }
   };
@@ -502,6 +509,12 @@ function CategoryAfterPhotoGate({ catId, routeBrandId, categoryName, routeId, pd
         dependsOnUploadId: effective[0]?.startsWith('local-file://') ? effective[0].replace('local-file://', '') : undefined
       });
 
+      await logger.info('category_advanced', {
+        event_name: 'category_advanced', route_id: routeId, category_id: catId,
+        category_name: categoryName, photo_type: 'category_after',
+        local_id: effective[0]?.replace('local-file://', '') || null,
+        online: navigator.onLine,
+      });
       setPhotos([]);
       setIsSending(false);
       onCaptureOptimistic?.(effective[0], 'category_after');
@@ -509,7 +522,8 @@ function CategoryAfterPhotoGate({ catId, routeBrandId, categoryName, routeId, pd
     } catch (e: any) {
       setIsSending(false);
       setPhotos([]);
-      toast.error('Falha ao enviar a foto DEPOIS. Tire a foto novamente.');
+      toast.error('Falha ao salvar a foto DEPOIS. A categoria permanece bloqueada; tente novamente.');
+      await logger.error('category_blocked', { event_name: 'category_blocked', reason: e?.message, route_id: routeId, category_id: catId, category_name: categoryName, photo_type: 'category_after', online: navigator.onLine });
       logger.error('[CategoryAfterPhotoGate] Falha ao enviar foto', { message: e?.message, routeId, catId });
     }
   };
