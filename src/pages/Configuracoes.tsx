@@ -20,7 +20,6 @@ import { SMTPConfigPanel } from "@/components/email/SMTPConfigPanel";
 import { EmailTemplatesPanel } from "@/components/email/EmailTemplatesPanel";
 import { FeaturesDocumentation } from "@/components/admin/FeaturesDocumentation";
 import { AIConfigPanel } from "@/components/settings/AIConfigPanel";
-import { WorkSchedulePanel } from "@/components/settings/WorkSchedulePanel";
 import { PushNotificationSettings } from "@/components/settings/PushNotificationSettings";
 import { NotificationConnectionSettings } from "@/components/settings/NotificationConnectionSettings";
 import { ThemeCustomizer } from "@/components/admin/ThemeCustomizer";
@@ -682,7 +681,6 @@ const Configuracoes = () => {
 
           <TabsContent value="ia" className="mt-6 space-y-6">
             <AIConfigPanel />
-            <WorkSchedulePanel />
           </TabsContent>
 
           {/* Email Settings Tab */}

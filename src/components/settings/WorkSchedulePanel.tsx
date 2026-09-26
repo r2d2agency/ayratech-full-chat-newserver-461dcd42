@@ -8,260 +8,59 @@ import { Clock, Save, Loader2, Calendar } from "lucide-react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 
+interface DaySchedule { enabled: boolean; start: string; end: string; lunch_start: string; lunch_end: string; }
 interface WorkSchedule {
-  timezone: string;
-  work_days: number[];
-  work_start: string;
-  work_end: string;
-  lunch_start: string;
-  lunch_end: string;
-  slot_duration_minutes: number;
-  buffer_minutes: number;
-  punch_tolerance_minutes: number;
+  timezone: string; work_days: number[]; work_start: string; work_end: string;
+  lunch_start: string; lunch_end: string; punch_tolerance_minutes: number;
+  enforce_minimum_lunch_break?: boolean; dayConfig: Record<string, DaySchedule>;
 }
 
-const DAY_NAMES = [
-  { id: 0, label: 'Dom' },
-  { id: 1, label: 'Seg' },
-  { id: 2, label: 'Ter' },
-  { id: 3, label: 'Qua' },
-  { id: 4, label: 'Qui' },
-  { id: 5, label: 'Sex' },
-  { id: 6, label: 'Sáb' },
-];
+const DAYS = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+const defaults = (schedule: Partial<WorkSchedule> = {}): WorkSchedule => {
+  const days = schedule.work_days || [1, 2, 3, 4, 5];
+  const config = schedule.dayConfig || {};
+  const dayConfig: Record<string, DaySchedule> = {};
+  for (let i = 0; i < 7; i++) {
+    const old = config[String(i)] || (config as any)[['dom','seg','ter','qua','qui','sex','sab'][i]];
+    dayConfig[String(i)] = old || {
+      enabled: days.includes(i), start: schedule.work_start || '08:00', end: schedule.work_end || '18:00',
+      lunch_start: schedule.lunch_start || '12:00', lunch_end: schedule.lunch_end || '13:00'
+    };
+  }
+  return { timezone: schedule.timezone || 'America/Sao_Paulo', work_days: days,
+    work_start: schedule.work_start || '08:00', work_end: schedule.work_end || '18:00',
+    lunch_start: schedule.lunch_start || '12:00', lunch_end: schedule.lunch_end || '13:00',
+    punch_tolerance_minutes: schedule.punch_tolerance_minutes ?? 15,
+    enforce_minimum_lunch_break: schedule.enforce_minimum_lunch_break !== false, dayConfig };
+};
 
 export function WorkSchedulePanel() {
-  const [schedule, setSchedule] = useState<WorkSchedule>({
-    timezone: 'America/Sao_Paulo',
-    work_days: [1, 2, 3, 4, 5],
-    work_start: '08:00',
-    work_end: '18:00',
-    lunch_start: '12:00',
-    lunch_end: '13:00',
-    slot_duration_minutes: 60,
-    buffer_minutes: 15,
-    punch_tolerance_minutes: 15,
-  });
+  const [schedule, setSchedule] = useState<WorkSchedule>(defaults());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    loadSchedule();
-  }, []);
-
-  const loadSchedule = async () => {
-    try {
-      const data = await api<WorkSchedule>('/api/organizations/work-schedule');
-      setSchedule(data);
-    } catch (error) {
-      console.error('Error loading work schedule:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  useEffect(() => { (async () => { try { setSchedule(defaults(await api<Partial<WorkSchedule>>('/api/organizations/work-schedule'))); } catch (e) { console.error(e); } finally { setLoading(false); } })(); }, []);
+  const updateDay = (id: number, patch: Partial<DaySchedule>) => setSchedule(s => ({ ...s, dayConfig: { ...s.dayConfig, [id]: { ...s.dayConfig[String(id)], ...patch } } }));
   const handleSave = async () => {
     setSaving(true);
     try {
-      await api('/api/organizations/work-schedule', {
-        method: 'PUT',
-        body: schedule,
-        auth: true,
-      });
-      toast.success('Horário de trabalho salvo');
-    } catch (error) {
-      toast.error('Erro ao salvar horário');
-    } finally {
-      setSaving(false);
-    }
+      const enabled = Object.entries(schedule.dayConfig).filter(([, d]) => d.enabled).map(([id]) => Number(id));
+      const first = schedule.dayConfig[String(enabled[0] ?? 1)] || schedule.dayConfig['1'];
+      await api('/api/organizations/work-schedule', { method: 'PUT', body: { ...schedule, work_days: enabled, work_start: first.start, work_end: first.end, lunch_start: first.lunch_start, lunch_end: first.lunch_end }, auth: true });
+      toast.success('Jornada global salva');
+    } catch { toast.error('Erro ao salvar jornada global'); } finally { setSaving(false); }
   };
-
-  const toggleDay = (dayId: number) => {
-    setSchedule(prev => ({
-      ...prev,
-      work_days: prev.work_days.includes(dayId)
-        ? prev.work_days.filter(d => d !== dayId)
-        : [...prev.work_days, dayId].sort(),
-    }));
-  };
-
-  if (loading) {
-    return (
-      <Card>
-        <CardContent className="flex items-center justify-center py-8">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Punch Tolerance */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Clock className="h-5 w-5 text-primary" />
-            Tolerância de Ponto Global
-          </CardTitle>
-          <CardDescription>
-            Configure a tolerância padrão para toda a empresa. Este valor será usado caso o colaborador não tenha uma tolerância individual definida.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label>Tolerância para Bater Ponto (minutos)</Label>
-            <Input
-              type="number"
-              min={0}
-              max={120}
-              value={schedule.punch_tolerance_minutes}
-              onChange={(e) => setSchedule(prev => ({ ...prev, punch_tolerance_minutes: parseInt(e.target.value) || 0 }))}
-            />
-            <p className="text-xs text-muted-foreground">
-              Tempo permitido para registro antes/depois do horário da escala.
-            </p>
-          </div>
-
-          <Button onClick={handleSave} disabled={saving} className="w-full">
-            {saving ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Salvando...
-              </>
-            ) : (
-              <>
-                <Save className="h-4 w-4 mr-2" />
-                Salvar Configuração Global
-              </>
-            )}
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* Legacy Scheduling Config - Now hidden/secondary as it's for AI Agent scheduling, not HR Point */}
-      <Card className="opacity-60 grayscale-[0.5] hover:opacity-100 hover:grayscale-0 transition-all">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-sm">
-            <Calendar className="h-4 w-4" />
-            Configurações de Agendamento IA (Legado)
-          </CardTitle>
-          <CardDescription className="text-xs">
-            Estas configurações são usadas apenas para o agendamento automático de reuniões por IA.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6 pt-0">
-          {/* Work Days */}
-          <div className="space-y-2">
-
-          <Label>Dias de Trabalho</Label>
-          <div className="flex gap-2">
-            {DAY_NAMES.map(day => (
-              <Button
-                key={day.id}
-                variant={schedule.work_days.includes(day.id) ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => toggleDay(day.id)}
-                className="w-12"
-              >
-                {day.label}
-              </Button>
-            ))}
-          </div>
-        </div>
-
-        {/* Work Hours */}
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label className="flex items-center gap-1.5">
-              <Clock className="h-3.5 w-3.5" />
-              Início do Expediente
-            </Label>
-            <Input
-              type="time"
-              value={schedule.work_start}
-              onChange={(e) => setSchedule(prev => ({ ...prev, work_start: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label className="flex items-center gap-1.5">
-              <Clock className="h-3.5 w-3.5" />
-              Fim do Expediente
-            </Label>
-            <Input
-              type="time"
-              value={schedule.work_end}
-              onChange={(e) => setSchedule(prev => ({ ...prev, work_end: e.target.value }))}
-            />
-          </div>
-        </div>
-
-        {/* Lunch Break */}
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Início do Almoço</Label>
-            <Input
-              type="time"
-              value={schedule.lunch_start}
-              onChange={(e) => setSchedule(prev => ({ ...prev, lunch_start: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Fim do Almoço</Label>
-            <Input
-              type="time"
-              value={schedule.lunch_end}
-              onChange={(e) => setSchedule(prev => ({ ...prev, lunch_end: e.target.value }))}
-            />
-          </div>
-        </div>
-
-        {/* Slot Config */}
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Duração do Slot (min)</Label>
-            <Input
-              type="number"
-              min={15}
-              max={240}
-              value={schedule.slot_duration_minutes}
-              onChange={(e) => setSchedule(prev => ({ ...prev, slot_duration_minutes: parseInt(e.target.value) || 60 }))}
-            />
-            <p className="text-xs text-muted-foreground">Duração padrão de cada agendamento</p>
-          </div>
-          <div className="space-y-2">
-            <Label>Intervalo entre Slots (min)</Label>
-            <Input
-              type="number"
-              min={0}
-              max={60}
-              value={schedule.buffer_minutes}
-              onChange={(e) => setSchedule(prev => ({ ...prev, buffer_minutes: parseInt(e.target.value) || 0 }))}
-            />
-            <p className="text-xs text-muted-foreground">Tempo de folga entre reuniões</p>
-          </div>
-        </div>
-
-        {/* Preview */}
-        <div className="rounded-lg bg-muted/50 p-4 text-sm">
-          <p className="font-medium mb-1">📋 Resumo do expediente IA:</p>
-          <p className="text-muted-foreground">
-            {DAY_NAMES.filter(d => schedule.work_days.includes(d.id)).map(d => d.label).join(', ')} • {schedule.work_start} às {schedule.work_end} • Almoço {schedule.lunch_start}-{schedule.lunch_end}
-          </p>
-        </div>
-
-        <Button onClick={handleSave} variant="outline" disabled={saving} className="w-full text-xs py-1 h-8">
-          {saving ? (
-            <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-          ) : (
-            <>
-              <Save className="h-3 w-3 mr-2" />
-              Atualizar Agenda IA
-            </>
-          )}
-        </Button>
-      </CardContent>
-    </Card>
-  </div>
-  );
+  if (loading) return <Card><CardContent className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></CardContent></Card>;
+  return <Card>
+    <CardHeader><CardTitle className="flex items-center gap-2"><Calendar className="h-5 w-5 text-primary" />Jornada Global de Ponto</CardTitle>
+      <CardDescription>Usada por colaboradores sem escala diária ou recorrente. Configure cada dia separadamente.</CardDescription></CardHeader>
+    <CardContent className="space-y-4">
+      <div className="rounded-md bg-primary/5 p-3 text-sm text-muted-foreground">A jornada abaixo será aplicada como <strong>JORNADA_GLOBAL</strong>. Dias desativados são considerados folga.</div>
+      <div className="space-y-3">{DAYS.map((name, id) => { const day = schedule.dayConfig[String(id)]; return <div key={id} className="rounded-lg border p-3 space-y-3">
+        <div className="flex items-center justify-between"><Label className="font-semibold">{name}</Label><div className="flex items-center gap-2 text-sm"><span>{day.enabled ? 'Trabalha' : 'Folga'}</span><Switch checked={day.enabled} onCheckedChange={enabled => updateDay(id, { enabled })} /></div></div>
+        {day.enabled && <div className="grid grid-cols-2 md:grid-cols-4 gap-3"><div><Label className="text-xs">Entrada</Label><Input type="time" value={day.start} onChange={e => updateDay(id, { start: e.target.value })} /></div><div><Label className="text-xs">Saída</Label><Input type="time" value={day.end} onChange={e => updateDay(id, { end: e.target.value })} /></div><div><Label className="text-xs">Início almoço</Label><Input type="time" value={day.lunch_start} onChange={e => updateDay(id, { lunch_start: e.target.value })} /></div><div><Label className="text-xs">Fim almoço</Label><Input type="time" value={day.lunch_end} onChange={e => updateDay(id, { lunch_end: e.target.value })} /></div></div>}
+      </div>; })}</div>
+      <div className="space-y-2"><Label className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" />Tolerância para bater ponto (minutos)</Label><Input type="number" min={0} max={120} value={schedule.punch_tolerance_minutes} onChange={e => setSchedule(s => ({ ...s, punch_tolerance_minutes: Number(e.target.value) || 0 }))} /></div>
+      <Button onClick={handleSave} disabled={saving} className="w-full">{saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}Salvar Jornada Global</Button>
+    </CardContent>
+  </Card>;
 }

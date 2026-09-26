@@ -987,6 +987,39 @@ router.post('/ai-config/test', async (req, res) => {
 
 // ==================== WORK SCHEDULE ====================
 
+// Normaliza a jornada para o formato diário, gerando dayConfig a partir dos campos legados
+function normalizeWorkSchedule(schedule) {
+  const s = schedule || {};
+  const workDays = Array.isArray(s.work_days) ? s.work_days : [1, 2, 3, 4, 5];
+  const legacyKeys = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+  const dayConfig = {};
+  for (let i = 0; i < 7; i++) {
+    const existing = s.dayConfig?.[String(i)] || s.dayConfig?.[i] || s.days?.[legacyKeys[i]];
+    dayConfig[String(i)] = {
+      enabled: existing ? existing.enabled !== false : workDays.includes(i),
+      start: existing?.start || existing?.entry || s.work_start || '08:00',
+      end: existing?.end || existing?.exit || s.work_end || '18:00',
+      lunch_start: existing?.lunch_start || s.lunch_start || '12:00',
+      lunch_end: existing?.lunch_end || s.lunch_end || '13:00',
+    };
+  }
+  return {
+    timezone: s.timezone || 'America/Sao_Paulo',
+    work_days: workDays,
+    work_start: s.work_start || '08:00',
+    work_end: s.work_end || '18:00',
+    lunch_start: s.lunch_start || '12:00',
+    lunch_end: s.lunch_end || '13:00',
+    dayConfig,
+    slot_duration_minutes: s.slot_duration_minutes || 60,
+    buffer_minutes: s.buffer_minutes || 15,
+    punch_tolerance_minutes: s.punch_tolerance_minutes !== undefined ? s.punch_tolerance_minutes : 15,
+    enforce_minimum_lunch_break: s.enforce_minimum_lunch_break !== false,
+  };
+}
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
 // Get work schedule
 router.get('/work-schedule', async (req, res) => {
   try {
@@ -1001,17 +1034,7 @@ router.get('/work-schedule', async (req, res) => {
     const raw = result.rows[0]?.work_schedule;
     const schedule = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
 
-    res.json({
-      timezone: schedule.timezone || 'America/Sao_Paulo',
-      work_days: schedule.work_days || [1, 2, 3, 4, 5],
-      work_start: schedule.work_start || '08:00',
-      work_end: schedule.work_end || '18:00',
-      lunch_start: schedule.lunch_start || '12:00',
-      lunch_end: schedule.lunch_end || '13:00',
-      slot_duration_minutes: schedule.slot_duration_minutes || 60,
-      buffer_minutes: schedule.buffer_minutes || 15,
-      punch_tolerance_minutes: schedule.punch_tolerance_minutes !== undefined ? schedule.punch_tolerance_minutes : 15,
-    });
+    res.json(normalizeWorkSchedule(schedule));
   } catch (error) {
     console.error('Get work schedule error:', error);
     res.status(500).json({ error: 'Erro ao buscar horário de trabalho' });
@@ -1031,26 +1054,36 @@ router.put('/work-schedule', async (req, res) => {
     }
 
     const orgId = memberResult.rows[0].organization_id;
-    const { timezone, work_days, work_start, work_end, lunch_start, lunch_end, slot_duration_minutes, buffer_minutes, punch_tolerance_minutes } = req.body;
+    const normalized = normalizeWorkSchedule(req.body);
 
-    const schedule = {
-      timezone: timezone || 'America/Sao_Paulo',
-      work_days: work_days || [1, 2, 3, 4, 5],
-      work_start: work_start || '08:00',
-      work_end: work_end || '18:00',
-      lunch_start: lunch_start || '12:00',
-      lunch_end: lunch_end || '13:00',
-      slot_duration_minutes: slot_duration_minutes || 60,
-      buffer_minutes: buffer_minutes || 15,
-      punch_tolerance_minutes: punch_tolerance_minutes !== undefined ? punch_tolerance_minutes : 15,
-    };
+    // Valida horários por dia
+    for (const [day, d] of Object.entries(normalized.dayConfig)) {
+      if (!d.enabled) continue;
+      if (!TIME_RE.test(d.start) || !TIME_RE.test(d.end)) {
+        return res.status(400).json({ error: `Horário inválido em ${day}` });
+      }
+      if (d.lunch_start && d.lunch_end && (!TIME_RE.test(d.lunch_start) || !TIME_RE.test(d.lunch_end))) {
+        return res.status(400).json({ error: `Horário de almoço inválido em ${day}` });
+      }
+    }
+
+    // Mantém campos legados coerentes com o primeiro dia habilitado
+    const firstEnabled = Object.entries(normalized.dayConfig).find(([, d]) => d.enabled);
+    if (firstEnabled) {
+      const [, d] = firstEnabled;
+      normalized.work_days = Object.entries(normalized.dayConfig).filter(([, v]) => v.enabled).map(([k]) => Number(k));
+      normalized.work_start = d.start;
+      normalized.work_end = d.end;
+      normalized.lunch_start = d.lunch_start;
+      normalized.lunch_end = d.lunch_end;
+    }
 
     await query(
       `UPDATE organizations SET work_schedule = $1, updated_at = NOW() WHERE id = $2`,
-      [JSON.stringify(schedule), orgId]
+      [JSON.stringify(normalized), orgId]
     );
 
-    res.json(schedule);
+    res.json(normalized);
   } catch (error) {
     console.error('Update work schedule error:', error);
     res.status(500).json({ error: 'Erro ao atualizar horário de trabalho' });

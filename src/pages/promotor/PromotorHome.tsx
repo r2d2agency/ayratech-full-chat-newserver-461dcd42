@@ -1524,7 +1524,8 @@ export default function PromotorHome() {
           </DialogHeader>
           <div className="space-y-3">
             <p className="text-xs text-muted-foreground">
-              Seu horário de trabalho é <b>{scheduleStatus?.schedule_start || '--:--'} - {scheduleStatus?.schedule_end || '--:--'}</b>.
+              Seu horário de trabalho é <b>{scheduleStatus?.schedule_start || '--:--'} - {scheduleStatus?.schedule_end || '--:--'}</b>
+              {scheduleStatus?.schedule_source && <span> ({scheduleStatus.schedule_source === 'JORNADA_GLOBAL' ? 'jornada global' : scheduleStatus.schedule_source.toLowerCase().replaceAll('_', ' ')})</span>}.
               Para registrar ponto fora desse horário, solicite autorização.
             </p>
             <div>

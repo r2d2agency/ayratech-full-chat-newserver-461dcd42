@@ -402,11 +402,14 @@ router.get('/home', authenticatePromotor, async (req, res) => {
     // Check schedule status (prioritize daily assignment or recurring schedule)
     let scheduleStart = null;
     let scheduleEnd = null;
-    
+    let scheduleSource = null;
+    let globalDayOff = false;
+
     // 1. Check daily assignment
     if (assignment.rows[0]?.shift_start && assignment.rows[0]?.shift_end) {
       scheduleStart = assignment.rows[0].shift_start;
       scheduleEnd = assignment.rows[0].shift_end;
+      scheduleSource = 'ESCALA_DIARIA';
     } else {
       // 2. Check recurring schedule (Escala)
       try {
@@ -442,26 +445,32 @@ router.get('/home', authenticatePromotor, async (req, res) => {
 
     // 3. Fallback to general work schedule (Jornada) - ONLY if no Scale (Escala) exists
     if (!scheduleStart) {
-      const wsRaw = employee.rows[0]?.work_schedule || '08:00-17:00';
+      // Sem escala específica, a jornada global da organização é a fonte oficial.
+      // A jornada individual só é usada quando realmente está preenchida.
+      const individualRaw = employee.rows[0]?.work_schedule;
+      const wsRaw = individualRaw || employee.rows[0]?.organization_work_schedule || '08:00-17:00';
       try {
         const parsed = typeof wsRaw === 'object' ? wsRaw : (typeof wsRaw === 'string' && wsRaw.trim().startsWith('{') ? JSON.parse(wsRaw) : null);
-        
         if (parsed) {
-          const dowMap = { 0: 'dom', 1: 'seg', 2: 'ter', 3: 'qua', 4: 'qui', 5: 'sex', 6: 'sab' };
-          const dowRes = await query("SELECT EXTRACT(DOW FROM (NOW() AT TIME ZONE 'America/Sao_Paulo')) as dow");
-          const dayOfWeek = dowMap[Math.floor(dowRes.rows[0].dow)];
-          
-          if (parsed.useIndividualDays && parsed.dayConfig && parsed.dayConfig[dayOfWeek]) {
-            const config = parsed.dayConfig[dayOfWeek];
-            if (config.entry && config.exit) {
-              scheduleStart = config.entry;
-              scheduleEnd = config.exit;
+          const dowRes = await query("SELECT EXTRACT(DOW FROM (NOW() AT TIME ZONE 'America/Sao_Paulo'))::int as dow");
+          const dow = Number(dowRes.rows[0].dow);
+          const legacyKey = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'][dow];
+          const day = parsed.dayConfig?.[String(dow)] || parsed.dayConfig?.[dow] || parsed.dayConfig?.[legacyKey];
+          if (day) {
+            if (day.enabled === false) {
+              globalDayOff = true;
+              scheduleSource = 'JORNADA_GLOBAL';
+              scheduleStart = '00:00';
+              scheduleEnd = '00:00';
+            } else {
+              scheduleStart = day.start || day.entry || null;
+              scheduleEnd = day.end || day.exit || null;
+              scheduleSource = individualRaw ? 'JORNADA_FUNCIONARIO' : 'JORNADA_GLOBAL';
             }
-          }
-          
-          if (!scheduleStart && parsed.entry) {
+          } else if (parsed.entry) {
             scheduleStart = parsed.entry;
             scheduleEnd = parsed.exit || '17:00';
+            scheduleSource = individualRaw ? 'JORNADA_FUNCIONARIO' : 'JORNADA_GLOBAL';
           }
         }
         
@@ -483,6 +492,18 @@ router.get('/home', authenticatePromotor, async (req, res) => {
       logInfo('promotor.home.schedule', { type: 'SCALE', start: scheduleStart, end: scheduleEnd, empId });
     }
 
+
+    if (globalDayOff) {
+      return res.json({
+        employee: employee.rows[0], today_punches: punches.rows,
+        pending_docs_count: parseInt(pendingDocs.rows[0]?.count || '0'), notifications: notifications.rows,
+        daily_assignment: assignment.rows[0] || null, available_pdvs: pdvs, settings: settings.rows[0] || { theme: 'auto' },
+        today_routes: todayRoutes, active_route: activeRoute || null, next_route: nextRoute || null,
+        completed_routes_count: completedRoutes.length, pending_routes_count: pendingRoutes.length,
+        has_routes_today: hasRoutesToday, pdv_visits: pdvVisits,
+        schedule_status: { work_schedule: 'Folga', schedule_start: null, schedule_end: null, schedule_source: 'JORNADA_GLOBAL', is_within_schedule: false, has_overtime_approval: false, overtime_request: null },
+      });
+    }
 
     // Final safety defaults
     if (!scheduleStart) scheduleStart = '08:00';
@@ -549,6 +570,7 @@ router.get('/home', authenticatePromotor, async (req, res) => {
         work_schedule: `${scheduleStart}-${scheduleEnd}`,
         schedule_start: scheduleStart,
         schedule_end: scheduleEnd,
+        schedule_source: scheduleSource || 'ESCALA',
         is_within_schedule: isWithinSchedule,
         has_overtime_approval: hasOvertimeApproval,
         overtime_request: overtimeRequest,
@@ -568,7 +590,13 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
     const { punch_type, latitude, longitude, accuracy_meters, pdv_id, is_offline, offline_local_time, justification, local_id, facial_verified } = req.body;
 
     // ===== WORK SCHEDULE VALIDATION =====
-    const empRes = await query(`SELECT work_schedule, face_descriptor, facial_required, punch_tolerance_minutes, punch_requires_checkin, punch_without_active_route FROM employees WHERE id = $1`, [req.employeeId]);
+    const empRes = await query(`
+      SELECT e.work_schedule, e.face_descriptor, e.facial_required,
+             e.punch_tolerance_minutes, e.punch_requires_checkin, e.punch_without_active_route,
+             o.work_schedule AS organization_work_schedule
+      FROM employees e
+      LEFT JOIN organizations o ON o.id = e.organization_id
+      WHERE e.id = $1`, [req.employeeId]);
     const employee = empRes.rows[0];
 
     // CRITICAL: Database-side NOW() and America/Sao_Paulo context
@@ -678,17 +706,59 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
       }
     } catch (e) { /* ignore table/column missing */ }
 
-    // 2. Fallback to general work schedule (Jornada) - ONLY if no specific assignment or recurring schedule
-    let schedStartStr = '08:00', schedEndStr = '17:00';
+    // 2. Fallback: jornada individual; sem ela, jornada global configurada por dia.
+    let scheduleSource = scheduleStart ? 'ESCALA' : null;
+    let globalDayOff = false;
     if (!scheduleStart) {
-      const wsRaw = empRes.rows[0]?.work_schedule || '08:00-17:00';
-      try {
-        const parsed = typeof wsRaw === 'object' ? wsRaw : (typeof wsRaw === 'string' && wsRaw.trim().startsWith('{') ? JSON.parse(wsRaw) : null);
-        if (parsed && parsed.entry) { schedStartStr = parsed.entry; schedEndStr = parsed.exit || '17:00'; }
-        else { const parts = String(wsRaw).split('-'); if (parts.length >= 2) { schedStartStr = parts[0].trim(); schedEndStr = parts[1].trim(); } }
-      } catch { const parts = String(wsRaw).split('-'); if (parts.length >= 2) { schedStartStr = parts[0].trim(); schedEndStr = parts[1].trim(); } }
-      scheduleStart = schedStartStr;
-      scheduleEnd = schedEndStr;
+      const parseSchedule = (raw) => {
+        if (!raw) return null;
+        try {
+          const parsed = typeof raw === 'object' ? raw : (typeof raw === 'string' && raw.trim().startsWith('{') ? JSON.parse(raw) : null);
+          if (parsed?.entry || parsed?.work_start) return { start: parsed.entry || parsed.work_start, end: parsed.exit || parsed.work_end, parsed };
+          const parts = String(raw).split('-');
+          return parts.length >= 2 ? { start: parts[0].trim(), end: parts[1].trim(), parsed: null } : null;
+        } catch { return null; }
+      };
+      const employeeSchedule = parseSchedule(empRes.rows[0]?.work_schedule);
+      const organizationSchedule = parseSchedule(empRes.rows[0]?.organization_work_schedule);
+      const globalConfig = organizationSchedule?.parsed;
+      const dowResult = await query("SELECT EXTRACT(DOW FROM ($1::date))::int AS dow", [today]);
+      const dow = Number(dowResult.rows[0]?.dow ?? 0);
+      const dailyConfig = globalConfig?.dayConfig?.[String(dow)] || globalConfig?.dayConfig?.[dow];
+
+      if (employeeSchedule) {
+        scheduleStart = employeeSchedule.start;
+        scheduleEnd = employeeSchedule.end;
+        scheduleSource = 'JORNADA_FUNCIONARIO';
+      } else if (dailyConfig) {
+        if (dailyConfig.enabled === false) globalDayOff = true;
+        else {
+          scheduleStart = dailyConfig.start || dailyConfig.entry;
+          scheduleEnd = dailyConfig.end || dailyConfig.exit;
+          scheduleSource = 'JORNADA_GLOBAL';
+        }
+      } else if (organizationSchedule) {
+        const workDays = globalConfig?.work_days;
+        if (Array.isArray(workDays) && !workDays.includes(dow)) globalDayOff = true;
+        else {
+          scheduleStart = organizationSchedule.start;
+          scheduleEnd = organizationSchedule.end;
+          scheduleSource = 'JORNADA_GLOBAL';
+        }
+      } else {
+        scheduleStart = '08:00';
+        scheduleEnd = '17:00';
+        scheduleSource = 'PADRAO';
+      }
+
+      if (globalDayOff) {
+        return res.status(403).json({
+          error: 'Hoje é dia de folga conforme a jornada global configurada pela empresa.',
+          code: 'GLOBAL_SCHEDULE_DAY_OFF',
+          schedule_source: 'JORNADA_GLOBAL',
+          schedule: null,
+        });
+      }
     } else {
       console.log(`[Promotor Punch] Using schedule from SCALE: ${scheduleStart}-${scheduleEnd}`);
     }
@@ -734,8 +804,10 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
           const [hours, minutes] = String(value || '').split(':').map(Number);
           return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 60 + minutes : null;
         };
-        const lunchStart = toMinutes(orgSchedule.lunch_start);
-        const lunchEnd = toMinutes(orgSchedule.lunch_end);
+        const dayOfWeek = Number((await query("SELECT EXTRACT(DOW FROM ($1::date))::int AS dow", [today])).rows[0]?.dow ?? 0);
+        const dayConfig = orgSchedule.dayConfig?.[String(dayOfWeek)] || orgSchedule.dayConfig?.[dayOfWeek];
+        const lunchStart = toMinutes(dayConfig?.lunch_start || orgSchedule.lunch_start);
+        const lunchEnd = toMinutes(dayConfig?.lunch_end || orgSchedule.lunch_end);
         const minimumBreak = lunchStart !== null && lunchEnd !== null && lunchEnd > lunchStart
           ? lunchEnd - lunchStart
           : 0;
@@ -982,6 +1054,7 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
       is_late: lateMinutes > 0,
       late_minutes: lateMinutes,
       schedule: { start: scheduleStart, end: scheduleEnd },
+      schedule_source: scheduleSource,
     });
   } catch (err) {
     logError('promotor.punch', err);

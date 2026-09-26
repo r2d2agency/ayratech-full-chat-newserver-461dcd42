@@ -1485,6 +1485,7 @@ async function getWorkSchedule(organizationId) {
   return {
     timezone: schedule.timezone || 'America/Sao_Paulo',
     work_days: schedule.work_days || [1, 2, 3, 4, 5],
+    dayConfig: schedule.dayConfig || null,
     work_start: schedule.work_start || '08:00',
     work_end: schedule.work_end || '18:00',
     lunch_start: schedule.lunch_start || '12:00',
@@ -1535,15 +1536,21 @@ async function findAvailableSlotsForUser(organizationId, userId, daysAhead, slot
   for (let d = 0; d < daysAhead && slots.length < 10; d++) {
     const date = new Date(now);
     date.setDate(date.getDate() + d);
-    if (!schedule.work_days.includes(date.getDay())) continue;
+    const dayConfig = schedule.dayConfig?.[String(date.getDay())] || schedule.dayConfig?.[date.getDay()];
+    if (dayConfig && dayConfig.enabled === false) continue;
+    if (!dayConfig && !schedule.work_days.includes(date.getDay())) continue;
+    const dayStartMin = dayConfig ? timeToMinutes(dayConfig.start || dayConfig.entry) : workStartMin;
+    const dayEndMin = dayConfig ? timeToMinutes(dayConfig.end || dayConfig.exit) : workEndMin;
+    const dayLunchStartMin = dayConfig ? timeToMinutes(dayConfig.lunch_start) : lunchStartMin;
+    const dayLunchEndMin = dayConfig ? timeToMinutes(dayConfig.lunch_end) : lunchEndMin;
 
-    for (let min = workStartMin; min + slotDuration <= workEndMin && slots.length < 10; min += slotDuration + buffer) {
-      if (min < lunchEndMin && min + slotDuration > lunchStartMin) {
-        min = lunchEndMin - slotDuration - buffer;
+    for (let min = dayStartMin; min + slotDuration <= dayEndMin && slots.length < 10; min += slotDuration + buffer) {
+      if (min < dayLunchEndMin && min + slotDuration > dayLunchStartMin) {
+        min = dayLunchEndMin - slotDuration - buffer;
         continue;
       }
-      if (preferredPeriod === 'morning' && min >= lunchStartMin) continue;
-      if (preferredPeriod === 'afternoon' && min < lunchEndMin) continue;
+      if (preferredPeriod === 'morning' && min >= dayLunchStartMin) continue;
+      if (preferredPeriod === 'afternoon' && min < dayLunchEndMin) continue;
 
       const slotStart = new Date(date);
       slotStart.setHours(Math.floor(min / 60), min % 60, 0, 0);
