@@ -53,8 +53,10 @@ function nowSaoPaulo(): Date {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
 }
 
-function toSaoPauloDate(d: Date): Date {
-  return new Date(d.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+function toSaoPauloDate(d: Date): Date | null {
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return null;
+  const converted = new Date(d.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  return Number.isNaN(converted.getTime()) ? null : converted;
 }
 
 function getPeriodDates(preset: PeriodPreset): { start: string; end: string } {
@@ -97,7 +99,8 @@ function parseDateValue(value: unknown): Date | null {
 
 function formatDateValue(value: unknown, mask: string, fallback = '—') {
   const parsed = parseDateValue(value);
-  return parsed ? format(toSaoPauloDate(parsed), mask) : fallback;
+  const saoPauloDate = parsed ? toSaoPauloDate(parsed) : null;
+  return saoPauloDate ? format(saoPauloDate, mask) : fallback;
 }
 
 function getPunchTimestamp(punch: any) {
