@@ -14,7 +14,10 @@ import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, BarChart, 
 
 const fmtDate = (v: any) => {
   if (!v) return "—";
-  try { return format(parseISO(String(v).slice(0,10) + 'T12:00:00'), 'dd/MM/yyyy', { locale: ptBR }); } catch { return "—"; }
+  try {
+    const parsed = parseISO(String(v).slice(0, 10) + 'T12:00:00');
+    return Number.isNaN(parsed.getTime()) ? "—" : format(parsed, 'dd/MM/yyyy', { locale: ptBR });
+  } catch { return "—"; }
 };
 
 function StatCard({ title, value, icon: Icon, tone = "default", subtitle }: any) {

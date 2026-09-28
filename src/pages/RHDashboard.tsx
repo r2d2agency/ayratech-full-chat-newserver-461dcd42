@@ -207,7 +207,7 @@ export default function RHDashboard() {
       const isThisWeek = bThisYear >= weekStart && bThisYear <= weekEnd;
       const isThisMonth = bMonth === todayM;
       const age = now.getFullYear() - bd.getFullYear();
-      const entry = { ...e, birthday_date: format(bd, "dd/MM"), age };
+      const entry = { ...e, birthday_date: safeFormat(e.birth_date, "dd/MM"), age };
       if (isToday) today.push(entry);
       if (isThisWeek && !isToday) week.push(entry);
       if (isThisMonth && !isToday && !isThisWeek) month.push(entry);
@@ -226,8 +226,12 @@ export default function RHDashboard() {
   const setCertField = (k: string, v: any) => setCertForm((p: any) => {
     const next = { ...p, [k]: v };
     if ((k === "absence_start" || k === "absence_end") && next.absence_start && next.absence_end) {
-      const d = Math.ceil((new Date(next.absence_end).getTime() - new Date(next.absence_start).getTime()) / 86400000) + 1;
-      next.absence_days = Math.max(1, d);
+      const start = safeDate(next.absence_start);
+      const end = safeDate(next.absence_end);
+      if (start && end) {
+        const d = Math.ceil((end.getTime() - start.getTime()) / 86400000) + 1;
+        next.absence_days = Math.max(1, d);
+      }
     }
     return next;
   });
@@ -455,7 +459,7 @@ export default function RHDashboard() {
                       <div key={a.id} className="flex items-center justify-between p-2 rounded bg-white dark:bg-background border border-amber-200">
                         <div>
                           <p className="text-sm font-medium">{a.full_name}</p>
-                          <p className="text-[10px] text-muted-foreground">{a.position || "—"} • Desativado em {a.updated_at ? format(new Date(a.updated_at), "dd/MM") : "—"}</p>
+                          <p className="text-[10px] text-muted-foreground">{a.position || "—"} • Desativado em {safeFormat(a.updated_at, "dd/MM")}</p>
                         </div>
                         <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50">Manual</Badge>
                       </div>
@@ -599,8 +603,8 @@ export default function RHDashboard() {
                       <TableRow key={v.id}>
                         <TableCell className="font-medium">{v.employee_name}</TableCell>
                         <TableCell><Badge variant="outline">{v.vacation_type === 'parcial' ? 'Parcial' : 'Completa'}</Badge></TableCell>
-                        <TableCell>{v.start_date ? format(new Date(v.start_date + "T12:00:00"), "dd/MM/yyyy") : "—"}</TableCell>
-                        <TableCell>{v.end_date ? format(new Date(v.end_date + "T12:00:00"), "dd/MM/yyyy") : "—"}</TableCell>
+                        <TableCell>{safeFormat(v.start_date, "dd/MM/yyyy")}</TableCell>
+                        <TableCell>{safeFormat(v.end_date, "dd/MM/yyyy")}</TableCell>
                         <TableCell>{v.days_total}</TableCell>
                         <TableCell className="hidden md:table-cell">{v.abono_pecuniario ? `${v.abono_days}d` : "Não"}</TableCell>
                         <TableCell>
@@ -652,7 +656,7 @@ export default function RHDashboard() {
                         <TableCell className="hidden md:table-cell">{c.doctor_crm || "N/I"}</TableCell>
                         <TableCell className="hidden md:table-cell">{c.healthcare_unit || "N/I"}</TableCell>
                         <TableCell className="text-xs">
-                          {c.absence_start ? format(new Date(c.absence_start + "T12:00:00"), "dd/MM") : ""} - {c.absence_end ? format(new Date(c.absence_end + "T12:00:00"), "dd/MM") : ""}
+                          {safeFormat(c.absence_start, "dd/MM", "")} - {safeFormat(c.absence_end, "dd/MM", "")}
                         </TableCell>
                         <TableCell>{c.absence_days || "—"}</TableCell>
                         <TableCell>
@@ -868,7 +872,7 @@ export default function RHDashboard() {
                       >
                         <FileUp className="h-4 w-4 text-primary shrink-0" />
                         <span className="truncate flex-1">{doc.title || doc.category}</span>
-                        <span className="text-xs text-muted-foreground shrink-0">{format(new Date(doc.created_at), 'dd/MM')}</span>
+                        <span className="text-xs text-muted-foreground shrink-0">{safeFormat(doc.created_at, 'dd/MM')}</span>
                       </button>
                     ))}
                   </div>
