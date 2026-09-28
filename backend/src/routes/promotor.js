@@ -299,7 +299,7 @@ router.get('/home', authenticatePromotor, async (req, res) => {
 
     const [employee, punches, pendingDocs, notifications, assignment, settings] = await Promise.all([
       safeQuery(`SELECT e.id, e.full_name, e.email, e.cpf, e.photo_url, e.worker_profile, e.employment_type, e.work_schedule, e.position, e.punch_tolerance_minutes, o.work_schedule as organization_work_schedule FROM employees e JOIN organizations o ON o.id = e.organization_id WHERE e.id = $1`, [empId]),
-      safeQuery(`SELECT * FROM time_punches WHERE employee_id = $1 AND punched_at::date = $2 ORDER BY punched_at`, [empId, today]),
+      safeQuery(`SELECT * FROM time_punches WHERE employee_id = $1 AND (punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $2 ORDER BY punched_at`, [empId, today]),
       safeQuery(`SELECT COUNT(*) as count FROM rh_document_deliveries WHERE employee_id = $1 AND status IN ('enviado', 'entregue', 'visualizado') AND (requires_signature = true OR requires_confirmation = true)`, [empId]),
       safeQuery(`SELECT * FROM collaborator_notifications WHERE employee_id = $1 AND read = false ORDER BY created_at DESC LIMIT 10`, [empId]),
       safeQuery(`SELECT da.*, p.name as pdv_name, p.latitude, p.longitude, p.radius_meters FROM collaborator_daily_assignments da LEFT JOIN pdvs p ON p.id = da.pdv_id WHERE da.employee_id = $1 AND da.assignment_date = $2 LIMIT 1`, [empId, today]),
@@ -683,28 +683,49 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
         scheduleStart = assignment.rows[0].shift_start;
         scheduleEnd = assignment.rows[0].shift_end;
       } else {
-        // Check for recurring work schedule (Escala recorrente)
-        const dowMap = { 0: 'dom', 1: 'seg', 2: 'ter', 3: 'qua', 4: 'qui', 5: 'sex', 6: 'sab' };
-        const dowRes = await query("SELECT EXTRACT(DOW FROM (NOW() AT TIME ZONE 'America/Sao_Paulo')) as dow");
-        const dayOfWeek = dowMap[Math.floor(dowRes.rows[0].dow)];
+        // Escala recorrente atual (work_schedules/employee_schedules).
+        // A vigência e os dias da escala são respeitados antes do fallback global.
+        const dowRes = await query("SELECT EXTRACT(DOW FROM (NOW() AT TIME ZONE 'America/Sao_Paulo'))::int as dow");
+        const dayOfWeek = Number(dowRes.rows[0]?.dow ?? 0);
         const recurring = await query(
-          `SELECT s.items FROM rh_employee_schedules es
-           JOIN rh_schedules s ON s.id = es.schedule_id
-           WHERE es.employee_id = $1 AND es.active = true
-           ORDER BY es.created_at DESC`,
-          [req.employeeId]
+          `SELECT ws.entry_time, ws.exit_time, ws.workdays
+             FROM employee_schedules es
+             JOIN work_schedules ws ON ws.id = es.schedule_id
+            WHERE es.employee_id = $1
+              AND es.organization_id = (SELECT organization_id FROM employees WHERE id = $1)
+              AND es.active = true
+              AND ws.active = true
+              AND es.start_date <= $2::date
+              AND (es.end_date IS NULL OR es.end_date >= $2::date)
+            ORDER BY es.created_at DESC`,
+          [req.employeeId, today]
         );
-        
-        if (recurring.rows && recurring.rows.length > 0) {
-          for (const row of recurring.rows) {
-            if (row.items) {
-              const items = row.items;
-              const todaySchedule = Array.isArray(items) ? items.find(i => i.day === dayOfWeek) : null;
-              if (todaySchedule && todaySchedule.entry && todaySchedule.exit) {
-                scheduleStart = todaySchedule.entry;
-                scheduleEnd = todaySchedule.exit;
-                break;
-              }
+        const currentSchedule = recurring.rows.find((row) =>
+          !Array.isArray(row.workdays) || row.workdays.map(Number).includes(dayOfWeek)
+        );
+        if (currentSchedule?.entry_time && currentSchedule?.exit_time) {
+          scheduleStart = String(currentSchedule.entry_time).slice(0, 5);
+          scheduleEnd = String(currentSchedule.exit_time).slice(0, 5);
+        }
+
+        // Compatibilidade com escalas legadas já existentes.
+        if (!scheduleStart) {
+          const dowMap = { 0: 'dom', 1: 'seg', 2: 'ter', 3: 'qua', 4: 'qui', 5: 'sex', 6: 'sab' };
+          const legacy = await query(
+            `SELECT s.items FROM rh_employee_schedules es
+             JOIN rh_schedules s ON s.id = es.schedule_id
+             WHERE es.employee_id = $1 AND es.active = true
+             ORDER BY es.created_at DESC`,
+            [req.employeeId]
+          );
+          for (const row of legacy.rows || []) {
+            const todaySchedule = Array.isArray(row.items)
+              ? row.items.find(i => i.day === dowMap[dayOfWeek])
+              : null;
+            if (todaySchedule?.entry && todaySchedule?.exit) {
+              scheduleStart = todaySchedule.entry;
+              scheduleEnd = todaySchedule.exit;
+              break;
             }
           }
         }
@@ -719,7 +740,9 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
         if (!raw) return null;
         try {
           const parsed = typeof raw === 'object' ? raw : (typeof raw === 'string' && raw.trim().startsWith('{') ? JSON.parse(raw) : null);
-          if (parsed?.entry || parsed?.work_start) return { start: parsed.entry || parsed.work_start, end: parsed.exit || parsed.work_end, parsed };
+          if (parsed && (parsed.entry || parsed.work_start || parsed.dayConfig || parsed.work_days)) {
+            return { start: parsed.entry || parsed.work_start, end: parsed.exit || parsed.work_end, parsed };
+          }
           const parts = String(raw).split('-');
           return parts.length >= 2 ? { start: parts[0].trim(), end: parts[1].trim(), parsed: null } : null;
         } catch { return null; }
@@ -731,7 +754,15 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
       const dow = Number(dowResult.rows[0]?.dow ?? 0);
       const dailyConfig = globalConfig?.dayConfig?.[String(dow)] || globalConfig?.dayConfig?.[dow];
 
-      if (employeeSchedule) {
+      // O valor legado criado automaticamente no cadastro não deve bloquear o global.
+      const hasExplicitEmployeeSchedule = employeeSchedule
+        && !(
+          employeeSchedule.start === '08:00'
+          && employeeSchedule.end === '17:00'
+          && !employeeSchedule.parsed
+        );
+
+      if (hasExplicitEmployeeSchedule) {
         scheduleStart = employeeSchedule.start;
         scheduleEnd = employeeSchedule.end;
         scheduleSource = 'JORNADA_FUNCIONARIO';

@@ -112,7 +112,7 @@ function PromotorLayoutInner({ children }: PromotorLayoutProps) {
   const isLoginPage = location.pathname.includes('/login') || location.pathname.includes('/trocar-senha');
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="h-[100dvh] min-h-screen overflow-hidden bg-background flex flex-col">
       {/* Top bar with notifications */}
       {!isLoginPage && (
         <header className="sticky top-0 z-50 bg-card border-b border-border" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
@@ -197,7 +197,7 @@ function PromotorLayoutInner({ children }: PromotorLayoutProps) {
         </header>
       )}
 
-      <main className="flex-1 pb-20 overflow-y-auto">{children}</main>
+      <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain pb-20 [-webkit-overflow-scrolling:touch]">{children}</main>
 
       {!isLoginPage && (
         <nav className="fixed bottom-0 left-0 right-0 bg-card border-t border-border z-50" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>

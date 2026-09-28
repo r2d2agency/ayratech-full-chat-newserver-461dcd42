@@ -339,9 +339,11 @@ function parseOptionalInteger(value) {
 }
 
 function normalizeEmployeePayload(body = {}) {
+  // Sem jornada explícita, grava NULL para que o ponto use a jornada global
+  // da organização (valor legado '08:00-17:00' tinha precedência indevida).
   const workSchedule = body.work_schedule
     ? (typeof body.work_schedule === 'object' ? JSON.stringify(body.work_schedule) : String(body.work_schedule))
-    : '08:00-17:00';
+    : null;
 
   return {
     ...body,
@@ -639,7 +641,9 @@ router.put('/employees/:id', async (req, res) => {
     const jsonbFields = ['salary_items', 'benefits'];
     for (const k of sentKeys) {
       if (k === 'work_schedule') {
-        d[k] = typeof req.body[k] === 'object' ? JSON.stringify(req.body[k]) : String(req.body[k] || '08:00-17:00');
+        d[k] = req.body[k] == null || req.body[k] === ''
+          ? null
+          : (typeof req.body[k] === 'object' ? JSON.stringify(req.body[k]) : String(req.body[k]));
       } else if (jsonbFields.includes(k)) {
         d[k] = JSON.stringify(Array.isArray(req.body[k]) ? req.body[k] : []);
       } else {
