@@ -298,7 +298,7 @@ router.get('/home', authenticatePromotor, async (req, res) => {
     };
 
     const [employee, punches, pendingDocs, notifications, assignment, settings] = await Promise.all([
-      safeQuery(`SELECT e.id, e.full_name, e.email, e.cpf, e.photo_url, e.worker_profile, e.work_schedule, e.position, e.punch_tolerance_minutes, o.work_schedule as organization_work_schedule FROM employees e JOIN organizations o ON o.id = e.organization_id WHERE e.id = $1`, [empId]),
+      safeQuery(`SELECT e.id, e.full_name, e.email, e.cpf, e.photo_url, e.worker_profile, e.employment_type, e.work_schedule, e.position, e.punch_tolerance_minutes, o.work_schedule as organization_work_schedule FROM employees e JOIN organizations o ON o.id = e.organization_id WHERE e.id = $1`, [empId]),
       safeQuery(`SELECT * FROM time_punches WHERE employee_id = $1 AND punched_at::date = $2 ORDER BY punched_at`, [empId, today]),
       safeQuery(`SELECT COUNT(*) as count FROM rh_document_deliveries WHERE employee_id = $1 AND status IN ('enviado', 'entregue', 'visualizado') AND (requires_signature = true OR requires_confirmation = true)`, [empId]),
       safeQuery(`SELECT * FROM collaborator_notifications WHERE employee_id = $1 AND read = false ORDER BY created_at DESC LIMIT 10`, [empId]),
@@ -591,13 +591,18 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
 
     // ===== WORK SCHEDULE VALIDATION =====
     const empRes = await query(`
-      SELECT e.work_schedule, e.face_descriptor, e.facial_required,
+      SELECT e.employment_type, e.work_schedule, e.face_descriptor,
              e.punch_tolerance_minutes, e.punch_requires_checkin, e.punch_without_active_route,
              o.work_schedule AS organization_work_schedule
       FROM employees e
       LEFT JOIN organizations o ON o.id = e.organization_id
       WHERE e.id = $1`, [req.employeeId]);
     const employee = empRes.rows[0];
+    const employmentType = String(employee?.employment_type || 'clt').trim().toLowerCase();
+    const isPunchEligible = !['pj', 'freelance', 'freelancer'].includes(employmentType);
+    if (!isPunchEligible) {
+      return res.status(403).json({ error: 'O registro de ponto não está disponível para este tipo de contratação.', code: 'EMPLOYMENT_TYPE_NOT_ELIGIBLE' });
+    }
 
     // CRITICAL: Database-side NOW() and America/Sao_Paulo context
     // We strictly use NOW() in DB to avoid any drift from app-server JS time
@@ -1448,6 +1453,11 @@ router.post('/sync', authenticatePromotor, async (req, res) => {
   try {
     const { events } = req.body; // Array of offline events
     const results = [];
+    const employeeCheck = await query(`SELECT employment_type FROM employees WHERE id = $1`, [req.employeeId]);
+    const employmentType = String(employeeCheck.rows[0]?.employment_type || 'clt').trim().toLowerCase();
+    if (['pj', 'freelance', 'freelancer'].includes(employmentType)) {
+      return res.status(403).json({ error: 'O registro de ponto não está disponível para este tipo de contratação.', code: 'EMPLOYMENT_TYPE_NOT_ELIGIBLE' });
+    }
     for (const ev of (events || [])) {
       try {
         if (ev.action_type === 'time_punch') {

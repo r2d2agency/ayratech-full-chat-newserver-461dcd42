@@ -344,6 +344,11 @@ router.post('/totem/punch', totemAuth, async (req, res) => {
   try {
     const { employee_id, punch_type, latitude, longitude, face_match_score } = req.body || {};
     if (!employee_id) return res.status(400).json({ error: 'employee_id obrigatório' });
+    const employee = await query(`SELECT employment_type FROM employees WHERE id = $1 AND organization_id = $2`, [employee_id, req.totem.organization_id]);
+    const employmentType = String(employee.rows[0]?.employment_type || 'clt').trim().toLowerCase();
+    if (['pj', 'freelance', 'freelancer'].includes(employmentType)) {
+      return res.status(403).json({ error: 'O registro de ponto não está disponível para este tipo de contratação.', code: 'EMPLOYMENT_TYPE_NOT_ELIGIBLE' });
+    }
 
     // Determine punch_type automatically if not provided (alternate entrada/saida)
     let type = punch_type;

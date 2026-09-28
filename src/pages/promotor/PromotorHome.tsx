@@ -189,6 +189,8 @@ export default function PromotorHome() {
   const dailyAssignment = data?.daily_assignment;
   const availablePdvs = data?.available_pdvs || [];
   const scheduleStatus = data?.schedule_status;
+  const employmentType = String(employee?.employment_type || 'clt').trim().toLowerCase();
+  const isPunchEligible = !['pj', 'freelance', 'freelancer'].includes(employmentType);
   const todayRoutes = data?.today_routes || [];
   const activeRoute = data?.active_route;
   const nextRoute = data?.next_route;
@@ -605,7 +607,7 @@ export default function PromotorHome() {
     
     // Verificamos se o turno atual do colaborador tem intervalo
     // Se não tiver, pulamos os tipos de intervalo e vamos direto para a saída
-    const ws = employee?.work_schedule;
+    const ws = employee?.work_schedule || scheduleStatus?.work_schedule_config;
     let hasInterval = true;
     
     if (ws) {
@@ -645,7 +647,7 @@ export default function PromotorHome() {
     entrada: '🟢 Entrada', saida_intervalo: '🟡 Saída Intervalo', retorno_intervalo: '🔵 Retorno Intervalo', saida: '🔴 Saída', extraordinaria: '⚪ Extra'
   };
 
-  const canPunch = scheduleStatus?.is_within_schedule || scheduleStatus?.has_overtime_approval;
+  const canPunch = isPunchEligible && (scheduleStatus?.is_within_schedule || scheduleStatus?.has_overtime_approval);
   const isOutsideSchedule = scheduleStatus && !scheduleStatus.is_within_schedule;
 
   const handlePunch = async (facialVerified = false) => {
@@ -1307,7 +1309,7 @@ export default function PromotorHome() {
                 )}
                 <Button
                   onClick={() => void handlePunch()}
-                  disabled={punchLoading || gpsStatus !== 'active' || (!canPunch && isOutsideSchedule)}
+                  disabled={!isPunchEligible || punchLoading || gpsStatus !== 'active' || (!canPunch && isOutsideSchedule)}
                   className={`w-full h-24 rounded-none text-lg font-bold ${
                     !canPunch && isOutsideSchedule
                       ? 'bg-muted text-muted-foreground cursor-not-allowed'
@@ -1315,9 +1317,11 @@ export default function PromotorHome() {
                   }`}
                 >
                   {punchLoading ? <Loader2 className="h-6 w-6 animate-spin mr-2" /> : <Clock className="h-6 w-6 mr-2" />}
-                  {!canPunch && isOutsideSchedule
-                    ? '🔒 Fora do Horário'
-                    : PUNCH_LABELS[getNextPunchType()] || 'Bater Ponto'}
+                  {!isPunchEligible
+                    ? '🔒 Ponto indisponível para este contrato'
+                    : !canPunch && isOutsideSchedule
+                      ? '🔒 Fora do Horário'
+                      : PUNCH_LABELS[getNextPunchType()] || 'Bater Ponto'}
                 </Button>
                 {!canPunch && isOutsideSchedule && (
                   <div className="p-3 border-t bg-destructive/5 text-center">
@@ -1458,7 +1462,7 @@ export default function PromotorHome() {
             )}
             <Button
               onClick={() => void handlePunch()}
-              disabled={punchLoading || gpsStatus !== 'active' || (!canPunch && isOutsideSchedule)}
+              disabled={!isPunchEligible || punchLoading || gpsStatus !== 'active' || (!canPunch && isOutsideSchedule)}
               className={`w-full h-20 rounded-none text-lg font-bold ${
                 !canPunch && isOutsideSchedule
                   ? 'bg-muted text-muted-foreground cursor-not-allowed'
@@ -1466,9 +1470,11 @@ export default function PromotorHome() {
               }`}
             >
               {punchLoading ? <Loader2 className="h-6 w-6 animate-spin mr-2" /> : isFacialActive ? <ScanFace className="h-6 w-6 mr-2" /> : <Clock className="h-6 w-6 mr-2" />}
-              {!canPunch && isOutsideSchedule
-                ? '🔒 Fora do Horário'
-                : PUNCH_LABELS[getNextPunchType()] || 'Bater Ponto'}
+              {!isPunchEligible
+                ? '🔒 Ponto indisponível para este contrato'
+                : !canPunch && isOutsideSchedule
+                  ? '🔒 Fora do Horário'
+                  : PUNCH_LABELS[getNextPunchType()] || 'Bater Ponto'}
             </Button>
             {!canPunch && isOutsideSchedule && (
               <div className="p-3 border-t bg-destructive/5 text-center">
