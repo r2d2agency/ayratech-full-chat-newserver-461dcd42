@@ -517,6 +517,12 @@ function CategoryAfterPhotoGate({ catId, routeBrandId, categoryName, routeId, pd
       });
       setPhotos([]);
       setIsSending(false);
+      // Persiste a confirmação local: o upload e o POST podem estar aguardando
+      // a sincronização offline mesmo depois que a tela for recarregada.
+      try {
+        const key = `promotor-after-photo:${routeId}:${catId}:${routeBrandId || 'null'}`;
+        localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), count: effective.length }));
+      } catch { /* armazenamento local indisponível */ }
       onCaptureOptimistic?.(effective[0], 'category_after');
       onCompleted();
     } catch (e: any) {
@@ -1015,6 +1021,18 @@ export default function PromotorRota() {
     });
     return groups;
   }, [filteredExecs]);
+
+  useEffect(() => {
+    const restored: Record<string, boolean> = {};
+    Object.keys(groupedExecs).forEach((key) => {
+      const group = groupedExecs[key];
+      const storageKey = `promotor-after-photo:${id}:${group.catId}:${group.routeBrandId || 'null'}`;
+      try {
+        if (localStorage.getItem(storageKey)) restored[key] = true;
+      } catch { /* armazenamento local indisponível */ }
+    });
+    if (Object.keys(restored).length) setOptimisticAfterPhoto(prev => ({ ...restored, ...prev }));
+  }, [groupedExecs, id]);
 
   const productsWithExtraPoint = useMemo(() => {
     const set = new Set<string>();
