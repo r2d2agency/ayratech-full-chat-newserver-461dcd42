@@ -52,7 +52,7 @@ export default function RHIndicadores() {
       const term = Number(r.terminations) || 0;
       const rate = hc > 0 ? (term / hc) * 100 : 0;
       return {
-        month: format(new Date(r.month_start), "MMM/yy", { locale: ptBR }),
+        month: fmtDate(r.month_start) === '—' ? '—' : format(parseISO(`${String(r.month_start).slice(0, 10)}T12:00:00`), "MMM/yy", { locale: ptBR }),
         rate: Number(rate.toFixed(2)),
         admissions: Number(r.admissions) || 0,
         terminations: term,

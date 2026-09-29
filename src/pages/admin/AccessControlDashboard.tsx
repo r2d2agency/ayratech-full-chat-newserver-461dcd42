@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Activity, Users, ShieldCheck, DollarSign, Loader2, CalendarOff, MapPin, AlertTriangle, TrendingUp, Building2 } from 'lucide-react';
 import { format } from 'date-fns';
+import { formatCalendarDate } from '@/lib/date-utils';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell, Legend } from 'recharts';
 import { Link } from 'react-router-dom';
 
@@ -91,7 +92,7 @@ export default function AccessControlDashboard() {
                       <div>
                         <p className="font-medium text-sm">{l.promoter_name}</p>
                         <p className="text-xs text-muted-foreground">
-                          {l.reason} • desde {format(new Date(l.start_date), 'dd/MM/yy')}
+                          {l.reason} • desde {formatCalendarDate(l.start_date, 'dd/MM/yy')}
                         </p>
                       </div>
                       {l.substitute_name ? (
@@ -215,7 +216,7 @@ export default function AccessControlDashboard() {
                     {fin.data.contracts_expiring.map((c: any) => (
                       <div key={c.id} className="flex items-center justify-between p-2 rounded-md bg-muted/30 text-sm">
                         <p className="font-medium">{c.name}</p>
-                        <Badge variant="outline">{format(new Date(c.contract_end_date), 'dd/MM/yyyy')}</Badge>
+                        <Badge variant="outline">{formatCalendarDate(c.contract_end_date, 'dd/MM/yyyy')}</Badge>
                       </div>
                     ))}
                   </div>

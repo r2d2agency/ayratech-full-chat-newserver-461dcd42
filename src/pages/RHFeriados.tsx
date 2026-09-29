@@ -255,7 +255,11 @@ export default function RHFeriados() {
 // Helpers
 function safeFormat(v: any, fmt: string, fallback = '—') {
   if (!v) return fallback;
-  const d = new Date(typeof v === 'string' && !v.includes('T') ? v + 'T12:00:00' : v);
+  const raw = String(v).trim();
+  // holiday_date é uma data de calendário; não deve ser interpretada como UTC.
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(raw)
+    ? new Date(`${raw}T12:00:00`)
+    : new Date(typeof v === 'string' && !v.includes('T') ? `${raw}T12:00:00` : v);
   return d && !Number.isNaN(d.getTime()) ? format(d, fmt) : fallback;
 }
 

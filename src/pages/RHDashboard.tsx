@@ -28,7 +28,12 @@ import { format } from "date-fns";
 
 const safeDate = (v: any): Date | null => {
   if (!v) return null;
-  const d = new Date(typeof v === 'string' && !v.includes('T') ? v + 'T12:00:00' : v);
+  const raw = String(v).trim();
+  // Datas SQL DATE são calendários, não instantes UTC. Fixar ao meio-dia
+  // local evita que o navegador recue um dia em fusos negativos.
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(raw)
+    ? new Date(`${raw}T12:00:00`)
+    : new Date(typeof v === 'string' && !v.includes('T') ? `${raw}T12:00:00` : v);
   return d && !Number.isNaN(d.getTime()) ? d : null;
 };
 

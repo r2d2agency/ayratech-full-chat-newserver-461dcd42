@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { CalendarDays, Check, X, Loader2, CheckCheck, Sparkles } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
+import { formatCalendarDate } from '@/lib/date-utils';
 import { usePromoterValidations } from '@/hooks/use-promoter-validations';
 import { ValidationBadge, ValidationDetailDialog } from '@/components/access-control/ValidationDetailDialog';
 
@@ -173,7 +174,7 @@ export default function SupermarketVisitRequests() {
                             <TableCell>{r.promoter_name || '—'}</TableCell>
                             <TableCell>{r.brand_name || '—'}</TableCell>
                             <TableCell className="text-sm whitespace-nowrap">
-                              {r.period_start && format(new Date(r.period_start), 'dd/MM/yy')} — {r.period_end && format(new Date(r.period_end), 'dd/MM/yy')}
+                              {r.period_start && formatCalendarDate(r.period_start, 'dd/MM/yy')} — {r.period_end && formatCalendarDate(r.period_end, 'dd/MM/yy')}
                             </TableCell>
                             <TableCell>
                               <div className="flex gap-0.5 flex-wrap">

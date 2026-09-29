@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Plus, CalendarDays, Loader2, Clock, MapPin } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
+import { formatCalendarDate } from '@/lib/date-utils';
 import { useAgencyAuth } from '@/contexts/AgencyAuthContext';
 
 const WEEKDAY_LABELS = ['', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
@@ -157,7 +158,7 @@ export default function AgencyVisitRequests() {
                         <TableCell>{r.promoter_name || '—'}</TableCell>
                         <TableCell><Badge variant="outline">{r.brand_name || '—'}</Badge></TableCell>
                         <TableCell className="text-sm">
-                          {r.period_start && format(new Date(r.period_start), 'dd/MM/yyyy')} — {r.period_end && format(new Date(r.period_end), 'dd/MM/yyyy')}
+                          {r.period_start && formatCalendarDate(r.period_start, 'dd/MM/yyyy')} — {r.period_end && formatCalendarDate(r.period_end, 'dd/MM/yyyy')}
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-1">

@@ -19,6 +19,7 @@ import { useBrandContracts, useCreateContract, useUpdateContract, useDeleteContr
 import { FileText, Plus, Trash2, Pencil, GripVertical, Clock, MapPin, DollarSign, CheckCircle, AlertTriangle, XCircle, BarChart3, Calendar, Shield, Search, Building2, Settings, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { formatCalendarDate } from "@/lib/date-utils";
 
 const emptyContract = {
   title: '', status: 'draft', start_date: '', end_date: '', auto_renew: false,
@@ -253,8 +254,8 @@ export default function MerchContratos() {
                             )}
                             {c.start_date && (
                               <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />
-                                {format(new Date(c.start_date), 'dd/MM/yyyy')}
-                                {c.end_date && ` — ${format(new Date(c.end_date), 'dd/MM/yyyy')}`}
+                                {formatCalendarDate(c.start_date, 'dd/MM/yyyy')}
+                                {c.end_date && ` — ${formatCalendarDate(c.end_date, 'dd/MM/yyyy')}`}
                               </span>
                             )}
                           </div>
@@ -516,7 +517,7 @@ export default function MerchContratos() {
                             {compliance.map((c: any) => (
                               <TableRow key={c.id}>
                                 <TableCell className="text-sm">
-                                  {format(new Date(c.period_start), 'dd/MM')} — {format(new Date(c.period_end), 'dd/MM/yyyy')}
+                                  {formatCalendarDate(c.period_start, 'dd/MM')} — {formatCalendarDate(c.period_end, 'dd/MM/yyyy')}
                                 </TableCell>
                                 <TableCell className="text-sm">{c.actual_visits}/{c.expected_visits}</TableCell>
                                 <TableCell className="text-sm">{Number(c.actual_hours).toFixed(1)}/{Number(c.expected_hours).toFixed(1)}h</TableCell>

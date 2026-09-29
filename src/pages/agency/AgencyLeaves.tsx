@@ -17,6 +17,7 @@ import {
   LEAVE_REASONS,
 } from '@/hooks/use-promoter-leaves';
 import { format } from 'date-fns';
+import { formatCalendarDate } from '@/lib/date-utils';
 import { formatCpf } from '@/lib/br-utils';
 
 const getHeaders = () => {
@@ -121,8 +122,8 @@ export default function AgencyLeaves() {
               <CardContent className="space-y-3 text-sm">
                 <div>
                   <span className="text-muted-foreground">Período: </span>
-                  {format(new Date(l.start_date), 'dd/MM/yyyy')}
-                  {l.end_date ? ` — ${format(new Date(l.end_date), 'dd/MM/yyyy')}` : ' — em aberto'}
+                  {formatCalendarDate(l.start_date, 'dd/MM/yyyy')}
+                  {l.end_date ? ` — ${formatCalendarDate(l.end_date, 'dd/MM/yyyy')}` : ' — em aberto'}
                 </div>
                 {l.substitute_name ? (
                   <div className="flex items-center gap-2 p-2 rounded-md bg-primary/5">

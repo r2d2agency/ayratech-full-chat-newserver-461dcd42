@@ -20,6 +20,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { format } from "date-fns";
+import { formatCalendarDate } from '@/lib/date-utils';
 import { ptBR } from "date-fns/locale";
 import {
   Send,
@@ -718,8 +719,8 @@ const Campanhas = () => {
                             {campaign.start_date && (
                               <span className="flex items-center gap-1">
                                 <CalendarIcon className="h-4 w-4" />
-                                {format(new Date(campaign.start_date), "dd/MM/yyyy", { locale: ptBR })}
-                                {campaign.end_date && ` - ${format(new Date(campaign.end_date), "dd/MM/yyyy", { locale: ptBR })}`}
+                                {formatCalendarDate(campaign.start_date, "dd/MM/yyyy")}
+                                {campaign.end_date && ` - ${formatCalendarDate(campaign.end_date, "dd/MM/yyyy")}`}
                               </span>
                             )}
                             {campaign.start_time && campaign.end_time && (

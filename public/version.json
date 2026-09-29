@@ -1,11 +1,11 @@
 {
   "version": "1.0.0",
-  "commit": "466b51d16d4b27fc18e084c5a35afcf5fbcae206",
-  "commitShort": "466b51d1",
-  "buildId": "1.0.0-466b51d1",
-  "buildTime": "2026-09-28T21:02:01.820Z",
+  "commit": "c39d12a502e3c70acfc8a28b8e8fc06e12c1703f",
+  "commitShort": "c39d12a5",
+  "buildId": "1.0.0-c39d12a5",
+  "buildTime": "2026-09-29T14:22:48.912Z",
   "dirty": true,
-  "web": "1.0.0-466b51d1",
-  "promoter": "1.0.0-466b51d1",
-  "timestamp": 1790629321820
+  "web": "1.0.0-c39d12a5",
+  "promoter": "1.0.0-c39d12a5",
+  "timestamp": 1790691768912
 }

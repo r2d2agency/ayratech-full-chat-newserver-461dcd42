@@ -21,6 +21,7 @@ import {
   Download, Check, QrCode, Camera, X
 } from "lucide-react";
 import { format } from "date-fns";
+import { formatCalendarDate } from '@/lib/date-utils';
 import { ptBR } from "date-fns/locale";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { logger } from "@/lib/logger";
@@ -98,7 +99,7 @@ function PendingJustificationsGate() {
                     <div className="text-xs text-muted-foreground">{r.brand_name}</div>
                   </div>
                   <Badge variant="destructive" className="text-[10px]">
-                    {r.visit_date ? format(new Date(r.visit_date), "dd/MM/yyyy", { locale: ptBR }) : ''}
+                    {r.visit_date ? formatCalendarDate(r.visit_date, "dd/MM/yyyy") : ''}
                   </Badge>
                 </div>
                 <Textarea
