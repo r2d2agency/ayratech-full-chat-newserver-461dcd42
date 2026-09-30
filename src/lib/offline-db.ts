@@ -37,6 +37,7 @@ export interface PendingApiCall {
   status: 'pending' | 'processing' | 'failed';
   error?: string;
   attempts?: number;
+  retryAt?: number;
   idempotencyKey?: string;
   accountKey?: string | null;
   // If this API call depends on an upload, store the localId of that upload

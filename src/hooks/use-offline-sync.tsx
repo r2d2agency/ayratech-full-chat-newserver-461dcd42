@@ -43,6 +43,8 @@ async function readResponseError(response: Response) {
 // erro genérico pra sempre, sem nenhum jeito de destravar a fila.
 const MAX_UPLOAD_ATTEMPTS = 6;
 const MAX_API_ATTEMPTS = 6;
+const RETRY_BASE_MS = 5000;
+const RETRY_MAX_MS = 5 * 60 * 1000;
 
 // Reseta o status de fotos travadas em 'uploading'/'failed' para 'pending'.
 // modify() em lote roda numa única transação: se UM registro estiver
@@ -105,7 +107,7 @@ async function resetStuckApiCalls() {
   try {
     await db.pending_api_calls
       .where('status').anyOf('failed', 'processing')
-      .and((call) => (call.attempts || 0) < MAX_API_ATTEMPTS && !call.error?.includes('(não será reenviado automaticamente)'))
+      .and((call) => (call.attempts || 0) < MAX_API_ATTEMPTS && !call.error?.includes('(não será reenviado automaticamente)') && (!call.retryAt || call.retryAt <= Date.now()))
       .modify({ status: 'pending' });
     return;
   } catch (err: any) {
@@ -114,7 +116,7 @@ async function resetStuckApiCalls() {
 
   const stuck = await db.pending_api_calls.where('status').anyOf('failed', 'processing').toArray();
   for (const item of stuck) {
-    if (!item.id || (item.attempts || 0) >= MAX_API_ATTEMPTS || item.error?.includes('(não será reenviado automaticamente)')) continue;
+    if (!item.id || (item.attempts || 0) >= MAX_API_ATTEMPTS || item.error?.includes('(não será reenviado automaticamente)') || (item.retryAt && item.retryAt > Date.now())) continue;
     try {
       await db.pending_api_calls.update(item.id, { status: 'pending' });
     } catch (err: any) {
@@ -222,8 +224,11 @@ function useOfflineSyncState() {
     await resetStuckUploads(force);
     await resetStuckApiCalls();
 
-    const pendingUploads = await db.pending_uploads.where('status').equals('pending').toArray();
-    const pendingCalls = await db.pending_api_calls.where('status').equals('pending').toArray();
+    const now = Date.now();
+    const pendingUploads = (await db.pending_uploads.where('status').equals('pending').toArray())
+      .filter(upload => !upload.retryAt || upload.retryAt <= now);
+    const pendingCalls = (await db.pending_api_calls.where('status').equals('pending').toArray())
+      .filter(call => !call.retryAt || call.retryAt <= now);
 
     const totalItems = pendingUploads.length + pendingCalls.length;
     setSyncProgress({ total: totalItems, done: 0, failed: 0 });
@@ -390,6 +395,7 @@ function useOfflineSyncState() {
         await db.pending_uploads.update(upload.id!, {
           status: 'failed',
           attempts,
+          retryAt: cappedOut ? undefined : Date.now() + Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1)),
           error: cappedOut
             ? `${err.message} — falhou ${attempts}x, parou de tentar sozinho. Toque em "Reenviar" ou descarte a foto.`
             : err.message,
@@ -571,6 +577,7 @@ function useOfflineSyncState() {
         await db.pending_api_calls.update(call.id!, {
           status: terminal ? 'failed' : 'failed',
           attempts,
+          retryAt: terminal ? undefined : Date.now() + Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1)),
           error: terminal ? `${err.message} (não será reenviado automaticamente)` : err.message,
         });
         setSyncProgress(p => ({ ...p, failed: p.failed + 1 }));
