@@ -1511,15 +1511,9 @@ export default function PromotorRota() {
     return true;
   }, [route, checkinSubmitted, qc]);
 
-  if (isLoading) return <PromotorLayout><div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" /></div></PromotorLayout>;
-  if (!route) return <PromotorLayout><div className="text-center py-12 text-muted-foreground">Rota não encontrada</div></PromotorLayout>;
-
-  const isActive = route.status === 'in_progress' || route.status === 'completed' || !!route.checkin_at || !needsCheckin;
-  const isCompleted = route.status === 'completed';
-
   // O progresso do backend permanece em 0% enquanto a foto e a chamada da
-  // categoria aguardam a internet. Calculamos um valor local para não fazer
-  // o promotor acreditar que perdeu o trabalho ao reabrir a rota offline.
+  // categoria aguardam a internet. O hook precisa ficar antes dos retornos
+  // condicionais para preservar a ordem de hooks do React.
   const localProgress = useMemo(() => {
     const executions = Array.isArray(route?.executions) ? route.executions : [];
     if (!executions.length) return Number(route?.progress_pct || 0);
@@ -1533,6 +1527,12 @@ export default function PromotorRota() {
     const extraCompleted = [...optimisticCategories].filter(key => categoryKeys.has(key)).length;
     return Math.min(100, Math.max(Number(route?.progress_pct || 0), Math.round(((completed + extraCompleted) / total) * 100)));
   }, [route?.executions, route?.progress_pct, optimisticAfterPhoto]);
+
+  if (isLoading) return <PromotorLayout><div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" /></div></PromotorLayout>;
+  if (!route) return <PromotorLayout><div className="text-center py-12 text-muted-foreground">Rota não encontrada</div></PromotorLayout>;
+
+  const isActive = route.status === 'in_progress' || route.status === 'completed' || !!route.checkin_at || !needsCheckin;
+  const isCompleted = route.status === 'completed';
   // Foto de check-in: padrão do checklist é obrigatória. Só liberamos sem foto quando o flag vier explicitamente false.
   const requireCheckinPhoto = (route as any)?.require_checkin_photo !== false;
 
