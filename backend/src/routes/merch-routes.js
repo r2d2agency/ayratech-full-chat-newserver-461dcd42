@@ -3719,6 +3719,9 @@ router.post('/promotor/executions/:id/discard', promotorAuth, async (req, res) =
     if (!exec.rows.length) return res.status(404).json({ error: 'Execução não encontrada' });
     const e = exec.rows[0];
     const { qty_store, qty_stock, reason, photo_url, observation, location } = req.body;
+    if (typeof photo_url !== 'string' || !photo_url.trim() || photo_url.startsWith('local-file://')) {
+      return res.status(400).json({ error: 'Uma foto válida é obrigatória para registrar o descarte' });
+    }
     await query('UPDATE route_product_executions SET has_discard=true WHERE id=$1', [req.params.id]);
     // Legacy table (kept for analytics)
     await query(

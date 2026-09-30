@@ -1427,6 +1427,7 @@ export default function PromotorRota() {
       val_qty_store: exec.nearest_expiry_qty_store ?? 0,
       val_qty_stock: exec.nearest_expiry_qty_stock ?? 0,
       product_observation: exec.observation ?? '',
+      discard_photo_url: '',
     });
     setActiveAction(null);
   }, [categoryStatusMap, optimisticBeforeUnlock]);
@@ -2611,6 +2612,26 @@ export default function PromotorRota() {
                   </div>
                   <div><Label className="text-xs">Motivo</Label><Input placeholder="Motivo" value={actionForm.reason ?? ''} onChange={e => setActionForm({ ...actionForm, reason: e.target.value })} /></div>
                   <div><Label className="text-xs">Observação</Label><Textarea rows={2} placeholder="Observação" value={actionForm.observation ?? ''} onChange={e => setActionForm({ ...actionForm, observation: e.target.value, description: e.target.value })} /></div>
+                  {activeAction === 'discard' && (
+                    <div className="space-y-2 rounded-md border border-purple-500/30 p-2">
+                      <Label className="text-xs flex items-center gap-1"><Camera className="h-3.5 w-3.5" /> Foto do descarte (obrigatória)</Label>
+                      {actionForm.discard_photo_url ? (
+                        <div className="space-y-2">
+                          <LocalImage src={actionForm.discard_photo_url} alt="Foto do descarte" className="h-32 w-full rounded object-cover" />
+                          <Button type="button" variant="outline" size="sm" className="w-full" onClick={() => setActionForm({ ...actionForm, discard_photo_url: '' })}>Tirar outra foto</Button>
+                        </div>
+                      ) : (
+                        <CameraCapture
+                          onCapture={(url) => setActionForm((prev: any) => ({ ...prev, discard_photo_url: url }))}
+                          watermark={{ pdvName: route?.pdv_name, brandName: route?.brand_name || currentBrand?.brand_name, promotorName: route?.promotor_name, productName: selectedExec?.product_name, photoType: 'Descarte' } as any}
+                          customTokenGetter={() => localStorage.getItem('promotor_token') || localStorage.getItem('auth_token')}
+                          buttonLabel="Adicionar foto do descarte"
+                          qualityConfig={photoQualityConfig}
+                          allowManualUpload={false}
+                        />
+                      )}
+                    </div>
+                  )}
                   {activeAction === 'damage' && (
                     <div>
                       <Label className="text-xs">Local</Label>
@@ -2631,6 +2652,10 @@ export default function PromotorRota() {
               <Button onClick={() => {
                 if (!selectedExec || !activeAction) return;
                 const execId = selectedExec.id;
+                if (activeAction === 'discard' && !actionForm.discard_photo_url) {
+                  toast.error('Adicione uma foto para registrar o descarte.');
+                  return;
+                }
                 const onDone = () => { setActiveAction(null); };
                 const onErr = (err: any) => toast.error(err.message);
                 
@@ -2662,13 +2687,16 @@ export default function PromotorRota() {
                   body.qty_stock = actionForm.occ_qty_stock || 0;
                   body.reason = actionForm.reason;
                   body.observation = actionForm.observation;
+                  body.photo_url = actionForm.discard_photo_url;
                 }
 
                 queueApiCall({
                   url,
                   method: 'POST',
                   body,
-                  headers: { 'Authorization': `Bearer ${localStorage.getItem('promotor_token') || localStorage.getItem('auth_token')}` }
+                  headers: { 'Authorization': `Bearer ${localStorage.getItem('promotor_token') || localStorage.getItem('auth_token')}` },
+                  dependsOnUploadId: activeAction === 'discard' && actionForm.discard_photo_url?.startsWith('local-file://')
+                    ? actionForm.discard_photo_url.replace('local-file://', '') : undefined
                 });
                 onDone();
 
