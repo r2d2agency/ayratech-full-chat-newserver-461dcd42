@@ -10,8 +10,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { useHolidays, useCreateHoliday, useBulkImportHolidays, useDeleteHoliday } from "@/hooks/use-rh";
-import { CalendarDays, Plus, Upload, Trash2, FileSpreadsheet, Loader2 } from "lucide-react";
+import { useHolidays, useCreateHoliday, useUpdateHoliday, useBulkImportHolidays, useDeleteHoliday } from "@/hooks/use-rh";
+import { CalendarDays, Plus, Upload, Trash2, FileSpreadsheet, Loader2, Pencil } from "lucide-react";
 import { format } from "date-fns";
 import * as XLSX from "xlsx";
 
@@ -36,6 +36,7 @@ export default function RHFeriados() {
 
   const { data: holidays = [], isLoading } = useHolidays({ year: year || undefined, type: typeFilter || undefined });
   const createHoliday = useCreateHoliday();
+  const updateHoliday = useUpdateHoliday();
   const bulkImport = useBulkImportHolidays();
   const deleteHoliday = useDeleteHoliday();
 
@@ -47,8 +48,13 @@ export default function RHFeriados() {
       return;
     }
     try {
-      await createHoliday.mutateAsync(form);
-      toast({ title: 'Feriado adicionado!' });
+      if (form.id) {
+        await updateHoliday.mutateAsync({ id: form.id, data: form });
+        toast({ title: 'Feriado atualizado!' });
+      } else {
+        await createHoliday.mutateAsync(form);
+        toast({ title: 'Feriado adicionado!' });
+      }
       setDialogOpen(false);
       setForm({ ...EMPTY_FORM });
     } catch (err: any) {
@@ -196,6 +202,7 @@ export default function RHFeriados() {
                       <TableCell className="hidden md:table-cell">{h.city || '—'}</TableCell>
                       <TableCell className="hidden md:table-cell">{h.recurring ? '✓ Sim' : 'Não'}</TableCell>
                       <TableCell className="text-right">
+                        <Button variant="ghost" size="sm" onClick={() => { setForm({ ...EMPTY_FORM, ...h, holiday_date: String(h.holiday_date).slice(0, 10) }); setDialogOpen(true); }}><Pencil className="h-4 w-4" /></Button>
                         <Button variant="ghost" size="sm" onClick={() => handleDelete(h.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                       </TableCell>
                     </TableRow>
@@ -210,7 +217,7 @@ export default function RHFeriados() {
       {/* Create Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Novo Feriado</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{form.id ? 'Editar Feriado' : 'Novo Feriado'}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div><Label>Nome *</Label><Input value={form.name} onChange={e => setField('name', e.target.value)} placeholder="Ex: Natal" /></div>
             <div><Label>Data *</Label><Input type="date" value={form.holiday_date} onChange={e => setField('holiday_date', e.target.value)} /></div>
@@ -257,9 +264,13 @@ function safeFormat(v: any, fmt: string, fallback = '—') {
   if (!v) return fallback;
   const raw = String(v).trim();
   // holiday_date é uma data de calendário; não deve ser interpretada como UTC.
-  const d = /^\d{4}-\d{2}-\d{2}$/.test(raw)
-    ? new Date(`${raw}T12:00:00`)
-    : new Date(typeof v === 'string' && !v.includes('T') ? `${raw}T12:00:00` : v);
+  // Feriado é uma data de calendário, não um instante. O PostgreSQL DATE
+  // pode chegar como ISO em UTC (00:00Z), o que no fuso do Brasil vira o dia
+  // anterior. Sempre extraímos apenas YYYY-MM-DD e formatamos ao meio-dia local.
+  const calendarDate = raw.match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
+  const d = calendarDate
+    ? new Date(`${calendarDate}T12:00:00`)
+    : new Date(v);
   return d && !Number.isNaN(d.getTime()) ? format(d, fmt) : fallback;
 }
 

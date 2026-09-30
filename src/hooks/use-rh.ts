@@ -470,6 +470,14 @@ export function useCreateHoliday() {
   });
 }
 
+export function useUpdateHoliday() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: any }) => api<any>(`/api/rh/holidays/${id}`, { method: 'PUT', body: data }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['rh-holidays'] }),
+  });
+}
+
 export function useBulkImportHolidays() {
   const qc = useQueryClient();
   return useMutation({

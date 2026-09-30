@@ -2163,6 +2163,23 @@ router.post('/holidays/bulk', async (req, res) => {
   }
 });
 
+// Update holiday
+router.put('/holidays/:id', async (req, res) => {
+  try {
+    const orgId = await getUserOrgId(req.userId);
+    const { name, holiday_date, type, state, city, recurring } = req.body;
+    if (!name || !holiday_date) return res.status(400).json({ error: 'Nome e data obrigatórios' });
+    const result = await query(
+      `UPDATE holidays SET name=$1, holiday_date=$2, type=$3, state=$4, city=$5,
+       recurring=$6, active=true, updated_at=NOW()
+       WHERE id=$7 AND organization_id=$8 RETURNING *`,
+      [name, holiday_date, type || 'nacional', emptyToNull(state), emptyToNull(city), recurring !== false, req.params.id, orgId]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Feriado não encontrado' });
+    res.json(result.rows[0]);
+  } catch (err) { logError('rh.holidays.update', err); res.status(500).json({ error: err.message }); }
+});
+
 // Delete holiday
 router.delete('/holidays/:id', async (req, res) => {
   try {
