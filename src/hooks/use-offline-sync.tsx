@@ -38,6 +38,7 @@ async function readResponseError(response: Response) {
 // algum bloqueio de rede específico daquele envio) ficava repetindo o mesmo
 // erro genérico pra sempre, sem nenhum jeito de destravar a fila.
 const MAX_UPLOAD_ATTEMPTS = 6;
+const MAX_API_ATTEMPTS = 6;
 
 // Reseta o status de fotos travadas em 'uploading'/'failed' para 'pending'.
 // modify() em lote roda numa única transação: se UM registro estiver
@@ -98,7 +99,10 @@ async function resetStuckUploads(force = false) {
 
 async function resetStuckApiCalls() {
   try {
-    await db.pending_api_calls.where('status').anyOf('failed', 'processing').modify({ status: 'pending' });
+    await db.pending_api_calls
+      .where('status').anyOf('failed', 'processing')
+      .and((call) => (call.attempts || 0) < MAX_API_ATTEMPTS && !call.error?.includes('(não será reenviado automaticamente)'))
+      .modify({ status: 'pending' });
     return;
   } catch (err: any) {
     logger.warn('[OfflineSync] Reset em lote de chamadas de API falhou, tentando item a item', { error: err?.message });
@@ -106,7 +110,7 @@ async function resetStuckApiCalls() {
 
   const stuck = await db.pending_api_calls.where('status').anyOf('failed', 'processing').toArray();
   for (const item of stuck) {
-    if (!item.id) continue;
+    if (!item.id || (item.attempts || 0) >= MAX_API_ATTEMPTS || item.error?.includes('(não será reenviado automaticamente)')) continue;
     try {
       await db.pending_api_calls.update(item.id, { status: 'pending' });
     } catch (err: any) {
@@ -222,9 +226,21 @@ function useOfflineSyncState() {
 
     if (totalItems === 0) return;
 
-    // Cleanup old mappings (older than 3 days) to keep DB small
+    // Remove mapeamentos antigos somente quando nenhuma chamada pendente
+    // depende deles. Caso contrário, a chamada ficaria presa em local-file://
+    // depois de três dias offline.
     const threeDaysAgo = Date.now() - (3 * 24 * 60 * 60 * 1000);
-    await db.upload_mappings.where('timestamp').below(threeDaysAgo).delete();
+    const dependentUploadIds = new Set(
+      (await db.pending_api_calls.toArray())
+        .map(call => call.dependsOnUploadId)
+        .filter((id): id is string => !!id),
+    );
+    const oldMappings = await db.upload_mappings.where('timestamp').below(threeDaysAgo).toArray();
+    for (const mapping of oldMappings) {
+      if (!dependentUploadIds.has(mapping.localId)) {
+        await db.upload_mappings.delete(mapping.localId);
+      }
+    }
 
     logger.info('[OfflineSync] Iniciando sincronização', { 
       uploads: pendingUploads.length, 
@@ -269,7 +285,10 @@ function useOfflineSyncState() {
 
         const formData = new FormData();
         formData.append('file', blob, upload.fileName);
-        const authToken = getCurrentOfflineToken() || upload.token;
+        // Use o token capturado quando a foto foi enfileirada. Usar o token
+        // atualmente armazenado poderia enviar uma foto do usuário A para a
+        // conta do usuário B após logout/login antes da sincronização.
+        const authToken = upload.token;
 
         // Telemetria de duração — nada aqui lança exceção quando fica lento
         // (só quando falha de vez), então sem isso um travamento de rede/
@@ -302,6 +321,9 @@ function useOfflineSyncState() {
         }
 
         const result = await response.json();
+        if (!result?.file?.url || typeof result.file.url !== 'string') {
+          throw new Error('Resposta inválida do servidor ao enviar a foto');
+        }
         let fileUrl = result.file.url;
         if (fileUrl.startsWith('/') && API_URL) {
           fileUrl = `${API_URL}${fileUrl}`;
@@ -384,7 +406,14 @@ function useOfflineSyncState() {
     // 2. Process API Calls
     for (const call of updatedPendingCalls) {
       try {
-        await db.pending_api_calls.update(call.id!, { status: 'processing' });
+        // Reivindicação condicional: outra instância/aba pode ter lido a
+        // mesma chamada antes desta. Só a instância que ainda encontrar
+        // status=pending pode processá-la.
+        const claimed = await db.pending_api_calls
+          .where('id').equals(call.id!)
+          .and(item => item.status === 'pending')
+          .modify({ status: 'processing' });
+        if (claimed !== 1) continue;
 
         // Resolve any local-file references using the mapping map
         const resolveRefs = (obj: any): any => {
@@ -407,7 +436,9 @@ function useOfflineSyncState() {
         };
 
         const body = resolveRefs(call.body);
-        
+        const resolvedUrl = resolveRefs(call.url);
+        const resolvedHeaders = resolveRefs(call.headers);
+
         // Final safety check
         const hasLocalRefs = (obj: any): boolean => {
           if (typeof obj === 'string') return obj.startsWith('local-file://');
@@ -418,16 +449,16 @@ function useOfflineSyncState() {
           return false;
         };
 
-        if (hasLocalRefs(body)) {
+        if (hasLocalRefs(body) || hasLocalRefs(resolvedUrl) || hasLocalRefs(resolvedHeaders)) {
           logger.warn('[OfflineSync] Chamada API ainda possui referências locais, aguardando upload...', { url: call.url });
           await db.pending_api_calls.update(call.id!, { status: 'pending' });
           continue;
         }
 
-        await api(call.url, {
+        await api(resolvedUrl, {
           method: call.method as any,
           body,
-          headers: call.headers,
+          headers: resolvedHeaders,
           // silent: o catch logo abaixo já registra a falha com o contexto
           // da fila offline (id, url, erro). Sem isso, toda falha de rede
           // aqui era gravada DUAS vezes na Central de Logs — uma genérica
@@ -508,8 +539,14 @@ function useOfflineSyncState() {
           continue;
         }
 
-        logger.error('[OfflineSync] Erro na chamada API', { id: call.id, error: err.message, url: call.url });
-        await db.pending_api_calls.update(call.id!, { status: 'failed', error: err.message });
+        const attempts = (call.attempts || 0) + 1;
+        const terminal = attempts >= MAX_API_ATTEMPTS || (status >= 400 && status < 500 && status !== 408 && status !== 429);
+        logger.error('[OfflineSync] Erro na chamada API', { id: call.id, error: err.message, url: call.url, attempts, terminal });
+        await db.pending_api_calls.update(call.id!, {
+          status: terminal ? 'failed' : 'failed',
+          attempts,
+          error: terminal ? `${err.message} (não será reenviado automaticamente)` : err.message,
+        });
         setSyncProgress(p => ({ ...p, failed: p.failed + 1 }));
       }
     }
@@ -616,7 +653,8 @@ function useOfflineSyncState() {
       if (!call.id) continue;
       await db.pending_api_calls.update(call.id, {
         status: 'failed',
-        error: 'Foto descartada pelo usuário — registre novamente.',
+        attempts: MAX_API_ATTEMPTS,
+        error: 'Foto descartada pelo usuário — registre novamente. (não será reenviado automaticamente)',
       }).catch(() => {});
     }
   }, []);

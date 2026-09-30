@@ -35,6 +35,7 @@ export interface PendingApiCall {
   timestamp: number;
   status: 'pending' | 'processing' | 'failed';
   error?: string;
+  attempts?: number;
   // If this API call depends on an upload, store the localId of that upload
   dependsOnUploadId?: string;
 }
