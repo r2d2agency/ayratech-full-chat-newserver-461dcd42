@@ -872,7 +872,7 @@ export default function MerchExecucao() {
             setContingencyPhotoProgress({});
           }
         }}>
-          <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-3xl max-h-[calc(100dvh-2rem)] overflow-x-hidden overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Subir Foto Manualmente (Contingência)</DialogTitle>
               <DialogDescription>
@@ -955,19 +955,19 @@ export default function MerchExecucao() {
                     }}
                   />
                   {contingencyFiles.length > 0 && (
-                    <div className="space-y-1 text-xs">
+                    <div className="max-h-48 space-y-1 overflow-x-hidden overflow-y-auto rounded-md border bg-muted/20 p-2 text-xs">
                       {contingencyFiles.map((file, index) => (
-                        <div key={`${file.name}-${index}`} className="flex items-center justify-between rounded border px-2 py-1">
-                          <span className="truncate">{index + 1}. {file.name}</span>
-                          <span>{contingencyPhotoProgress[`${file.name}#${index}`] || 'Aguardando'}</span>
+                        <div key={`${file.name}-${index}`} className="flex min-w-0 items-center gap-2 rounded border px-2 py-1">
+                          <span className="min-w-0 flex-1 truncate" title={file.name}>{index + 1}. {file.name}</span>
+                          <span className="shrink-0 whitespace-nowrap text-muted-foreground">{contingencyPhotoProgress[`${file.name}#${index}`] || 'Aguardando'}</span>
                         </div>
                       ))}
                     </div>
                   )}
                   {contingencyPhotos.map((url, index) => (
                     <div key={`${url}-${index}`} className="flex items-center justify-between rounded border px-2 py-1 text-xs">
-                      <span className="truncate">Foto capturada {index + 1}</span>
-                      <span>{contingencyPhotoProgress[url] === 'done' ? 'Registrada' : contingencyPhotoProgress[url] === 'failed' ? 'Falhou' : 'Aguardando'}</span>
+                      <span className="min-w-0 flex-1 truncate">Foto capturada {index + 1}</span>
+                      <span className="shrink-0 whitespace-nowrap">{contingencyPhotoProgress[url] === 'done' ? 'Registrada' : contingencyPhotoProgress[url] === 'failed' ? 'Falhou' : 'Aguardando'}</span>
                     </div>
                   ))}
                   <CameraCapture
