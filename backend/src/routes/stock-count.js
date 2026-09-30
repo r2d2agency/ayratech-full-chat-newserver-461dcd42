@@ -376,7 +376,7 @@ router.get('/route/:route_id', authenticate, async (req, res) => {
 
     // Rules enabled for those brands
     const rules = (await query(
-      `SELECT * FROM stock_count_rules WHERE organization_id=$1 AND enabled=true AND brand_id = ANY($2)`,
+      `SELECT * FROM stock_count_rules WHERE organization_id=$1 AND enabled=true AND brand_id = ANY($2::uuid[])`,
       [orgId, Array.from(brandIds)])).rows;
     if (rules.length === 0) return res.json([]);
 

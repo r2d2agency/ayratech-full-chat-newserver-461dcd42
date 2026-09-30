@@ -4472,7 +4472,11 @@ router.post('/promotor/return-requests', promotorAuth, async (req, res) => {
 router.post('/promotor/return-invoices', promotorAuth, async (req, res) => {
   try {
     await ensurePerdasSchema();
-    const { request_id, invoice_number, invoice_date, issuer_name, photo_url, pdf_url, invoice_total_qty, observation } = req.body;
+    const { request_id, invoice_number, invoice_date, issuer_name, invoice_photo_url, photo_url, pdf_url, invoice_total_qty, observation } = req.body;
+    const invoicePhotoUrl = invoice_photo_url || photo_url;
+    if (typeof invoicePhotoUrl !== 'string' || !invoicePhotoUrl.trim() || invoicePhotoUrl.startsWith('local-file://')) {
+      return res.status(400).json({ error: 'Uma foto válida da nota é obrigatória para enviar a nota de troca' });
+    }
 
     // Sum of qty registered by promoter in this request
     const sumRes = await query(
@@ -4490,7 +4494,7 @@ router.post('/promotor/return-invoices', promotorAuth, async (req, res) => {
       `INSERT INTO return_invoices (request_id, invoice_number, invoice_date, issuer_name, photo_url, pdf_url,
         invoice_total_qty, total_registered_qty, divergence_qty, observation, review_status, uploaded_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending',$11) RETURNING *`,
-      [request_id, invoice_number, invoice_date, issuer_name, photo_url, pdf_url,
+      [request_id, invoice_number, invoice_date, issuer_name, invoicePhotoUrl, pdf_url,
        totalNF, totalRegistered, divergence, observation, req.employeeId]
     );
 

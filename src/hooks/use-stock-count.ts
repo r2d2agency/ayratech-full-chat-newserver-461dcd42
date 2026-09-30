@@ -35,6 +35,8 @@ export function useRouteStockCount(routeId?: string) {
     queryKey: ['stock-count-route', routeId],
     queryFn: () => api<any[]>(`/api/stock-count/route/${routeId}`),
     enabled: !!routeId,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
 }
 

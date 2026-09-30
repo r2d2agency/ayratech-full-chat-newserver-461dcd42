@@ -72,7 +72,7 @@ export default function MerchPerdas() {
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    {inv.photo_url && <a href={inv.photo_url} target="_blank" rel="noreferrer"><Button size="sm" variant="outline"><ImageIcon className="h-3 w-3 mr-1" />Foto NF</Button></a>}
+                    {inv.photo_url && <a href={inv.photo_url} target="_blank" rel="noreferrer"><Button size="sm" variant="outline"><ImageIcon className="h-3 w-3 mr-1" />Foto da nota</Button></a>}
                     {inv.pdf_url && <a href={inv.pdf_url} target="_blank" rel="noreferrer"><Button size="sm" variant="outline"><FileText className="h-3 w-3 mr-1" />PDF</Button></a>}
                   </div>
                 </div>

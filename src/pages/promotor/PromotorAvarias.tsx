@@ -9,8 +9,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { usePromotorDamages, usePromotorRequestReturn, usePromotorUploadInvoice } from "@/hooks/use-promotor-routes";
+import { CameraCapture } from "@/components/promotor/CameraCapture";
+import { useOfflineSync } from "@/hooks/use-offline-sync";
 import { toast } from "sonner";
-import { AlertTriangle, Trash2, Upload, Send } from "lucide-react";
+import { AlertTriangle, Trash2, Upload, Send, Image as ImageIcon } from "lucide-react";
 
 const STATUS_LABELS: Record<string, string> = {
   registered: 'Registrada', awaiting_invoice: 'Aguardando Nota', invoice_sent: 'Nota Enviada',
@@ -34,6 +36,7 @@ export default function PromotorAvarias() {
   const { data: damages = [] } = usePromotorDamages();
   const requestReturn = usePromotorRequestReturn();
   const uploadInvoice = usePromotorUploadInvoice();
+  const { isOnline, queueApiCall } = useOfflineSync();
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showReturnDialog, setShowReturnDialog] = useState(false);
@@ -96,7 +99,7 @@ export default function PromotorAvarias() {
     // We expose it through damage row if backend returns it; fallback: ask user.
     const request_id = group.items[0].request_id || group.items[0].current_request_id;
     setInvoiceContext({ request_id, total_registered: group.total });
-    setInvoiceForm({ request_id, invoice_total_qty: group.total });
+    setInvoiceForm({ request_id, invoice_total_qty: group.total, invoice_photo_url: '' });
     setShowInvoiceDialog(true);
   };
 
@@ -234,13 +237,37 @@ export default function PromotorAvarias() {
                   </div>
                 )}
               </div>
+              <div className="space-y-2">
+                <Label className="text-xs">Foto da nota de troca <span className="text-destructive">*</span></Label>
+                <CameraCapture
+                  buttonLabel="Fotografar nota"
+                  onCapture={(url) => setInvoiceForm((prev: any) => ({ ...prev, invoice_photo_url: url }))}
+                />
+                {invoiceForm.invoice_photo_url && <div className="flex items-center gap-2 text-xs text-green-700"><ImageIcon className="h-4 w-4" /> Foto da nota anexada</div>}
+              </div>
               <div><Label className="text-xs">Observação (opcional)</Label><Textarea rows={2} onChange={e => setInvoiceForm({ ...invoiceForm, observation: e.target.value })} /></div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setShowInvoiceDialog(false)}>Cancelar</Button>
               <Button
-                disabled={!invoiceForm.request_id || uploadInvoice.isPending}
-                onClick={() => {
+                disabled={!invoiceForm.request_id || !invoiceForm.invoice_photo_url || uploadInvoice.isPending}
+                onClick={async () => {
+                  if (!invoiceForm.invoice_photo_url) {
+                    toast.error('Adicione uma foto da nota para enviar.');
+                    return;
+                  }
+                  if (!isOnline) {
+                    await queueApiCall({
+                      url: '/api/merch/promotor/return-invoices',
+                      method: 'POST',
+                      body: invoiceForm,
+                      headers: { 'Authorization': `Bearer ${localStorage.getItem('promotor_token') || localStorage.getItem('auth_token') || ''}` },
+                      dependsOnUploadId: invoiceForm.invoice_photo_url.startsWith('local-file://') ? invoiceForm.invoice_photo_url.replace('local-file://', '') : undefined,
+                    });
+                    toast.success('Nota salva offline e será enviada quando houver conexão.');
+                    setShowInvoiceDialog(false);
+                    return;
+                  }
                   uploadInvoice.mutate(invoiceForm, {
                     onSuccess: () => { toast.success('Nota enviada para conferência'); setShowInvoiceDialog(false); },
                     onError: (err: any) => toast.error(err?.message || 'Erro ao enviar nota'),
