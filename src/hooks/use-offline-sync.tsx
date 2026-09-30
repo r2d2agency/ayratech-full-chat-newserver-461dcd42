@@ -406,6 +406,19 @@ function useOfflineSyncState() {
     // 2. Process API Calls
     for (const call of updatedPendingCalls) {
       try {
+        // O checkout da rota só pode ser enviado depois das atualizações de
+        // categoria da mesma rota. Sem essa barreira, o servidor pode receber
+        // o checkout enquanto as fotos ainda estão subindo e rejeitar a rota.
+        const checkoutMatch = call.url.match(/\/promotor\/routes\/([^/]+)\/checkout$/);
+        if (checkoutMatch) {
+          const routeId = checkoutMatch[1];
+          const categoryPrefix = `/api/merch/promotor/routes/${routeId}/categories/`;
+          const pendingCategoryCall = await db.pending_api_calls
+            .where('status').anyOf('pending', 'processing')
+            .filter(other => other.id !== call.id && other.url.startsWith(categoryPrefix))
+            .count();
+          if (pendingCategoryCall > 0) continue;
+        }
         // Reivindicação condicional: outra instância/aba pode ter lido a
         // mesma chamada antes desta. Só a instância que ainda encontrar
         // status=pending pode processá-la.
@@ -553,6 +566,9 @@ function useOfflineSyncState() {
     } finally {
       syncingRef.current = false;
       setIsSyncing(false);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('offline-sync-finished'));
+      }
     }
   }, [isOnline]);
 

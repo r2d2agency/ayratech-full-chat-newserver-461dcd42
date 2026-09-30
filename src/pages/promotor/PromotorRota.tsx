@@ -949,6 +949,16 @@ export default function PromotorRota() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  useEffect(() => {
+    if (!id) return;
+    const handleOfflineSyncFinished = () => {
+      qc.invalidateQueries({ queryKey: ['promotor-route', id] });
+      refetch().catch(() => {});
+    };
+    window.addEventListener('offline-sync-finished', handleOfflineSyncFinished);
+    return () => window.removeEventListener('offline-sync-finished', handleOfflineSyncFinished);
+  }, [id, qc, refetch]);
+
   // Timer to keep current time updated for min duration check
   useEffect(() => {
     if (route?.status === 'in_progress') {
@@ -962,8 +972,13 @@ export default function PromotorRota() {
     const map: Record<string, any> = {};
     (route?.category_statuses || []).forEach((cs: any) => {
       // Create keys for both specific (with brand) and general category access
+      const normalized = {
+        ...cs,
+        category_before_photo: cs.category_before_photo || cs.before_photo || null,
+        category_after_photo: cs.category_after_photo || cs.after_photo || null,
+      };
       const key = cs.route_brand_id ? `${cs.category_id}_${cs.route_brand_id}` : cs.category_id;
-      map[key] = cs;
+      map[key] = normalized;
     });
     return map;
   }, [route?.category_statuses]);
@@ -1026,7 +1041,8 @@ export default function PromotorRota() {
     const restored: Record<string, boolean> = {};
     Object.keys(groupedExecs).forEach((key) => {
       const group = groupedExecs[key];
-      const storageKey = `promotor-after-photo:${id}:${group.catId}:${group.routeBrandId || 'null'}`;
+      const groupBrandId = group.execs[0]?.route_brand_id || 'null';
+      const storageKey = `promotor-after-photo:${id}:${group.catId}:${groupBrandId}`;
       try {
         if (localStorage.getItem(storageKey)) restored[key] = true;
       } catch { /* armazenamento local indisponível */ }
@@ -1336,7 +1352,7 @@ export default function PromotorRota() {
     setFaceVerifyAction(null);
 
     // Prioritize background queue for all checkouts to ensure they work offline
-    queueApiCall({
+    await queueApiCall({
       url: `/api/merch/promotor/routes/${id}/checkout`,
       method: 'POST',
       body: { notes: actionForm.notes },
