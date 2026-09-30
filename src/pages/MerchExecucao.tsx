@@ -14,6 +14,7 @@ import { Progress } from "@/components/ui/progress";
 import { useLiveRoutes, useMerchDamages, useReturnRequests, useMerchRouteDetail, useManualCompleteRoute, useContingencyPhotoUpload } from "@/hooks/use-merch-routes";
 import { MapPin, Clock, User, Camera, AlertTriangle, CheckCircle2, Activity, Package, Eye, Store, ChevronRight, Calendar, Filter, Upload } from "lucide-react";
 import { CameraCapture } from "@/components/promotor/CameraCapture";
+import { useUpload } from "@/hooks/use-upload";
 import { resolveMediaUrl } from "@/lib/media";
 import { exportPhotosAsJpg } from "@/lib/photo-export";
 import { PhotoLightbox } from "@/components/merch/PhotoLightbox";
@@ -113,6 +114,10 @@ export default function MerchExecucao() {
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [contingencyPhotos, setContingencyPhotos] = useState<string[]>([]);
+  const [contingencyFiles, setContingencyFiles] = useState<File[]>([]);
+  const [contingencyPhotoProgress, setContingencyPhotoProgress] = useState<Record<string, 'queued' | 'processing' | 'done' | 'failed'>>({});
+  const { uploadFile: uploadPhotoFile } = useUpload();
   const [contingencyCapturedAt, setContingencyCapturedAt] = useState<string>(() => defaultDatetimeLocal());
   const [contingencyBrandId, setContingencyBrandId] = useState<string>('');
   const [contingencyCategoryId, setContingencyCategoryId] = useState<string>('');
@@ -862,6 +867,9 @@ export default function MerchExecucao() {
             setContingencyCategoryId('');
             setContingencyPhotoType('contingency');
             setContingencyReason('');
+            setContingencyPhotos([]);
+            setContingencyFiles([]);
+            setContingencyPhotoProgress({});
           }
         }}>
           <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
@@ -933,27 +941,44 @@ export default function MerchExecucao() {
                   />
                 </div>
 
-                <div className="pt-2 border-t">
-                  <Label className="text-xs mb-2 block">Foto</Label>
+                <div className="pt-2 border-t space-y-3">
+                  <Label className="text-xs mb-2 block">Fotos (mesma categoria/marca)</Label>
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    disabled={uploading}
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files || []);
+                      setContingencyFiles(prev => [...prev, ...files]);
+                      setContingencyPhotoProgress(prev => ({ ...prev, ...Object.fromEntries(files.map(file => [file.name, 'queued'])) }));
+                    }}
+                  />
+                  {contingencyFiles.length > 0 && (
+                    <div className="space-y-1 text-xs">
+                      {contingencyFiles.map((file, index) => (
+                        <div key={`${file.name}-${index}`} className="flex items-center justify-between rounded border px-2 py-1">
+                          <span className="truncate">{index + 1}. {file.name}</span>
+                          <span>{contingencyPhotoProgress[`${file.name}#${index}`] || 'Aguardando'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {contingencyPhotos.map((url, index) => (
+                    <div key={`${url}-${index}`} className="flex items-center justify-between rounded border px-2 py-1 text-xs">
+                      <span className="truncate">Foto capturada {index + 1}</span>
+                      <span>{contingencyPhotoProgress[url] === 'done' ? 'Registrada' : contingencyPhotoProgress[url] === 'failed' ? 'Falhou' : 'Aguardando'}</span>
+                    </div>
+                  ))}
                   <CameraCapture
                     onCapture={async (url) => {
                       if (!contingencyCapturedAt) { toast.error('Informe a data/hora da foto'); return; }
                       if (viewRoute.is_multi_brand && !contingencyBrandId) { toast.error('Selecione a marca'); return; }
                       try {
-                        await contingencyUpload.mutateAsync({
-                          routeId: viewRoute.id,
-                          photo_url: url,
-                          photo_type: contingencyPhotoType,
-                          category_id: contingencyCategoryId && contingencyCategoryId !== '__none__' ? contingencyCategoryId : null,
-                          route_brand_id: contingencyBrandId || null,
-                          captured_at: new Date(contingencyCapturedAt).toISOString(),
-                          reason: contingencyReason || 'Contingência operacional',
-                        });
+                        await contingencyUpload.mutateAsync({ routeId: viewRoute.id, photo_url: url, photo_type: contingencyPhotoType, category_id: contingencyCategoryId && contingencyCategoryId !== '__none__' ? contingencyCategoryId : null, route_brand_id: contingencyBrandId || null, captured_at: new Date(contingencyCapturedAt).toISOString(), reason: contingencyReason || 'Contingência operacional' });
                         toast.success('Foto registrada na galeria da rota');
                         setShowUploadDialog(false);
-                      } catch (err: any) {
-                        toast.error('Falha ao registrar foto: ' + (err?.message || ''));
-                      }
+                      } catch (err: any) { toast.error('Falha ao registrar foto: ' + (err?.message || '')); }
                     }}
                     watermark={{
                       pdvName: viewRoute.pdv_name,
@@ -971,7 +996,48 @@ export default function MerchExecucao() {
               </div>
             )}
             <DialogFooter>
-              <Button variant="outline" onClick={() => setShowUploadDialog(false)}>Fechar</Button>
+              <Button variant="outline" onClick={() => setShowUploadDialog(false)} disabled={uploading}>Fechar</Button>
+              <Button
+                disabled={uploading || !viewRoute || (!contingencyFiles.length && !contingencyPhotos.length)}
+                onClick={async () => {
+                  if (!viewRoute) return;
+                  if (!contingencyCapturedAt) { toast.error('Informe a data/hora da foto'); return; }
+                  if (viewRoute.is_multi_brand && !contingencyBrandId) { toast.error('Selecione a marca'); return; }
+                  setUploading(true);
+                  let ok = 0;
+                  for (let i = 0; i < contingencyFiles.length; i++) {
+                    const file = contingencyFiles[i];
+                    const key = `${file.name}#${i}`;
+                    setContingencyPhotoProgress(prev => ({ ...prev, [key]: 'processing' }));
+                    try {
+                      const url = await uploadPhotoFile(file);
+                      if (!url) throw new Error('Upload sem URL');
+                      await contingencyUpload.mutateAsync({
+                        routeId: viewRoute.id, photo_url: url, photo_type: contingencyPhotoType,
+                        category_id: contingencyCategoryId && contingencyCategoryId !== '__none__' ? contingencyCategoryId : null,
+                        route_brand_id: contingencyBrandId || null, captured_at: new Date(contingencyCapturedAt).toISOString(),
+                        reason: contingencyReason || 'Contingência operacional',
+                      });
+                      setContingencyPhotoProgress(prev => ({ ...prev, [key]: 'done' })); ok++;
+                    } catch (err: any) {
+                      setContingencyPhotoProgress(prev => ({ ...prev, [key]: 'failed' }));
+                      toast.error(`Falha na foto ${i + 1}: ${err?.message || 'erro'}`);
+                    }
+                  }
+                  if (contingencyPhotos.length) {
+                    for (let i = 0; i < contingencyPhotos.length; i++) {
+                      const url = contingencyPhotos[i];
+                      setContingencyPhotoProgress(prev => ({ ...prev, [url]: 'processing' }));
+                      try {
+                        await contingencyUpload.mutateAsync({ routeId: viewRoute.id, photo_url: url, photo_type: contingencyPhotoType, category_id: contingencyCategoryId && contingencyCategoryId !== '__none__' ? contingencyCategoryId : null, route_brand_id: contingencyBrandId || null, captured_at: new Date(contingencyCapturedAt).toISOString(), reason: contingencyReason || 'Contingência operacional' });
+                        setContingencyPhotoProgress(prev => ({ ...prev, [url]: 'done' })); ok++;
+                      } catch { setContingencyPhotoProgress(prev => ({ ...prev, [url]: 'failed' })); }
+                    }
+                  }
+                  setUploading(false);
+                  if (ok) toast.success(`${ok} foto(s) registrada(s) na galeria da rota`);
+                }}
+              >{uploading ? 'Processando fotos...' : 'Processar fotos'}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
