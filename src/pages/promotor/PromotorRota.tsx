@@ -502,6 +502,28 @@ function CategoryAfterPhotoGate({ catId, routeBrandId, categoryName, routeId, pd
         latitude: pos?.lat, longitude: pos?.lng,
       };
 
+      // A categoria é uma operação local única: registre o estado antes da
+      // chamada da API. Assim reload, troca de tela e reconexão não fazem o
+      // promotor fotografar novamente enquanto o upload aguarda a fila.
+      const accountKey = (() => {
+        const userId = localStorage.getItem('user_id') || localStorage.getItem('promotor_employee_id') || localStorage.getItem('employee_id');
+        const organizationId = localStorage.getItem('organization_id') || localStorage.getItem('org_id') || '';
+        const authDomain = localStorage.getItem('auth_type') || 'promotor';
+        return userId ? `${authDomain}:${organizationId}:${userId}` : null;
+      })();
+      const stateKey = `category:${routeId}:${catId}:${routeBrandId || 'null'}`;
+      await db.offline_category_states.put({
+        key: stateKey,
+        accountKey,
+        routeId,
+        categoryId: catId,
+        routeBrandId: routeBrandId || null,
+        photoType: 'after',
+        photoCount: effective.length,
+        status: 'pending',
+        updatedAt: Date.now(),
+      });
+
       await queueApiCall({
         url: `/api/merch/promotor/routes/${routeId}/categories/${catId}/after-photo`,
         method: 'POST',
@@ -1050,7 +1072,22 @@ export default function PromotorRota() {
       })();
       const queuedCalls = await db.pending_api_calls.toArray();
       const queuedUploads = await db.pending_uploads.toArray();
+      const localStates = await db.offline_category_states
+        .where('routeId').equals(id)
+        .toArray();
       const restored: Record<string, boolean> = {};
+      for (const state of localStates) {
+        if (cancelled || state.accountKey !== accountKey || state.photoType !== 'after' || state.status === 'failed') continue;
+        const key = `${state.categoryId}_${state.routeBrandId || 'null'}`;
+        restored[key] = true;
+        const group = Object.values(groupedExecs).find((item: any) =>
+          item.catId === state.categoryId && (!state.routeBrandId || item.execs[0]?.route_brand_id === state.routeBrandId)
+        );
+        if (group) {
+          const groupName = Object.keys(groupedExecs).find(name => groupedExecs[name] === group);
+          if (groupName) restored[groupName] = true;
+        }
+      }
       // A chamada de categoria pode ainda não ter sido gravada quando a
       // captura acabou; o upload pendente também é evidência local da foto.
       const hasPendingPhoto = queuedUploads.some(upload => upload.accountKey === accountKey && upload.status !== 'failed' && upload.localId);
