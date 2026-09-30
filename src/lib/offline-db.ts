@@ -12,6 +12,7 @@ export interface PendingUpload {
   fileType: string;
   timestamp: number;
   token: string | null;
+  accountKey?: string | null;
   status: 'pending' | 'uploading' | 'failed';
   error?: string;
   // Conta quantas vezes o envio já foi tentado e falhou. Sem isso, uma foto
@@ -36,6 +37,8 @@ export interface PendingApiCall {
   status: 'pending' | 'processing' | 'failed';
   error?: string;
   attempts?: number;
+  idempotencyKey?: string;
+  accountKey?: string | null;
   // If this API call depends on an upload, store the localId of that upload
   dependsOnUploadId?: string;
 }

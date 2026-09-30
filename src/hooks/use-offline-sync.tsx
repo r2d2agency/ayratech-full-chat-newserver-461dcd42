@@ -4,6 +4,10 @@ import { api, API_URL, getAuthToken } from '@/lib/api';
 
 import { logger } from '@/lib/logger';
 
+function getCurrentOfflineAccountKey() {
+  return localStorage.getItem('promotor_employee_id') || localStorage.getItem('employee_id') || localStorage.getItem('user_id');
+}
+
 function getCurrentOfflineToken() {
   return (
     localStorage.getItem('promotor_token') ||
@@ -288,6 +292,11 @@ function useOfflineSyncState() {
         // Use o token capturado quando a foto foi enfileirada. Usar o token
         // atualmente armazenado poderia enviar uma foto do usuário A para a
         // conta do usuário B após logout/login antes da sincronização.
+        const currentAccount = getCurrentOfflineAccountKey();
+        if (upload.accountKey && currentAccount && upload.accountKey !== currentAccount) {
+          await db.pending_uploads.update(upload.id!, { status: 'failed', error: 'Foto pertence a outra conta. Entre com o usuário original para sincronizar.' });
+          return;
+        }
         const authToken = upload.token;
 
         // Telemetria de duração — nada aqui lança exceção quando fica lento
@@ -422,6 +431,10 @@ function useOfflineSyncState() {
         // Reivindicação condicional: outra instância/aba pode ter lido a
         // mesma chamada antes desta. Só a instância que ainda encontrar
         // status=pending pode processá-la.
+        if (call.accountKey && getCurrentOfflineAccountKey() && call.accountKey !== getCurrentOfflineAccountKey()) {
+          await db.pending_api_calls.update(call.id!, { status: 'failed', error: 'Operação pertence a outra conta. Entre com o usuário original para sincronizar.' });
+          continue;
+        }
         const claimed = await db.pending_api_calls
           .where('id').equals(call.id!)
           .and(item => item.status === 'pending')
@@ -471,7 +484,7 @@ function useOfflineSyncState() {
         await api(resolvedUrl, {
           method: call.method as any,
           body,
-          headers: resolvedHeaders,
+          headers: { ...resolvedHeaders, ...(call.idempotencyKey ? { 'X-Idempotency-Key': call.idempotencyKey } : {}) },
           // silent: o catch logo abaixo já registra a falha com o contexto
           // da fila offline (id, url, erro). Sem isso, toda falha de rede
           // aqui era gravada DUAS vezes na Central de Logs — uma genérica
@@ -601,6 +614,7 @@ function useOfflineSyncState() {
         fileType: file.type,
         timestamp: Date.now(),
         token,
+        accountKey: getCurrentOfflineAccountKey(),
         status: 'pending',
         localId
       });
@@ -646,6 +660,8 @@ function useOfflineSyncState() {
   const queueApiCall = useCallback(async (config: Omit<PendingApiCall, 'status' | 'timestamp'>) => {
     await db.pending_api_calls.add({
       ...config,
+      idempotencyKey: config.idempotencyKey || `offline_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      accountKey: getCurrentOfflineAccountKey(),
       status: 'pending',
       timestamp: Date.now()
     });
