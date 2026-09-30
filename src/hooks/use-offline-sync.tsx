@@ -562,6 +562,19 @@ function useOfflineSyncState() {
         });
 
         await db.pending_api_calls.delete(call.id!);
+        if (call.url.includes('/categories/') && call.url.includes('/after-photo')) {
+          const routeMatch = call.url.match(/\/promotor\/routes\/([^/]+)\/categories\/([^/]+)\/after-photo/);
+          if (routeMatch) {
+            const bodyData = typeof call.body === 'object' ? call.body : {};
+            const stateKey = `category:${routeMatch[1]}:${routeMatch[2]}:${bodyData.route_brand_id || 'null'}`;
+            await db.offline_category_states.put({
+              key: stateKey, accountKey: call.accountKey ?? accountKey,
+              routeId: routeMatch[1], categoryId: routeMatch[2], routeBrandId: bodyData.route_brand_id || null,
+              photoType: 'after', photoCount: Array.isArray(bodyData.photos) ? bodyData.photos.length : 1,
+              status: 'synced', updatedAt: Date.now(),
+            });
+          }
+        }
         setSyncProgress(p => ({ ...p, done: p.done + 1 }));
         logger.info('[OfflineSync] Chamada API concluída', { url: call.url });
       } catch (err: any) {

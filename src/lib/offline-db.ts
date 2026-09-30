@@ -49,6 +49,19 @@ export interface PendingApiCall {
 // Lease de sincronização: garante que apenas UMA aba/dispositivo processe a
 // fila por vez, mesmo após reload ou crash da aba anterior. O dono do lease
 // renova o heartbeat; se a aba morre, o lease expira e outra aba assume.
+export interface OfflineCategoryState {
+  key: string;
+  accountKey: string | null;
+  routeId: string;
+  categoryId: string;
+  routeBrandId?: string | null;
+  photoType: 'before' | 'after';
+  photoCount: number;
+  status: 'pending' | 'synced' | 'failed';
+  updatedAt: number;
+  error?: string;
+}
+
 export interface SyncLease {
   name: string; // 'offline-sync'
   ownerId: string;
@@ -69,6 +82,7 @@ export class OfflineDatabase extends Dexie {
   pending_api_calls!: Table<PendingApiCall>;
   upload_mappings!: Table<UploadMapping>;
   sync_leases!: Table<SyncLease>;
+  offline_category_states!: Table<OfflineCategoryState>;
 
   constructor() {
     super('AyraOfflineDB');
@@ -81,7 +95,8 @@ export class OfflineDatabase extends Dexie {
       pending_uploads: '++id, localId, status, timestamp, accountKey, [accountKey+status]',
       pending_api_calls: '++id, status, timestamp, dependsOnUploadId, accountKey, [accountKey+status]',
       upload_mappings: 'localId, timestamp, accountKey',
-      sync_leases: 'name, expiresAt, accountKey'
+      sync_leases: 'name, expiresAt, accountKey',
+      offline_category_states: 'key, routeId, categoryId, accountKey, updatedAt, [routeId+categoryId]'
     });
   }
 }

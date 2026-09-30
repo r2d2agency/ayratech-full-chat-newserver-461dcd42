@@ -4,6 +4,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { PromotorLayout } from "./PromotorLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { db } from "@/lib/offline-db";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -241,7 +242,7 @@ function CategoryPreparation({ category, catId, routeBrandId, categoryName, rout
         method: 'POST',
         body: { ...body, routeId, catId },
         headers: { 'Authorization': `Bearer ${localStorage.getItem('promotor_token') || localStorage.getItem('auth_token')}` },
-        dependsOnUploadId: effective[0]?.startsWith('local-file://') ? effective[0].replace('local-file://', '') : undefined
+        dependsOnUploadIds: effective.filter(photo => photo?.startsWith('local-file://')).map(photo => photo.replace('local-file://', ''))
       });
       
       await logger.info('category_advanced', {
@@ -409,7 +410,7 @@ function ExtraPointPhotoGate({ catId, routeBrandId, categoryName, routeId, pdvNa
         method: 'POST',
         body,
         headers: { 'Authorization': `Bearer ${localStorage.getItem('promotor_token') || localStorage.getItem('auth_token')}` },
-        dependsOnUploadId: effective[0]?.startsWith('local-file://') ? effective[0].replace('local-file://', '') : undefined
+        dependsOnUploadIds: effective.filter(photo => photo?.startsWith('local-file://')).map(photo => photo.replace('local-file://', ''))
       });
       
       setPhotos([]);
@@ -506,7 +507,7 @@ function CategoryAfterPhotoGate({ catId, routeBrandId, categoryName, routeId, pd
         method: 'POST',
         body,
         headers: { 'Authorization': `Bearer ${localStorage.getItem('promotor_token') || localStorage.getItem('auth_token')}` },
-        dependsOnUploadId: effective[0]?.startsWith('local-file://') ? effective[0].replace('local-file://', '') : undefined
+        dependsOnUploadIds: effective.filter(photo => photo?.startsWith('local-file://')).map(photo => photo.replace('local-file://', ''))
       });
 
       await logger.info('category_advanced', {
@@ -1038,7 +1039,25 @@ export default function PromotorRota() {
   }, [filteredExecs]);
 
   useEffect(() => {
-    const restored: Record<string, boolean> = {};
+    let cancelled = false;
+    const restoreFromQueue = async () => {
+      if (!id) return;
+      const accountKey = (() => {
+        const userId = localStorage.getItem('user_id') || localStorage.getItem('promotor_employee_id') || localStorage.getItem('employee_id');
+        const organizationId = localStorage.getItem('organization_id') || localStorage.getItem('org_id') || '';
+        const authDomain = localStorage.getItem('auth_type') || 'promotor';
+        return userId ? `${authDomain}:${organizationId}:${userId}` : null;
+      })();
+      const queuedCalls = await db.pending_api_calls.toArray();
+      const restored: Record<string, boolean> = {};
+      for (const call of queuedCalls) {
+        if (cancelled || call.accountKey !== accountKey || !call.url.includes(`/promotor/routes/${id}/categories/`)) continue;
+        const match = call.url.match(/\/categories\/([^/]+)\/(photo|after-photo)$/);
+        if (!match) continue;
+        const body: any = call.body || {};
+        const key = `${body.route_brand_id ? match[1] + '_' + body.route_brand_id : match[1]}`;
+        restored[key] = true;
+      }
     Object.keys(groupedExecs).forEach((key) => {
       const group = groupedExecs[key];
       const groupBrandId = group.execs[0]?.route_brand_id || 'null';
@@ -1047,7 +1066,10 @@ export default function PromotorRota() {
         if (localStorage.getItem(storageKey)) restored[key] = true;
       } catch { /* armazenamento local indisponível */ }
     });
-    if (Object.keys(restored).length) setOptimisticAfterPhoto(prev => ({ ...restored, ...prev }));
+      if (Object.keys(restored).length) setOptimisticAfterPhoto(prev => ({ ...restored, ...prev }));
+    };
+    void restoreFromQueue();
+    return () => { cancelled = true; };
   }, [groupedExecs, id]);
 
   const productsWithExtraPoint = useMemo(() => {
