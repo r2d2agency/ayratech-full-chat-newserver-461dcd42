@@ -4659,6 +4659,25 @@ CREATE INDEX IF NOT EXISTS idx_visit_requests_agency ON visit_requests(agency_id
 CREATE INDEX IF NOT EXISTS idx_visit_requests_unit ON visit_requests(supermarket_unit_id);
 CREATE INDEX IF NOT EXISTS idx_visit_requests_status ON visit_requests(status);
 `;
+const step49ApiIdempotency = `
+-- Chaves de idempotência para retries seguros da fila offline.
+CREATE TABLE IF NOT EXISTS api_idempotency_keys (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  scope_key TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  request_fingerprint TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'in_progress' CHECK (status IN ('in_progress', 'completed', 'failed')),
+  response_status INTEGER,
+  response_headers JSONB,
+  response_body JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '7 days'),
+  UNIQUE(scope_key, idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS idx_api_idempotency_expires ON api_idempotency_keys(expires_at);
+CREATE INDEX IF NOT EXISTS idx_api_idempotency_status ON api_idempotency_keys(status, updated_at);
+`;
 const step48LiveTracking = `
 -- LIVE TRACKING TABLES
 CREATE TABLE IF NOT EXISTS employee_live_locations (
@@ -4741,6 +4760,7 @@ const migrationSteps = [
   { name: 'Agency Billing', sql: step46AgencyBilling, critical: false },
   { name: 'Visit Requests', sql: step47VisitRequests, critical: false },
   { name: 'Live Tracking', sql: step48LiveTracking, critical: true },
+  { name: 'API Idempotency', sql: step49ApiIdempotency, critical: true },
 ];
 
 export async function initDatabase() {

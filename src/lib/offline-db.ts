@@ -40,20 +40,35 @@ export interface PendingApiCall {
   retryAt?: number;
   idempotencyKey?: string;
   accountKey?: string | null;
-  // If this API call depends on an upload, store the localId of that upload
+  // If this API call depends on uploads, store the localIds of those uploads.
+  dependsOnUploadIds?: string[];
+  /** @deprecated Registros antigos guardavam apenas uma dependência. Mantido para leitura retrocompatível. */
   dependsOnUploadId?: string;
+}
+
+// Lease de sincronização: garante que apenas UMA aba/dispositivo processe a
+// fila por vez, mesmo após reload ou crash da aba anterior. O dono do lease
+// renova o heartbeat; se a aba morre, o lease expira e outra aba assume.
+export interface SyncLease {
+  name: string; // 'offline-sync'
+  ownerId: string;
+  accountKey: string | null;
+  acquiredAt: number;
+  expiresAt: number;
 }
 
 export interface UploadMapping {
   localId: string;
   serverUrl: string;
   timestamp: number;
+  accountKey?: string | null;
 }
 
 export class OfflineDatabase extends Dexie {
   pending_uploads!: Table<PendingUpload>;
   pending_api_calls!: Table<PendingApiCall>;
   upload_mappings!: Table<UploadMapping>;
+  sync_leases!: Table<SyncLease>;
 
   constructor() {
     super('AyraOfflineDB');
@@ -61,6 +76,12 @@ export class OfflineDatabase extends Dexie {
       pending_uploads: '++id, localId, status, timestamp',
       pending_api_calls: '++id, status, timestamp, dependsOnUploadId',
       upload_mappings: 'localId, timestamp'
+    });
+    this.version(3).stores({
+      pending_uploads: '++id, localId, status, timestamp, accountKey, [accountKey+status]',
+      pending_api_calls: '++id, status, timestamp, dependsOnUploadId, accountKey, [accountKey+status]',
+      upload_mappings: 'localId, timestamp, accountKey',
+      sync_leases: 'name, expiresAt, accountKey'
     });
   }
 }

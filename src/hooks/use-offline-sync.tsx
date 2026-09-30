@@ -5,7 +5,11 @@ import { api, API_URL, getAuthToken } from '@/lib/api';
 import { logger } from '@/lib/logger';
 
 function getCurrentOfflineAccountKey() {
-  return localStorage.getItem('promotor_employee_id') || localStorage.getItem('employee_id') || localStorage.getItem('user_id');
+  if (typeof window === 'undefined') return null;
+  const userId = localStorage.getItem('user_id') || localStorage.getItem('promotor_employee_id') || localStorage.getItem('employee_id');
+  const organizationId = localStorage.getItem('organization_id') || localStorage.getItem('org_id') || '';
+  const authDomain = localStorage.getItem('auth_type') || 'promotor';
+  return userId ? `${authDomain}:${organizationId}:${userId}` : null;
 }
 
 function getCurrentOfflineToken() {
@@ -58,19 +62,19 @@ const RETRY_MAX_MS = 5 * 60 * 1000;
 // `force` (clique manual em "Reenviar"): reseta e zera as tentativas de
 // TODOS os itens, mesmo os que já bateram o limite — é um pedido explícito
 // do usuário, diferente do retry automático silencioso.
-async function resetStuckUploads(force = false) {
+async function resetStuckUploads(force = false, accountKey: string | null = getCurrentOfflineAccountKey()) {
   const withinLimit = (u: PendingUpload) => force || (u.attempts || 0) < MAX_UPLOAD_ATTEMPTS;
   try {
     await db.pending_uploads
       .where('status').anyOf('failed', 'uploading')
-      .and(withinLimit)
+      .and((u) => u.accountKey === accountKey && withinLimit(u))
       .modify(force ? { status: 'pending', attempts: 0 } : { status: 'pending' });
     return;
   } catch (err: any) {
     logger.warn('[OfflineSync] Reset em lote de fotos falhou, tentando item a item', { error: err?.message });
   }
 
-  const stuck = await db.pending_uploads.where('status').anyOf('failed', 'uploading').toArray();
+  const stuck = (await db.pending_uploads.where('status').anyOf('failed', 'uploading').toArray()).filter(item => item.accountKey === accountKey);
   for (const item of stuck) {
     if (!item.id || !withinLimit(item)) continue;
     try {
@@ -91,7 +95,9 @@ async function resetStuckUploads(force = false) {
       // referência local (ela nunca vai existir no servidor) — sem isso,
       // ficariam reenfileiradas pra sempre esperando um upload que não vai
       // acontecer.
-      const stuckCalls = await db.pending_api_calls.where('dependsOnUploadId').equals(item.localId).toArray();
+      const stuckCalls = (await db.pending_api_calls.toArray()).filter(call =>
+        call.accountKey === accountKey && (call.dependsOnUploadIds?.includes(item.localId) || call.dependsOnUploadId === item.localId)
+      );
       for (const call of stuckCalls) {
         if (!call.id) continue;
         await db.pending_api_calls.update(call.id, {
@@ -101,6 +107,40 @@ async function resetStuckUploads(force = false) {
       }
     }
   }
+}
+
+const SYNC_LEASE_NAME = 'offline-sync';
+const SYNC_LEASE_TTL_MS = 45_000;
+const SYNC_OWNER_ID = typeof crypto !== 'undefined' && crypto.randomUUID
+  ? crypto.randomUUID()
+  : `tab_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+async function acquireSyncLease(accountKey: string | null) {
+  const now = Date.now();
+  return db.transaction('rw', db.sync_leases, async () => {
+    const current = await db.sync_leases.get(SYNC_LEASE_NAME);
+    if (current && current.expiresAt > now && current.ownerId !== SYNC_OWNER_ID) return false;
+    await db.sync_leases.put({
+      name: SYNC_LEASE_NAME,
+      ownerId: SYNC_OWNER_ID,
+      accountKey,
+      acquiredAt: current?.ownerId === SYNC_OWNER_ID ? current.acquiredAt : now,
+      expiresAt: now + SYNC_LEASE_TTL_MS,
+    });
+    return true;
+  });
+}
+
+async function renewSyncLease(accountKey: string | null) {
+  const lease = await db.sync_leases.get(SYNC_LEASE_NAME);
+  if (!lease || lease.ownerId !== SYNC_OWNER_ID || lease.accountKey !== accountKey) return false;
+  await db.sync_leases.update(SYNC_LEASE_NAME, { expiresAt: Date.now() + SYNC_LEASE_TTL_MS });
+  return true;
+}
+
+async function releaseSyncLease() {
+  const lease = await db.sync_leases.get(SYNC_LEASE_NAME);
+  if (lease?.ownerId === SYNC_OWNER_ID) await db.sync_leases.delete(SYNC_LEASE_NAME);
 }
 
 async function resetStuckApiCalls() {
@@ -208,6 +248,17 @@ function useOfflineSyncState() {
     if (syncingRef.current) return;
     syncingRef.current = true;
     setIsSyncing(true);
+    const accountKey = getCurrentOfflineAccountKey();
+    const leaseAcquired = await acquireSyncLease(accountKey);
+    if (!leaseAcquired) {
+      syncingRef.current = false;
+      setIsSyncing(false);
+      return;
+    }
+
+    const leaseHeartbeat = window.setInterval(() => {
+      void renewSyncLease(accountKey);
+    }, Math.floor(SYNC_LEASE_TTL_MS / 3));
 
     try {
     // Recupera itens travados em 'uploading'/'processing' de execuções anteriores
@@ -221,14 +272,14 @@ function useOfflineSyncState() {
     // normal (só nos logs). Por isso cada tabela cai para um reset item a
     // item quando o lote falha, removendo (e avisando) só o registro
     // irrecuperável em vez de travar todo mundo.
-    await resetStuckUploads(force);
+    await resetStuckUploads(force, accountKey);
     await resetStuckApiCalls();
 
     const now = Date.now();
     const pendingUploads = (await db.pending_uploads.where('status').equals('pending').toArray())
-      .filter(upload => !upload.retryAt || upload.retryAt <= now);
+      .filter(upload => upload.accountKey === accountKey && (!upload.retryAt || upload.retryAt <= now));
     const pendingCalls = (await db.pending_api_calls.where('status').equals('pending').toArray())
-      .filter(call => !call.retryAt || call.retryAt <= now);
+      .filter(call => call.accountKey === accountKey && (!call.retryAt || call.retryAt <= now));
 
     const totalItems = pendingUploads.length + pendingCalls.length;
     setSyncProgress({ total: totalItems, done: 0, failed: 0 });
@@ -241,8 +292,7 @@ function useOfflineSyncState() {
     const threeDaysAgo = Date.now() - (3 * 24 * 60 * 60 * 1000);
     const dependentUploadIds = new Set(
       (await db.pending_api_calls.toArray())
-        .map(call => call.dependsOnUploadId)
-        .filter((id): id is string => !!id),
+        .flatMap(call => call.dependsOnUploadIds?.length ? call.dependsOnUploadIds : (call.dependsOnUploadId ? [call.dependsOnUploadId] : [])),
     );
     const oldMappings = await db.upload_mappings.where('timestamp').below(threeDaysAgo).toArray();
     for (const mapping of oldMappings) {
@@ -346,7 +396,7 @@ function useOfflineSyncState() {
         logger.info('[OfflineSync] Upload concluído, salvando mapeamento', { localId: upload.localId, url: fileUrl });
 
         // Save to persistent mapping so future API calls can resolve it
-        await db.upload_mappings.put({ localId: upload.localId, serverUrl: fileUrl, timestamp: Date.now() });
+        await db.upload_mappings.put({ localId: upload.localId, serverUrl: fileUrl, timestamp: Date.now(), accountKey: upload.accountKey ?? accountKey });
 
         // CRITICAL: Update all currently pending API calls that might use this localId
         const callsToUpdate = await db.pending_api_calls.toArray();
@@ -412,10 +462,12 @@ function useOfflineSyncState() {
 
 
     // Refresh pending calls list since we might have updated them
-    const updatedPendingCalls = await db.pending_api_calls.where('status').equals('pending').toArray();
-    
-    // Load all current mappings for resolution
-    const allMappings = await db.upload_mappings.toArray();
+    const updatedPendingCalls = (await db.pending_api_calls.where('status').equals('pending').toArray())
+      .filter(call => call.accountKey === accountKey);
+
+    // Load only mappings from the active account to prevent cross-account refs.
+    const allMappings = (await db.upload_mappings.toArray())
+      .filter(mapping => !mapping.accountKey || mapping.accountKey === accountKey);
     const mappingMap = new Map(allMappings.map(m => [m.localId, m.serverUrl]));
 
     // 2. Process API Calls
@@ -466,6 +518,15 @@ function useOfflineSyncState() {
           }
           return obj;
         };
+
+        const dependencyIds = call.dependsOnUploadIds?.length
+          ? call.dependsOnUploadIds
+          : (call.dependsOnUploadId ? [call.dependsOnUploadId] : []);
+        const missingDependencies = dependencyIds.filter(localId => !mappingMap.has(localId));
+        if (missingDependencies.length > 0) {
+          await db.pending_api_calls.update(call.id!, { status: 'pending', error: `Aguardando ${missingDependencies.length} foto(s) da operação.` });
+          continue;
+        }
 
         const body = resolveRefs(call.body);
         const resolvedUrl = resolveRefs(call.url);
@@ -584,6 +645,8 @@ function useOfflineSyncState() {
       }
     }
     } finally {
+      window.clearInterval(leaseHeartbeat);
+      await releaseSyncLease().catch(() => {});
       syncingRef.current = false;
       setIsSyncing(false);
       if (typeof window !== 'undefined') {
@@ -698,6 +761,28 @@ function useOfflineSyncState() {
     }
   }, []);
 
+  const retryFailedApiCall = useCallback(async (id: number) => {
+    const call = await db.pending_api_calls.get(id);
+    if (!call) throw new Error('Operação offline não encontrada');
+    const accountKey = getCurrentOfflineAccountKey();
+    if (call.accountKey !== accountKey) throw new Error('Operação pertence a outra conta');
+    await db.pending_api_calls.update(id, {
+      status: 'pending',
+      attempts: 0,
+      retryAt: undefined,
+      error: undefined,
+    });
+    await sync({ force: true });
+  }, [sync]);
+
+  const retryFailedUpload = useCallback(async (localId: string) => {
+    const upload = await db.pending_uploads.where('localId').equals(localId).first();
+    if (!upload?.id) throw new Error('Foto offline não encontrada');
+    if (upload.accountKey !== getCurrentOfflineAccountKey()) throw new Error('Foto pertence a outra conta');
+    await db.pending_uploads.update(upload.id, { status: 'pending', attempts: 0, retryAt: undefined, error: undefined });
+    await sync({ force: true });
+  }, [sync]);
+
   // Auto-sync when coming online
   useEffect(() => {
     if (isOnline) {
@@ -722,7 +807,7 @@ function useOfflineSyncState() {
     return () => clearInterval(interval);
   }, [isOnline, sync]);
 
-  return { isOnline, isSyncing, syncProgress, queueUpload, queueApiCall, sync, getLocalFileUrl, discardUpload };
+  return { isOnline, isSyncing, syncProgress, queueUpload, queueApiCall, sync, getLocalFileUrl, discardUpload, retryFailedApiCall, retryFailedUpload };
 }
 
 type OfflineSyncApi = ReturnType<typeof useOfflineSyncState>;

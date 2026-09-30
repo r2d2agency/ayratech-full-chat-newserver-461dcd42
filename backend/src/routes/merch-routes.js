@@ -1,6 +1,7 @@
 import express from 'express';
 import { query } from '../db.js';
 import { authenticate } from '../middleware/auth.js';
+import { idempotency } from '../middleware/idempotency.js';
 import { logInfo, logError, logWarn } from '../logger.js';
 import { sendStockCountSummaryForRoute } from './stock-count.js';
 import { validatePdvLocation, ensurePdvGeofenceColumn } from '../lib/geofence.js';
@@ -10,7 +11,10 @@ const router = express.Router();
 router.use((req, res, next) => {
   // Public/tolerant endpoints (handle their own auth)
   if (req.method === 'GET' && req.path === '/photo-quality-config') return next();
-  return authenticate(req, res, next);
+  return authenticate(req, res, (error) => {
+    if (error) return next(error);
+    return idempotency(req, res, next);
+  });
 });
 
 async function getOrgInfo(userId) {
