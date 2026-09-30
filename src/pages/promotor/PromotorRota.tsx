@@ -1049,7 +1049,16 @@ export default function PromotorRota() {
         return userId ? `${authDomain}:${organizationId}:${userId}` : null;
       })();
       const queuedCalls = await db.pending_api_calls.toArray();
+      const queuedUploads = await db.pending_uploads.toArray();
       const restored: Record<string, boolean> = {};
+      // A chamada de categoria pode ainda não ter sido gravada quando a
+      // captura acabou; o upload pendente também é evidência local da foto.
+      const hasPendingPhoto = queuedUploads.some(upload => upload.accountKey === accountKey && upload.status !== 'failed' && upload.localId);
+      if (hasPendingPhoto && Object.keys(groupedExecs).length === 1) {
+        restored[Object.keys(groupedExecs)[0]] = true;
+        const onlyGroup = groupedExecs[Object.keys(groupedExecs)[0]];
+        restored[`${onlyGroup.catId}_${onlyGroup.execs[0]?.route_brand_id || 'null'}`] = true;
+      }
       for (const call of queuedCalls) {
         if (cancelled || call.accountKey !== accountKey || !call.url.includes(`/promotor/routes/${id}/categories/`)) continue;
         const match = call.url.match(/\/categories\/([^/]+)\/(photo|after-photo)$/);
@@ -1057,13 +1066,25 @@ export default function PromotorRota() {
         const body: any = call.body || {};
         const key = `${body.route_brand_id ? match[1] + '_' + body.route_brand_id : match[1]}`;
         restored[key] = true;
+        // Também restaura a chave pelo nome do grupo visual, quando existir.
+        const group = Object.values(groupedExecs).find((item: any) => item.catId === match[1] && (!body.route_brand_id || item.execs[0]?.route_brand_id === body.route_brand_id));
+        if (group) {
+          const groupName = Object.keys(groupedExecs).find(name => groupedExecs[name] === group);
+          if (groupName) restored[groupName] = true;
+        }
       }
     Object.keys(groupedExecs).forEach((key) => {
       const group = groupedExecs[key];
       const groupBrandId = group.execs[0]?.route_brand_id || 'null';
       const storageKey = `promotor-after-photo:${id}:${group.catId}:${groupBrandId}`;
       try {
-        if (localStorage.getItem(storageKey)) restored[key] = true;
+        if (localStorage.getItem(storageKey)) {
+          // O agrupamento visual usa o nome da categoria, enquanto as regras
+          // globais usam categoryId_routeBrandId. Restaurar os dois formatos
+          // evita que a foto local desapareça ao sair e reabrir a rota.
+          restored[key] = true;
+          restored[`${group.catId}_${groupBrandId}`] = true;
+        }
       } catch { /* armazenamento local indisponível */ }
     });
       if (Object.keys(restored).length) setOptimisticAfterPhoto(prev => ({ ...restored, ...prev }));
@@ -1495,6 +1516,23 @@ export default function PromotorRota() {
 
   const isActive = route.status === 'in_progress' || route.status === 'completed' || !!route.checkin_at || !needsCheckin;
   const isCompleted = route.status === 'completed';
+
+  // O progresso do backend permanece em 0% enquanto a foto e a chamada da
+  // categoria aguardam a internet. Calculamos um valor local para não fazer
+  // o promotor acreditar que perdeu o trabalho ao reabrir a rota offline.
+  const localProgress = useMemo(() => {
+    const executions = Array.isArray(route?.executions) ? route.executions : [];
+    if (!executions.length) return Number(route?.progress_pct || 0);
+    const total = executions.length;
+    const completed = executions.filter((exec: any) => exec.status === 'completed').length;
+    const optimisticCategories = new Set<string>();
+    Object.entries(optimisticAfterPhoto).forEach(([key, value]) => {
+      if (value) optimisticCategories.add(key);
+    });
+    const categoryKeys = new Set(executions.map((exec: any) => `${exec.category_id}_${exec.route_brand_id || 'null'}`));
+    const extraCompleted = [...optimisticCategories].filter(key => categoryKeys.has(key)).length;
+    return Math.min(100, Math.max(Number(route?.progress_pct || 0), Math.round(((completed + extraCompleted) / total) * 100)));
+  }, [route?.executions, route?.progress_pct, optimisticAfterPhoto]);
   // Foto de check-in: padrão do checklist é obrigatória. Só liberamos sem foto quando o flag vier explicitamente false.
   const requireCheckinPhoto = (route as any)?.require_checkin_photo !== false;
 
@@ -1956,8 +1994,20 @@ export default function PromotorRota() {
               const allAfterPhotosDone = globalMissingAfterPhotos.length === 0;
               
               // Também checamos se todas as marcas estão concluídas (para garantir que o checklist foi processado)
-              const allBrandsCompleted = isMultiBrand 
-                ? routeBrands.every((rb: any) => rb.status === 'completed' || rb.progress_pct >= 100)
+              const allBrandsCompleted = isMultiBrand
+                ? routeBrands.every((rb: any) => {
+                    if (rb.status === 'completed' || (rb.progress_pct || 0) >= 100) return true;
+                    // Em modo offline, o backend ainda pode exibir 0% até a
+                    // fila chegar. Se todas as categorias obrigatórias desta
+                    // marca já foram resolvidas localmente, a marca também é
+                    // considerada concluída para o checkout local.
+                    const brandExecs = allExecutions.filter((exec: any) => exec.route_brand_id === rb.id);
+                    const brandRequired = brandExecs.filter(productIsRequired);
+                    const brandProductsDone = brandRequired.every((exec: any) => exec.status === 'completed');
+                    const brandCategories = new Set(brandExecs.map((exec: any) => `${exec.category_id}_${exec.route_brand_id || 'null'}`));
+                    const brandPhotosDone = [...brandCategories].every(key => !!optimisticAfterPhoto[key] || !!categoryStatusMap[key]?.completed || !!categoryStatusMap[key]?.category_after_photo);
+                    return brandProductsDone && brandPhotosDone;
+                  })
                 : true;
               
               const minDuration = parseInt(route?.min_duration_minutes || "0", 10);
@@ -1967,7 +2017,8 @@ export default function PromotorRota() {
               
               // A rota só pode ser concluída se TODOS os produtos, TODAS as fotos (antes+depois) e tempo mínimo forem respeitados
               const stockCountPending = stockCountBlocking.length;
-              const canCompleteRoute = allProductsDoneGlobal && allBrandsCompleted && allBeforePhotosDone && allAfterPhotosDone && hasMinDurationMet && stockCountPending === 0;
+              const localQueueAllowsCheckout = !isOnline || isSyncing || Object.keys(optimisticAfterPhoto).length > 0;
+              const canCompleteRoute = allProductsDoneGlobal && allBrandsCompleted && allBeforePhotosDone && allAfterPhotosDone && hasMinDurationMet && stockCountPending === 0 && localQueueAllowsCheckout;
               
               return (
                 <>
@@ -2129,10 +2180,10 @@ export default function PromotorRota() {
               <div className="mt-3">
                 <div className="flex justify-between text-xs mb-1">
                   <span>Progresso Geral</span>
-                  <span className="font-mono font-bold">{Math.round(route.progress_pct || 0)}%</span>
+                  <span className="font-mono font-bold">{localProgress}%</span>
                 </div>
                 <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-                  <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${route.progress_pct || 0}%` }} />
+                  <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${localProgress}%` }} />
                 </div>
               </div>
             )}

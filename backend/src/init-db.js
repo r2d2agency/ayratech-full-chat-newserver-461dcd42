@@ -174,7 +174,7 @@ EXCEPTION WHEN duplicate_column THEN null; END $$;
 -- Organização: horário de trabalho para agendamento inteligente
 DO $$ BEGIN
     ALTER TABLE organizations ADD COLUMN IF NOT EXISTS work_schedule JSONB DEFAULT '{
-      "timezone": 'America/Sao_Paulo",
+      "timezone": "America/Sao_Paulo",
       "work_days": [1,2,3,4,5],
       "work_start": "08:00",
       "work_end": "18:00",
