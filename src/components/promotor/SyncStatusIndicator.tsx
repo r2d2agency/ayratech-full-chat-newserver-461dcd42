@@ -7,8 +7,14 @@ import { cn } from "@/lib/utils";
 
 export function SyncStatusIndicator({ className }: { className?: string }) {
   const { isOnline, isSyncing, sync } = useOfflineSync();
-  const pendingUploads = useLiveQuery(() => db.pending_uploads.count()) || 0;
-  const pendingCalls = useLiveQuery(() => db.pending_api_calls.count()) || 0;
+  const accountKey = (() => {
+    const userId = localStorage.getItem('user_id') || localStorage.getItem('promotor_employee_id') || localStorage.getItem('employee_id');
+    const organizationId = localStorage.getItem('organization_id') || localStorage.getItem('org_id') || '';
+    const authDomain = localStorage.getItem('auth_type') || 'promotor';
+    return userId ? `${authDomain}:${organizationId}:${userId}` : null;
+  })();
+  const pendingUploads = useLiveQuery(() => db.pending_uploads.toArray().then(rows => rows.filter(row => row.accountKey === accountKey).length), [accountKey]) || 0;
+  const pendingCalls = useLiveQuery(() => db.pending_api_calls.toArray().then(rows => rows.filter(row => row.accountKey === accountKey).length), [accountKey]) || 0;
   const totalPending = pendingUploads + pendingCalls;
 
   if (totalPending > 0) {

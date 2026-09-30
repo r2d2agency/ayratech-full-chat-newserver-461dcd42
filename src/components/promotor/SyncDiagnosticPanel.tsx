@@ -28,22 +28,20 @@ export function SyncDiagnosticPanel() {
   const offline = punches.filter((p: any) => p.is_offline);
 
   // Check offline queue in IndexedDB via our hook
-  const { sync, isSyncing } = useOfflineSync();
-  const pendingUploads = useLiveQuery(() => db.pending_uploads.count()) || 0;
-  const pendingCalls = useLiveQuery(() => db.pending_api_calls.count()) || 0;
+  const { sync, isSyncing, retryFailedApiCall, retryFailedUpload } = useOfflineSync();
+  const accountKey = (() => {
+    const userId = localStorage.getItem('user_id') || localStorage.getItem('promotor_employee_id') || localStorage.getItem('employee_id');
+    const organizationId = localStorage.getItem('organization_id') || localStorage.getItem('org_id') || '';
+    const authDomain = localStorage.getItem('auth_type') || 'promotor';
+    return userId ? `${authDomain}:${organizationId}:${userId}` : null;
+  })();
+  const pendingUploads = useLiveQuery(() => db.pending_uploads.toArray().then(rows => rows.filter(row => row.accountKey === accountKey).length), [accountKey]) || 0;
+  const pendingCalls = useLiveQuery(() => db.pending_api_calls.toArray().then(rows => rows.filter(row => row.accountKey === accountKey).length), [accountKey]) || 0;
   const failedUploads = useLiveQuery(() =>
-    db.pending_uploads
-      .where('status')
-      .equals('failed')
-      .reverse()
-      .sortBy('timestamp'),
+    db.pending_uploads.toArray().then(rows => rows.filter(row => row.accountKey === accountKey && row.status === 'failed').sort((a, b) => b.timestamp - a.timestamp)), [accountKey]
   ) || [];
   const failedCalls = useLiveQuery(() =>
-    db.pending_api_calls
-      .where('status')
-      .equals('failed')
-      .reverse()
-      .sortBy('timestamp'),
+    db.pending_api_calls.toArray().then(rows => rows.filter(row => row.accountKey === accountKey && row.status === 'failed').sort((a, b) => b.timestamp - a.timestamp)), [accountKey]
   ) || [];
   const totalPending = pendingUploads + pendingCalls;
   const recentFailures = [
@@ -176,6 +174,18 @@ export function SyncDiagnosticPanel() {
                   </div>
                   <p className="truncate text-muted-foreground">{failure.label}</p>
                   <p className="text-destructive mt-1 break-words">{failure.error}</p>
+                  {failure.id.startsWith('call-') && (
+                    <Button size="sm" variant="outline" className="mt-2 h-6 text-[10px]" disabled={!isOnline || isSyncing}
+                      onClick={() => retryFailedApiCall(Number(failure.id.replace('call-', ''))).catch(() => {})}>
+                      Tentar novamente
+                    </Button>
+                  )}
+                  {failure.id.startsWith('upload-') && (
+                    <Button size="sm" variant="outline" className="mt-2 h-6 text-[10px]" disabled={!isOnline || isSyncing}
+                      onClick={() => retryFailedUpload(String(failure.id.replace('upload-', ''))).catch(() => {})}>
+                      Reenviar foto
+                    </Button>
+                  )}
                 </div>
               ))}
             </div>
