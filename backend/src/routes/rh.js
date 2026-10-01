@@ -1595,7 +1595,15 @@ router.get('/ponto/cartao', async (req, res) => {
     });
   } catch (err) {
     logError('rh.ponto.cartao', err);
-    res.status(500).json({ error: 'Erro ao carregar o cartão de ponto' });
+    // The generic message hid every real cause: a missing column, a bad
+    // parameter type and a dead pool all looked identical from the browser.
+    // Postgres errors carry no secrets beyond schema shape, so returning the
+    // text here is what makes this diagnosable instead of guessable.
+    res.status(500).json({
+      error: 'Erro ao carregar o cartão de ponto',
+      detail: err?.message || String(err),
+      code: err?.code || null,
+    });
   }
 });
 
