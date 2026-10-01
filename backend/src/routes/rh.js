@@ -1054,7 +1054,7 @@ async function getScheduleColumns() {
       `SELECT column_name FROM information_schema.columns
         WHERE table_name = 'work_schedules'
           AND column_name = ANY($1::text[])`,
-      [['entry_time', 'exit_time', 'workdays', 'daily_hours']]
+      [['entry_time', 'exit_time', 'workdays', 'daily_hours', 'break_minutes']]
     );
     const present = new Set(r.rows.map((x) => x.column_name));
     scheduleColumnCache = {
@@ -1062,10 +1062,14 @@ async function getScheduleColumns() {
       exit_time: present.has('exit_time'),
       workdays: present.has('workdays'),
       daily_hours: present.has('daily_hours'),
+      break_minutes: present.has('break_minutes'),
     };
   } catch (err) {
     if (!isMissingRelation(err)) throw err;
-    scheduleColumnCache = { entry_time: false, exit_time: false, workdays: false, daily_hours: false };
+    scheduleColumnCache = {
+      entry_time: false, exit_time: false, workdays: false,
+      daily_hours: false, break_minutes: false,
+    };
   }
   return scheduleColumnCache;
 }
@@ -1092,6 +1096,7 @@ router.get('/consolidated-timesheet', async (req, res) => {
         schedule.entry_time,
         schedule.exit_time,
         schedule.workdays,
+        schedule.break_minutes,
         (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date as record_date,
         json_agg(json_build_object(
           'id', tp.id, 'punch_type', tp.punch_type, 'punched_at', tp.punched_at,
@@ -1105,7 +1110,7 @@ router.get('/consolidated-timesheet', async (req, res) => {
       LEFT JOIN pdvs p ON p.id = tp.pdv_id
       LEFT JOIN LATERAL (
         SELECT ${col('daily_hours')}, ws.name AS schedule_name, ${col('workdays')},
-               ${col('entry_time')}, ${col('exit_time')}
+               ${col('entry_time')}, ${col('exit_time')}, ${col('break_minutes')}
         FROM employee_schedules es
         JOIN work_schedules ws ON ws.id = es.schedule_id
         WHERE es.employee_id = tp.employee_id
@@ -1135,7 +1140,8 @@ router.get('/consolidated-timesheet', async (req, res) => {
     sql += ` GROUP BY tp.employee_id, e.full_name, e.cpf, e.position, e.work_schedule,
                     (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date,
                     schedule.daily_hours, schedule.schedule_name,
-                    schedule.entry_time, schedule.exit_time, schedule.workdays
+                    schedule.entry_time, schedule.exit_time, schedule.workdays,
+                    schedule.break_minutes
              ORDER BY (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date DESC, e.full_name`;
     const result = await query(sql, params);
     
@@ -1151,6 +1157,7 @@ router.get('/consolidated-timesheet', async (req, res) => {
         entryMinutes: entryMinutes ?? parseHHMMToMinutes(DEFAULT_ENTRY),
         exitMinutes: exitMinutes ?? parseHHMMToMinutes(DEFAULT_EXIT),
         expectedMinutes: row.daily_hours != null ? Math.round(Number(row.daily_hours) * 60) : undefined,
+        breakMinutes: row.break_minutes != null ? Number(row.break_minutes) : null,
       };
 
       // A day is a workday when the employee is scheduled on it. With no scale
@@ -1210,6 +1217,15 @@ function isValidCivilDate(value) {
 // Every civil date that leaves this module is a text 'YYYY-MM-DD', never a Date.
 // A DATE column serialised to JSON becomes midnight UTC, which the browser
 // reads as the previous day in São Paulo.
+// A scale's entry-to-exit span is wall-clock time and contains the break; the
+// daily figure is net. Mirrors applyBreak() in lib/time-calc.js so the card and
+// the module agree on what one hour of lunch is worth.
+function subtractBreak(span, breakMinutes) {
+  const b = Number(breakMinutes);
+  if (!Number.isFinite(b) || b <= 0) return span;
+  return Math.max(0, span - Math.min(b, span));
+}
+
 function toCharLocal(value) {
   if (!value) return null;
   if (typeof value === 'string') return value.slice(0, 10);
@@ -1326,10 +1342,11 @@ function buildCartaoDay(row, { employee, tolerance, closure }) {
     }
   }
 
-  const expectedMinutes = exit > entry ? exit - entry : 0;
+  const breakMinutes = row.break_minutes != null ? Number(row.break_minutes) : null;
+  const expectedMinutes = exit > entry ? subtractBreak(exit - entry, breakMinutes) : 0;
   const balance = dayBalance({
     punches,
-    schedule: { entryMinutes: entry, exitMinutes: exit, expectedMinutes },
+    schedule: { entryMinutes: entry, exitMinutes: exit, expectedMinutes, breakMinutes },
     dayType,
     tolerance,
   });
@@ -1491,7 +1508,7 @@ async function queryCartaoDays({ employeeId, orgId, start, end, capabilities }) 
 
   const schedSql = capabilities.schedules ? `
        LEFT JOIN LATERAL (
-         SELECT ${sc('entry_time')}, ${sc('exit_time')}, ws.name AS schedule_name
+         SELECT ${sc('entry_time')}, ${sc('exit_time')}, ${sc('break_minutes')}, ws.name AS schedule_name
            FROM employee_schedules es
            JOIN work_schedules ws ON ws.id = es.schedule_id
           WHERE es.employee_id = $1
@@ -1531,6 +1548,7 @@ async function queryCartaoDays({ employeeId, orgId, start, end, capabilities }) 
        EXTRACT(ISODOW FROM d.dt)::int AS iso_dow,
        sched.entry_time,
        sched.exit_time,
+       sched.break_minutes,
        sched.schedule_name,
        h.name AS holiday_name,
        a.absence_type,

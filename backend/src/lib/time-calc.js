@@ -74,6 +74,15 @@ function byType(punches, type) {
   return punches.find((p) => p && p.punch_type === type) || null;
 }
 
+// Subtracts the scheduled break from a raw span. Non-positive or unknown
+// breaks are ignored rather than guessed: a wrong break length silently
+// moves every day total, which is worse than reporting jornada bruta.
+function applyBreak(span, breakMinutes) {
+  const b = Number(breakMinutes);
+  if (!Number.isFinite(b) || b <= 0) return span;
+  return Math.max(0, span - Math.min(b, span));
+}
+
 /**
  * Minutes actually worked on a single day.
  *
@@ -82,8 +91,12 @@ function byType(punches, type) {
  * fallbacks cover punch sequences that don't follow that shape (a two-punch day
  * with no break marks, or an odd number of punches) and only then subtract the
  * break explicitly, so we never subtract it twice.
+ *
+ * A two-punch day has no break mark to subtract, but the schedule still
+ * declares one (break_start/break_end/break_minutes). Without subtracting it
+ * the day reads as jornada bruta, which overstates it by the length of lunch.
  */
-export function workedMinutes(punches, { tolerance = 0, expectedEntry = null, expectedExit = null } = {}) {
+export function workedMinutes(punches, { tolerance = 0, expectedEntry = null, expectedExit = null, breakMinutes = null } = {}) {
   const list = (punches || []).slice().sort(
     (a, b) => new Date(a.punched_at || 0) - new Date(b.punched_at || 0)
   );
@@ -107,11 +120,12 @@ export function workedMinutes(punches, { tolerance = 0, expectedEntry = null, ex
     return total;
   }
 
-  // 2. entrada → saida with no break marks.
+  // 2. entrada → saida with no break marks: the span is jornada bruta, so the
+  //    declared break has to come off, capped so it can never exceed the day.
   if (entrada && saida) {
     const a = punchMinutes(entrada);
     const d = punchMinutes(saida);
-    if (a != null && d != null && d > a) return d - a;
+    if (a != null && d != null && d > a) return applyBreak(d - a, breakMinutes);
   }
 
   // 3. A full four-punch sequence missing one of the middle marks: subtract the
@@ -151,6 +165,8 @@ export function workedMinutes(punches, { tolerance = 0, expectedEntry = null, ex
  */
 export function dayBalance({ punches, schedule = {}, dayType = 'util', tolerance = {} }) {
   const worked = workedMinutes(punches, schedule);
+  // The worked figure has the break off. Expected time has it off too, or a
+  // normal day would look short by exactly the length of lunch.
   const result = {
     workedMinutes: worked,
     creditMinutes: 0,
@@ -160,14 +176,18 @@ export function dayBalance({ punches, schedule = {}, dayType = 'util', tolerance
 
   if (dayType !== 'util') return result;
 
-  const expected = schedule.expectedMinutes
-    ?? (() => {
-      const e = schedule.entryMinutes ?? null;
-      const x = schedule.exitMinutes ?? null;
-      if (e == null || x == null) return 0;
-      const span = x - e;
-      return span > 0 ? span : 0;
-    })();
+  const expected = schedule.expectedMinutes != null
+    ? schedule.expectedMinutes
+    : (() => {
+        const e = schedule.entryMinutes ?? null;
+        const x = schedule.exitMinutes ?? null;
+        if (e == null || x == null) return 0;
+        const span = x - e;
+        // daily_hours already means net time, but an entry/exit pair means the
+        // wall-clock span, which contains the break. Take it off here so the
+        // two stay comparable.
+        return applyBreak(span, schedule.breakMinutes);
+      })();
   if (!expected) return result;
 
   const lateTol = tolerance.late ?? DEFAULT_LATE_TOLERANCE;
