@@ -1168,8 +1168,12 @@ router.get('/punch-divergences', async (req, res) => {
     const orgId = req.query.org_id || await getUserOrgId(req.userId);
     if (!orgId) return res.json([]);
     const { start_date, end_date } = req.query;
-    const sd = start_date || new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
-    const ed = end_date || new Date().toISOString().slice(0, 10);
+    // Default em horário do Brasil. `toISOString()` usa UTC, então às 21:00 BRT
+    // (ou antes, em horário de verão) já devolvia o dia seguinte e a janela
+    // padrão não cobria o dia corrente.
+    const saoPauloToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+    const sd = start_date || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date(Date.now() - 7 * 86400000));
+    const ed = end_date || saoPauloToday();
 
     // Find employees who didn't punch on workdays + incomplete punch sequences
     const divergences = [];
@@ -1708,7 +1712,7 @@ router.get('/dashboard-stats', async (req, res) => {
   try {
     const orgId = req.query.org_id || await getUserOrgId(req.userId);
     if (!orgId) return res.json({});
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
     const lateRes = await query(
       `SELECT tr.*, e.full_name, e.work_schedule
        FROM time_records tr JOIN employees e ON e.id = tr.employee_id
@@ -1780,7 +1784,8 @@ router.post('/vacations', async (req, res) => {
         d.start_date, d.end_date, d.days_total || 30, d.days_taken || 0,
         (d.days_total || 30) - (d.days_taken || 0), d.abono_pecuniario || false, d.abono_days || 0,
         d.status || 'agendada', d.notes, d.approved || false, req.userId]);
-    if (d.start_date <= new Date().toISOString().slice(0, 10)) {
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+    if (d.start_date <= todayStr) {
       await query(`UPDATE employees SET status = 'ferias', updated_at = NOW() WHERE id = $1`, [d.employee_id]);
     }
     await auditLog(orgId, 'vacation', result.rows[0].id, 'create', [{ field: 'vacation', oldVal: null, newVal: `${d.vacation_type}: ${d.start_date} - ${d.end_date}` }], req.userId);

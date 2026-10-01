@@ -87,6 +87,13 @@ function parseDateValue(value: unknown): Date | null {
   const raw = String(value).trim();
   if (!raw) return null;
 
+  // Coluna DATE do Postgres chega como "2026-09-30" ou "2026-09-30T00:00:00.000Z".
+  // Tratar esse sufixo como instante UTC converte para o dia ANTERIOR em São
+  // Paulo (00:00Z = 21:00 do dia prévio), fazendo a batida de hoje aparecer
+  // como ontem — o mesmo deslocamento que afetava os feriados.
+  const calendarDate = raw.match(/^(\d{4}-\d{2}-\d{2})(?:$|T00:00)/)?.[1];
+  if (calendarDate) return new Date(`${calendarDate}T12:00:00`);
+
   const normalized = /^\d{4}-\d{2}-\d{2}$/.test(raw)
     ? `${raw}T12:00:00`
     : raw.includes(' ') && !raw.includes('T')
@@ -98,9 +105,20 @@ function parseDateValue(value: unknown): Date | null {
 }
 
 function formatDateValue(value: unknown, mask: string, fallback = '—') {
+  // Datas de calendário (coluna DATE) já vêm ancoradas ao meio-dia local em
+  // parseDateValue; reconvertê-las para São Paulo as deslocaria para o dia
+  // anterior em fusos à frente. Só instantes reais (punched_at) são convertidos.
   const parsed = parseDateValue(value);
-  const saoPauloDate = parsed ? toSaoPauloDate(parsed) : null;
+  if (!parsed) return fallback;
+  if (isCalendarDateValue(value)) return format(parsed, mask);
+  const saoPauloDate = toSaoPauloDate(parsed);
   return saoPauloDate ? format(saoPauloDate, mask) : fallback;
+}
+
+function isCalendarDateValue(value: unknown): boolean {
+  if (value instanceof Date) return false;
+  const raw = String(value ?? '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) || /^(\d{4}-\d{2}-\d{2})(?:$|T00:00)/.test(raw);
 }
 
 function getPunchTimestamp(punch: any) {
