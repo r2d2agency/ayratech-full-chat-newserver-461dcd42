@@ -183,6 +183,15 @@ export default function RHPonto() {
   const [cartaoForm, setCartaoForm] = useState<{ date: string; times: string[]; reason: string; locked: boolean }>(
     { date: "", times: [], reason: "", locked: false },
   );
+  // Mesmos presets da barra global. getPeriodDates ancla tudo em nowSaoPaulo(),
+  // entao 'Mês Anterior' fecha no ultimo dia do mes anterior de verdade -- foi
+  // o erro que o consolidado teve antes (virava dia 29). Precisa ficar acima
+  // do useCartaoPonto: usar a variavel antes do useMemo e um TDZ em runtime.
+  const { start: cartaoStartDate, end: cartaoEndDate } = useMemo(() => {
+    if (cartaoPreset === 'personalizado') return { start: cartaoStart, end: cartaoEnd };
+    return getPeriodDates(cartaoPreset);
+  }, [cartaoPreset, cartaoStart, cartaoEnd]);
+
   const { data: cartao, isLoading: loadingCartao } = useCartaoPonto({
     employee_id: cartaoEmployee || undefined,
     start: cartaoStartDate,
@@ -194,14 +203,6 @@ export default function RHPonto() {
   });
   const cartaoUpdateMut = useCartaoPontoUpdate();
   const periodCloseMut = usePeriodClose();
-
-  // Mesmos presets da barra global. getPeriodDates ancla tudo em nowSaoPaulo(),
-  // entao 'Mês Anterior' fecha no ultimo dia do mes anterior de verdade -- foi
-  // o erro que o consolidado teve antes (virava dia 29).
-  const { start: cartaoStartDate, end: cartaoEndDate } = useMemo(() => {
-    if (cartaoPreset === 'personalizado') return { start: cartaoStart, end: cartaoEnd };
-    return getPeriodDates(cartaoPreset);
-  }, [cartaoPreset, cartaoStart, cartaoEnd]);
 
   const openCartaoDay = (day: CartaoDay) => {
     setCartaoForm({
