@@ -666,7 +666,16 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
         TO_CHAR(NOW() AT TIME ZONE 'America/Sao_Paulo', 'HH24:MI') as current_time_str
     `);
     
-    const today = timeInfoRes.rows[0].today.toISOString().split('T')[0];
+    // `today` chega como DATE do Postgres. O driver converte para Date na
+    // meia-noite local e `toISOString()` converte para UTC — em servidor UTC
+    // isso devolve o dia ANTERIOR. O mesmo deslocamento que fazia os feriados
+    // aparecerem um dia antes; aqui escolhia o dayConfig do dia errado.
+    const rawToday = timeInfoRes.rows[0].today;
+    const today = typeof rawToday === 'string'
+      ? rawToday.slice(0, 10)
+      : new Date(
+          Date.UTC(rawToday.getFullYear(), rawToday.getMonth(), rawToday.getDate())
+        ).toISOString().slice(0, 10);
     const currentMinutes = Math.floor(timeInfoRes.rows[0].current_minutes);
     const currentTimeStr = timeInfoRes.rows[0].current_time_str;
 
@@ -807,32 +816,31 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
       const dow = Number(dowResult.rows[0]?.dow ?? 0);
       const dailyConfig = globalConfig?.dayConfig?.[String(dow)] || globalConfig?.dayConfig?.[dow];
 
-      // A jornada individual gravada no cadastro do colaborador usa dias por
-      // sigla (seg/ter/...) e não dias numéricos como o painel global.
-      const dowNames = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
-      const employeeParsed = employeeSchedule?.parsed;
-      const employeeDayConfig = employeeParsed?.dayConfig?.[dowNames[dow]] || employeeParsed?.dayConfig?.[dow];
-
       // O valor legado criado automaticamente no cadastro não deve bloquear o global.
-      // Também não conta como jornada explícita quando o objeto do cadastro não
-      // tem entry/work_start/exit/work_end de verdade — o formulário de
-      // colaboradores grava apenas `days`/`dayConfig`, e sem este filtro o
-      // objeto "vazio" vencia o global e fazia o ponto cair no padrão 08:00-17:00.
+      // O formulário de colaboradores pré-preenche `DEFAULT_SCHEDULE`, que traz
+      // entry/exit 08:00-17:00 e dayConfig idêntico dia a dia. Sem detectar isso,
+      // esse objeto vazio de intenção era aceito como jornada explícita e o
+      // ponto batia contra 08:00 mesmo com a jornada global em 07:00.
+      const DOW_NAMES = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+      const empDayConfigs = employeeSchedule?.parsed?.dayConfig;
+      const empDayConfigsFilled = empDayConfigs && typeof empDayConfigs === 'object'
+        ? Object.values(empDayConfigs).some((day) => day
+          && (day.start || day.entry) && (day.end || day.exit)
+          && !(
+            (day.start || day.entry) === '08:00'
+            && (day.end || day.exit) === '17:00'
+          ))
+        : false;
+      const isAutoFilledEmployeeSchedule = !empDayConfigsFilled
+        && (!employeeSchedule?.parsed
+          || ((employeeSchedule.start || '') === '08:00' && (employeeSchedule.end || '') === '17:00'));
+
       const hasExplicitEmployeeSchedule = employeeSchedule
-        && !!(employeeSchedule.start && employeeSchedule.end)
-        && !(
-          employeeSchedule.start === '08:00'
-          && employeeSchedule.end === '17:00'
-          && !employeeSchedule.parsed
-        );
+        && !isAutoFilledEmployeeSchedule;
 
       if (hasExplicitEmployeeSchedule) {
         scheduleStart = employeeSchedule.start;
         scheduleEnd = employeeSchedule.end;
-        scheduleSource = 'JORNADA_FUNCIONARIO';
-      } else if (employeeDayConfig && employeeDayConfig.enabled !== false) {
-        scheduleStart = employeeDayConfig.start || employeeDayConfig.entry;
-        scheduleEnd = employeeDayConfig.end || employeeDayConfig.exit;
         scheduleSource = 'JORNADA_FUNCIONARIO';
       } else if (dailyConfig) {
         if (dailyConfig.enabled === false) globalDayOff = true;
