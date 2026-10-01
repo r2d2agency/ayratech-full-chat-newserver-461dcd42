@@ -1300,21 +1300,25 @@ function buildCartaoDay(row, { employee, tolerance, closure }) {
   const punches = Array.isArray(row.punches) ? row.punches : [];
   const isoDow = row.iso_dow || isoDowOf(row.date);
 
-  // Schedule: the day-specific assignment wins, then the employee's text
-  // work_schedule ('08:00-17:00'), then the built-in default.
+  // Schedule: the day-specific assignment wins, then the employee's
+  // work_schedule for that weekday, then the built-in default. The weekday
+  // matters: a promoter on Seg-Sex 07:00-16:00 with Sab 07:00-11:00 would read
+  // 07:00-17:00 on every row if we only looked at the general entry/exit.
   const fromScheduleRow = timeColumnToMinutes(row.entry_time) ?? null;
   const fromScheduleRowExit = timeColumnToMinutes(row.exit_time) ?? null;
   let entry = fromScheduleRow;
   let exit = fromScheduleRowExit;
+  let scheduleBreak = null;
+  let isWorkday = isoDow == null || (isoDow >= 1 && isoDow <= 5);
   if (entry == null || exit == null) {
-    const parsed = parseWorkScheduleString(employee?.work_schedule);
+    const parsed = parseWorkScheduleString(employee?.work_schedule, isoDow);
     entry = entry ?? parsed.entry;
     exit = exit ?? parsed.exit;
+    scheduleBreak = parsed.breakMinutes;
+    if (parsed.isWorkday != null) isWorkday = parsed.isWorkday;
   }
   if (entry == null) entry = parseHHMMToMinutes(DEFAULT_ENTRY);
   if (exit == null) exit = parseHHMMToMinutes(DEFAULT_EXIT);
-
-  const isWorkday = isoDow == null || (isoDow >= 1 && isoDow <= 5);
   const dayType = classifyDay({
     isHoliday: Boolean(row.holiday_name),
     isWorkday,
@@ -1339,7 +1343,7 @@ function buildCartaoDay(row, { employee, tolerance, closure }) {
         // 'ausencia', so accumulate() never counts it as expected time. The
         // manager sees the hours the day would have been, and the month is
         // measured against the days actually expected.
-        expected: formatHHMM(subtractBreak(exit > entry ? exit - entry : 0, row.break_minutes != null ? Number(row.break_minutes) : null)),
+        expected: formatHHMM(subtractBreak(exit > entry ? exit - entry : 0, row.break_minutes != null ? Number(row.break_minutes) : scheduleBreak)),
         expectedMinutes: 0,
         schedule: { entry: formatHHMM(entry), exit: formatHHMM(exit), name: row.schedule_name || null },
         closed: Boolean(closure?.closed),
@@ -1347,7 +1351,12 @@ function buildCartaoDay(row, { employee, tolerance, closure }) {
     }
   }
 
-  const breakMinutes = row.break_minutes != null ? Number(row.break_minutes) : null;
+  // The scale row's declared break wins; otherwise the lunch the RH screen
+  // saved per weekday. Without this a 07:00-16:00 day with a 12:00-13:00 lunch
+  // reads as nine hours of expected journey.
+  const breakMinutes = row.break_minutes != null
+    ? Number(row.break_minutes)
+    : scheduleBreak;
   const expectedMinutes = exit > entry ? subtractBreak(exit - entry, breakMinutes) : 0;
   const balance = dayBalance({
     punches,
@@ -1425,25 +1434,70 @@ function buildMonthBank(days) {
     });
 }
 
-function parseWorkScheduleString(value) {
-  const out = { entry: null, exit: null };
+// ISO weekday keys used by the schedule editor in RHColaboradores.
+const DOW_KEYS = { 1: 'seg', 2: 'ter', 3: 'qua', 4: 'qui', 5: 'sex', 6: 'sab', 7: 'dom' };
+
+/**
+ * Reads employees.work_schedule, which the RH screen stores as JSON:
+ *   { useIndividualDays, dayConfig: { seg: { entry, exit, lunch_start,
+ *     lunch_end }, ... }, entry, exit, lunch_start, lunch_end }
+ * A legacy plain-text "08:00-17:00" is still accepted.
+ *
+ * isoDow selects the weekday from dayConfig, which is what makes a Mon-Fri
+ * 07:00-16:00 with a Saturday 07:00-11:00 read correctly on every row. Passing
+ * no isoDow returns the general entry/exit.
+ */
+function parseWorkScheduleString(value, isoDow = null) {
+  const out = { entry: null, exit: null, breakMinutes: null, isWorkday: null };
   if (!value) return out;
   const str = String(value).trim();
-  // "08:00-17:00", "08:00 às 17:00", or JSON with a dayConfig.
+
+  // "08:00-17:00", "08:00 até 17:00" -- the legacy flat format.
   const range = str.match(/(\d{1,2}:\d{2})\s*(?:-|até|ate|ao)\s*(\d{1,2}:\d{2})/i);
   if (range) {
     out.entry = parseHHMMToMinutes(range[1]);
     out.exit = parseHHMMToMinutes(range[2]);
     return out;
   }
-  if (str.startsWith('{')) {
-    try {
-      const parsed = JSON.parse(str);
-      out.entry = parseHHMMToMinutes(parsed.entry || parsed.start);
-      out.exit = parseHHMMToMinutes(parsed.exit || parsed.end);
-    } catch { /* not JSON, fall through to the default */ }
+
+  if (!str.startsWith('{')) return out;
+  let parsed;
+  try {
+    parsed = typeof value === 'object' ? value : JSON.parse(str);
+  } catch {
+    return out;
   }
+
+  const key = isoDow ? DOW_KEYS[isoDow] : null;
+  const days = parsed.days || {};
+  if (key) {
+    // A day switched off in the editor is a rest day even if it is a weekday.
+    if (days[key] === false) out.isWorkday = false;
+    if (parsed.useIndividualDays && parsed.dayConfig && parsed.dayConfig[key]) {
+      const cfg = parsed.dayConfig[key];
+      out.entry = parseHHMMToMinutes(cfg.entry);
+      out.exit = parseHHMMToMinutes(cfg.exit);
+      const lunch = lunchMinutesOf(cfg);
+      if (lunch > 0) out.breakMinutes = lunch;
+      if (days[key] === true) out.isWorkday = true;
+      return out;
+    }
+  }
+
+  out.entry = parseHHMMToMinutes(parsed.entry || parsed.start);
+  out.exit = parseHHMMToMinutes(parsed.exit || parsed.end);
+  const topLunch = lunchMinutesOf(parsed);
+  if (topLunch > 0) out.breakMinutes = topLunch;
   return out;
+}
+
+// lunch_start/lunch_end as a duration. Absent or degenerate values mean no
+// declared break, never zero-length.
+function lunchMinutesOf(cfg) {
+  const s = parseHHMMToMinutes(cfg && (cfg.lunch_start ?? cfg.break_start));
+  const e = parseHHMMToMinutes(cfg && (cfg.lunch_end ?? cfg.break_end));
+  if (s == null || e == null) return 0;
+  return e > s ? e - s : 0;
 }
 
 // The wall-clock time in São Paulo, as 'HH:MM', for a timestamptz.

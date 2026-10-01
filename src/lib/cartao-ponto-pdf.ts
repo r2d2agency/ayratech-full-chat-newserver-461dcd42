@@ -151,7 +151,9 @@ export function exportCartaoPontoPdf(data: CartaoPonto) {
     doc.text('Banco de horas por mês', margin, y);
     y += 4;
 
-    (doc as unknown as { autoTable: (o: unknown) => void }).autoTable({
+    // A v5 do jspdf-autotable nao registra doc.autoTable: a segunda tabela do
+    // documento tem que chamar a funcao importada, como o resto do projeto.
+    autoTable(doc, {
       startY: y,
       margin: { left: margin, right: margin },
       head: [['Mês', 'Dias', 'Esperado', 'Trabalhado', 'Saldo', 'Situação']],
