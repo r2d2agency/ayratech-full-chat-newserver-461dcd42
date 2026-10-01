@@ -175,6 +175,7 @@ export default function RHPonto() {
   // ===== CARTAO DE PONTO =====
   // A ficha e sempre de UM colaborador: sem selecao nao ha tabela para carregar.
   const [cartaoEmployee, setCartaoEmployee] = useState("");
+  const [cartaoPreset, setCartaoPreset] = useState<PeriodPreset>('mes');
   const [cartaoStart, setCartaoStart] = useState(format(startOfMonth(nowSaoPaulo()), "yyyy-MM-dd"));
   const [cartaoEnd, setCartaoEnd] = useState(format(nowSaoPaulo(), "yyyy-MM-dd"));
   const [cartaoDialogOpen, setCartaoDialogOpen] = useState(false);
@@ -184,8 +185,8 @@ export default function RHPonto() {
   );
   const { data: cartao, isLoading: loadingCartao } = useCartaoPonto({
     employee_id: cartaoEmployee || undefined,
-    start: cartaoStart,
-    end: cartaoEnd,
+    start: cartaoStartDate,
+    end: cartaoEndDate,
   });
   const { data: cartaoAudit = [] } = useCartaoPontoAudit({
     employee_id: cartaoEmployee || undefined,
@@ -193,6 +194,14 @@ export default function RHPonto() {
   });
   const cartaoUpdateMut = useCartaoPontoUpdate();
   const periodCloseMut = usePeriodClose();
+
+  // Mesmos presets da barra global. getPeriodDates ancla tudo em nowSaoPaulo(),
+  // entao 'Mês Anterior' fecha no ultimo dia do mes anterior de verdade -- foi
+  // o erro que o consolidado teve antes (virava dia 29).
+  const { start: cartaoStartDate, end: cartaoEndDate } = useMemo(() => {
+    if (cartaoPreset === 'personalizado') return { start: cartaoStart, end: cartaoEnd };
+    return getPeriodDates(cartaoPreset);
+  }, [cartaoPreset, cartaoStart, cartaoEnd]);
 
   const openCartaoDay = (day: CartaoDay) => {
     setCartaoForm({
@@ -241,7 +250,7 @@ export default function RHPonto() {
   };
 
   const toggleCartaoPeriod = (closed: boolean) => {
-    const reference_month = cartaoEnd.slice(0, 7);
+    const reference_month = cartaoEndDate.slice(0, 7);
     periodCloseMut.mutate(
       { employee_id: cartaoEmployee, reference_month, closed },
       {
@@ -637,7 +646,7 @@ export default function RHPonto() {
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm flex items-center gap-2"><CalendarRange className="h-4 w-4 text-primary" /> Ficha individual de ponto</CardTitle>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
                   <div>
                     <Label className="text-xs">Colaborador *</Label>
                     <Select value={cartaoEmployee} onValueChange={setCartaoEmployee}>
@@ -647,8 +656,25 @@ export default function RHPonto() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div><Label className="text-xs">Início</Label><Input type="date" value={cartaoStart} onChange={e => setCartaoStart(e.target.value)} /></div>
-                  <div><Label className="text-xs">Fim</Label><Input type="date" value={cartaoEnd} onChange={e => setCartaoEnd(e.target.value)} /></div>
+                  <div>
+                    <Label className="text-xs">Período</Label>
+                    <Select value={cartaoPreset} onValueChange={(v) => setCartaoPreset(v as PeriodPreset)}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="mes">Mês atual</SelectItem>
+                        <SelectItem value="mes_anterior">Mês anterior</SelectItem>
+                        <SelectItem value="semana">Semana atual</SelectItem>
+                        <SelectItem value="hoje">Hoje</SelectItem>
+                        <SelectItem value="personalizado">Personalizado</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {cartaoPreset === 'personalizado' && (
+                    <>
+                      <div><Label className="text-xs">Início</Label><Input type="date" value={cartaoStart} onChange={e => setCartaoStart(e.target.value)} /></div>
+                      <div><Label className="text-xs">Fim</Label><Input type="date" value={cartaoEnd} onChange={e => setCartaoEnd(e.target.value)} /></div>
+                    </>
+                  )}
                   <div className="flex gap-2">
                     <Button
                       variant="outline"

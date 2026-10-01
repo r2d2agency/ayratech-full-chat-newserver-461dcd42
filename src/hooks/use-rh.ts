@@ -410,7 +410,7 @@ export function useCartaoPontoUpdate() {
     mutationFn: (payload: { employee_id: string; date: string; times: string[]; reason: string }) =>
       api<{ ok: boolean; date: string; times: string[]; previous: number }>('/api/rh/ponto/cartao', {
         method: 'PUT',
-        body: JSON.stringify(payload),
+        body: payload,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['rh-cartao-ponto'] });
@@ -450,7 +450,7 @@ export function usePeriodClose() {
     mutationFn: (payload: { employee_id: string; reference_month: string; closed: boolean }) =>
       api<{ ok: boolean; closed: boolean }>('/api/rh/ponto/cartao/period-close', {
         method: 'POST',
-        body: JSON.stringify(payload),
+        body: payload,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['rh-cartao-ponto'] });
