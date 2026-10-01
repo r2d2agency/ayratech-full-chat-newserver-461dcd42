@@ -365,26 +365,49 @@ export type CartaoPonto = {
   days: CartaoDay[];
   totals: {
     workedMinutes: number;
+    expectedMinutes: number;
     creditMinutes: number;
     debitMinutes: number;
     balanceMinutes: number;
+    saldoMinutes: number;
     daysWorked: number;
     daysAbsent: number;
     worked: string;
+    expected: string;
     credit: string;
     debit: string;
   };
+  // Saldo broken down by reference month. A period can straddle two months and
+  // the legal figure is monthly, so the manager reads one line per month.
+  monthBank: Array<{
+    reference_month: string;
+    workedMinutes: number;
+    expectedMinutes: number;
+    worked: string;
+    expected: string;
+    creditMinutes: number;
+    debitMinutes: number;
+    daysWorked: number;
+    daysAbsent: number;
+    saldoMinutes: number;
+    saldo: string;
+    status: 'banco' | 'deficit' | 'nivel';
+  }>;
   yearToDate: {
     from: string;
     to: string;
     creditMinutes: number;
     debitMinutes: number;
     workedMinutes: number;
+    expectedMinutes: number;
     balanceMinutes: number;
+    saldoMinutes: number;
     credit: string;
     debit: string;
     worked: string;
+    expected: string;
     balance: string;
+    saldo: string;
   };
   warning?: string;
 };

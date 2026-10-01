@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -762,13 +763,60 @@ export default function RHPonto() {
                   <div className="border-t p-3 flex flex-wrap items-center justify-between gap-2 text-sm">
                     <div className="flex gap-4">
                       <span>Trabalhado: <strong>{cartao.totals.worked}</strong></span>
+                      <span className="text-muted-foreground">Esperado: <strong>{cartao.totals.expected}</strong></span>
                       <span className="text-primary">Crédito: <strong>{cartao.totals.credit}</strong></span>
                       <span className="text-destructive">Débito: <strong>{cartao.totals.debit}</strong></span>
                       <span className="text-muted-foreground">{cartao.totals.daysWorked} dias trabalhados</span>
                     </div>
                     <span className="text-xs text-muted-foreground">
-                      Acumulado do ano (desde {cartao.yearToDate.from.split('-').reverse().join('/')}): <strong>{cartao.yearToDate.balance}</strong>
+                      Acumulado do ano (desde {cartao.yearToDate.from.split('-').reverse().join('/')}): <strong>{cartao.yearToDate.saldo}</strong>
                     </span>
+                  </div>
+                )}
+
+                {cartao && cartao.monthBank && cartao.monthBank.length > 0 && (
+                  <div className="border-t">
+                    <div className="px-3 py-2 text-xs text-muted-foreground">
+                      Banco de horas por mês — esperado calculado pela jornada, não por 220h fixos.
+                    </div>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Mês</TableHead>
+                          <TableHead className="text-right">Dias</TableHead>
+                          <TableHead className="text-right">Esperado</TableHead>
+                          <TableHead className="text-right">Trabalhado</TableHead>
+                          <TableHead className="text-right">Saldo</TableHead>
+                          <TableHead>Situação</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {cartao.monthBank.map((m) => (
+                          <TableRow key={m.reference_month}>
+                            <TableCell className="font-medium">
+                              {m.reference_month.split('-').reverse().join('/')}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {m.daysWorked}/{m.daysWorked + m.daysAbsent}
+                            </TableCell>
+                            <TableCell className="text-right">{m.expected}</TableCell>
+                            <TableCell className="text-right">{m.worked}</TableCell>
+                            <TableCell className={cn(
+                              "text-right font-medium",
+                              m.status === 'banco' && "text-primary",
+                              m.status === 'deficit' && "text-destructive",
+                            )}>
+                              {m.saldo}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={m.status === 'banco' ? 'default' : m.status === 'deficit' ? 'destructive' : 'secondary'}>
+                                {m.status === 'banco' ? 'Banco de horas' : m.status === 'deficit' ? 'Déficit' : 'Em nível'}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </div>
                 )}
               </CardContent>

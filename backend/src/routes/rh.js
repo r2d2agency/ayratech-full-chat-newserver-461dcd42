@@ -1335,7 +1335,12 @@ function buildCartaoDay(row, { employee, tolerance, closure }) {
         worked: '--',
         credit: '--',
         debit: '--',
-        expected: formatHHMM(exit - entry),
+        // An approved leave is not a shortfall: the day keeps its type as
+        // 'ausencia', so accumulate() never counts it as expected time. The
+        // manager sees the hours the day would have been, and the month is
+        // measured against the days actually expected.
+        expected: formatHHMM(subtractBreak(exit > entry ? exit - entry : 0, row.break_minutes != null ? Number(row.break_minutes) : null)),
+        expectedMinutes: 0,
         schedule: { entry: formatHHMM(entry), exit: formatHHMM(exit), name: row.schedule_name || null },
         closed: Boolean(closure?.closed),
       };

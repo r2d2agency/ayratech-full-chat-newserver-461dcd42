@@ -125,8 +125,9 @@ export function exportCartaoPontoPdf(data: CartaoPonto) {
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
   doc.text(
-    `Acumulado do ano (desde ${data.yearToDate.from.split('-').reverse().join('/')}): `
-    + `${data.yearToDate.balance} h`,
+    `Esperado no periodo: ${data.totals.expected}  |  `
+    + `Acumulado do ano (desde ${data.yearToDate.from.split('-').reverse().join('/')}): `
+    + `${data.yearToDate.saldo} h`,
     margin,
     lastY + 8,
   );
@@ -138,6 +139,38 @@ export function exportCartaoPontoPdf(data: CartaoPonto) {
     margin,
     lastY + 13,
   );
+
+  // Banco de horas por mes. O saldo legal e mensal, e o esperado vem da
+  // jornada -- nao de 220h fixos -- entao o gestor precisa ver a conta aberta
+  // no impresso, igual a tela.
+  y = lastY + 20;
+  if (data.monthBank && data.monthBank.length) {
+    doc.setFontSize(8.5);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(0);
+    doc.text('Banco de horas por mês', margin, y);
+    y += 4;
+
+    (doc as unknown as { autoTable: (o: unknown) => void }).autoTable({
+      startY: y,
+      margin: { left: margin, right: margin },
+      head: [['Mês', 'Dias', 'Esperado', 'Trabalhado', 'Saldo', 'Situação']],
+      body: data.monthBank.map((m) => [
+        m.reference_month.split('-').reverse().join('/'),
+        `${m.daysWorked}/${m.daysWorked + m.daysAbsent}`,
+        m.expected,
+        m.worked,
+        m.saldo,
+        m.status === 'banco' ? 'Banco de horas' : m.status === 'deficit' ? 'Déficit' : 'Em nível',
+      ]),
+      styles: { fontSize: 7.5, halign: 'center' },
+      headStyles: { fillColor: [240, 240, 246], fontStyle: 'bold' },
+      columnStyles: { 0: { halign: 'left' }, 5: { halign: 'left' } },
+    });
+    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 5;
+  }
+
+  doc.setTextColor(120);
 
   const slug = (data.employee.full_name || 'colaborador')
     .normalize('NFD')
