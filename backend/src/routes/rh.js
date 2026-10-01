@@ -1359,6 +1359,7 @@ function buildCartaoDay(row, { employee, tolerance, closure }) {
     absenceType: row.absence_type || null,
     schedule: { entry: formatHHMM(entry), exit: formatHHMM(exit), name: row.schedule_name || null },
     expected: expectedMinutes ? formatHHMM(expectedMinutes) : '--',
+    expectedMinutes,
     punches: punches.map((p) => ({
       id: p.id,
       punch_type: p.punch_type,
@@ -1375,6 +1376,48 @@ function buildCartaoDay(row, { employee, tolerance, closure }) {
     debit: balance.debitMinutes ? formatHHMM(balance.debitMinutes) : '--',
     closed: Boolean(closure?.closed),
   };
+}
+
+// Banco de horas month by month. The 220h figure is a legal convention, not a
+// fact about the calendar: a month rarely has 22 workdays, and the one that
+// does still loses days to holidays and to the employee's own schedule. So the
+// expectation is derived from the days the month actually has, never assumed.
+function buildMonthBank(days) {
+  const byMonth = new Map();
+  for (const day of days || []) {
+    const month = String(day.date || '').slice(0, 7);
+    if (!month) continue;
+    if (!byMonth.has(month)) {
+      byMonth.set(month, { reference_month: month, days: [], workedMinutes: 0, expectedMinutes: 0 });
+    }
+    const bucket = byMonth.get(month);
+    bucket.days.push(day);
+    bucket.workedMinutes += day.workedMinutes || 0;
+    if (day.dayType === 'util') bucket.expectedMinutes += day.expectedMinutes || 0;
+  }
+
+  return [...byMonth.values()]
+    .sort((a, b) => a.reference_month.localeCompare(b.reference_month))
+    .map((bucket) => {
+      const totals = accumulate(bucket.days);
+      const saldo = totals.saldoMinutes;
+      return {
+        reference_month: bucket.reference_month,
+        workedMinutes: totals.workedMinutes,
+        expectedMinutes: totals.expectedMinutes,
+        worked: totals.worked,
+        expected: totals.expected,
+        creditMinutes: totals.creditMinutes,
+        debitMinutes: totals.debitMinutes,
+        daysWorked: totals.daysWorked,
+        daysAbsent: totals.daysAbsent,
+        saldoMinutes: saldo,
+        saldo: formatSignedHHMM(saldo),
+        // Three states, decided by the schedule rather than by the tolerance:
+        // positive means banco de horas, negative means deficit.
+        status: saldo > 0 ? 'banco' : saldo < 0 ? 'deficit' : 'nivel',
+      };
+    });
 }
 
 function parseWorkScheduleString(value) {
@@ -1638,6 +1681,11 @@ router.get('/ponto/cartao', async (req, res) => {
       period: { start, end },
       days,
       totals: periodTotals,
+      // Saldo is worked minus what the employee's own schedule says those days
+      // should have lasted. Splitting by month is what makes it a banco de
+      // horas: the legal figure is a monthly one, and a single saldo over a
+      // period that straddles two months would not survive a payroll review.
+      monthBank: buildMonthBank(days),
       yearToDate: {
         from: yearStart,
         to: end,
@@ -1649,6 +1697,10 @@ router.get('/ponto/cartao', async (req, res) => {
         debit: ytdTotals.debit,
         worked: ytdTotals.worked,
         balance: formatSignedHHMM(ytdTotals.balanceMinutes),
+        expectedMinutes: ytdTotals.expectedMinutes,
+        expected: ytdTotals.expected,
+        saldoMinutes: ytdTotals.saldoMinutes,
+        saldo: formatSignedHHMM(ytdTotals.saldoMinutes),
       },
       warning: capabilities.missing.length
         ? `Sem ${capabilities.missing.join(' e ')} neste ambiente: jornada e feriados caem no padrão 08:00-17:00.`

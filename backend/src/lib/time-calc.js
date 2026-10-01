@@ -211,9 +211,11 @@ export function dayBalance({ punches, schedule = {}, dayType = 'util', tolerance
 export function accumulate(days) {
   const totals = {
     workedMinutes: 0,
+    expectedMinutes: 0,
     creditMinutes: 0,
     debitMinutes: 0,
     balanceMinutes: 0,
+    saldoMinutes: 0,
     daysWorked: 0,
     daysAbsent: 0,
   };
@@ -222,12 +224,25 @@ export function accumulate(days) {
     totals.creditMinutes += day.creditMinutes || 0;
     totals.debitMinutes += day.debitMinutes || 0;
     if (day.dayType === 'util') {
+      // Only a workday carries an expectation. A holiday, weekend or approved
+      // absence contributes none, so a month with four holidays does not
+      // quietly read as a deficit.
+      totals.expectedMinutes += day.expectedMinutes || 0;
       if ((day.workedMinutes || 0) > 0) totals.daysWorked += 1;
       else totals.daysAbsent += 1;
     }
   }
   totals.balanceMinutes = totals.creditMinutes - totals.debitMinutes;
+  // The month is measured against the schedule, not against the tolerance:
+  // tolerance decides whether a single day gets flagged, this decides whether
+  // the month lands in credit, in deficit, or level.
+  //
+  // workedMinutes covers every day while expectedMinutes covers only
+  // workdays, so time spent on a holiday or a rest day lands here as credit.
+  // That is the intent: someone who showed up on a holiday worked those hours.
+  totals.saldoMinutes = totals.workedMinutes - totals.expectedMinutes;
   totals.worked = formatHHMM(totals.workedMinutes);
+  totals.expected = formatHHMM(totals.expectedMinutes);
   totals.credit = formatHHMM(totals.creditMinutes);
   totals.debit = formatHHMM(totals.debitMinutes);
   return totals;
