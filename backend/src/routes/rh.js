@@ -3,6 +3,17 @@ import { query } from '../db.js';
 import { authenticate } from '../middleware/auth.js';
 import { callAI } from '../lib/ai-caller.js';
 import { logInfo, logError } from '../logger.js';
+import {
+  TZ,
+  DEFAULT_ENTRY,
+  DEFAULT_EXIT,
+  formatHHMM,
+  parseHHMMToMinutes,
+  timeColumnToMinutes,
+  classifyDay,
+  dayBalance,
+  accumulate,
+} from '../lib/time-calc.js';
 
 
 const router = express.Router();
@@ -1159,6 +1170,591 @@ router.get('/consolidated-timesheet', async (req, res) => {
   } catch (err) {
     logError('rh.consolidated_timesheet', err);
     res.status(500).json({ error: 'Erro' });
+  }
+});
+
+// ===== CARTAO DE PONTO =====
+// Ficha individual dia a dia de UM colaborador: batidas, totais calculados pelo
+// modulo compartilhado (lib/time-calc.js) e correcao com trilha de auditoria.
+//
+// Fonte canonica: time_punches. O 'time_records' existe por causa do dialogo
+// manual legado e nao e migrado aqui.
+
+const CARTAO_MAX_PUNCHES = 8;
+const CARTAO_TIME_RE = /^\d{1,2}:\d{2}$/;
+
+function saoPauloTodayStr() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+}
+
+function isValidCivilDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
+  const [y, m, day] = String(value).split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1, day));
+  if (Number.isNaN(d.getTime())) return false;
+  // Rejects 2026-02-30 and friends, which Date would otherwise roll over.
+  return d.getUTCFullYear() === y && d.getUTCMonth() + 1 === m && d.getUTCDate() === day;
+}
+
+// Every civil date that leaves this module is a text 'YYYY-MM-DD', never a Date.
+// A DATE column serialised to JSON becomes midnight UTC, which the browser
+// reads as the previous day in São Paulo.
+function toCharLocal(value) {
+  if (!value) return null;
+  if (typeof value === 'string') return value.slice(0, 10);
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(d);
+}
+
+function isoDowOf(value) {
+  const str = toCharLocal(value);
+  if (!str) return null;
+  const d = new Date(`${str}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.getUTCDay() === 0 ? 7 : d.getUTCDay();
+}
+
+function monthsBetween(start, end) {
+  const out = [];
+  let y = Number(String(start).slice(0, 4));
+  let m = Number(String(start).slice(5, 7));
+  const endY = Number(String(end).slice(0, 4));
+  const endM = Number(String(end).slice(5, 7));
+  for (let guard = 0; guard < 240; guard += 1) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`);
+    if (y === endY && m === endM) break;
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return out;
+}
+
+function isMissingRelation(err) {
+  const code = err?.code || '';
+  const msg = String(err?.message || '');
+  return code === '42P01' || code === '42703' || /does not exist/i.test(msg);
+}
+
+function formatSignedHHMM(minutes) {
+  const m = Math.round(minutes || 0);
+  const sign = m < 0 ? '-' : '';
+  return `${sign}${formatHHMM(Math.abs(m))}`;
+}
+
+// 'YYYY-MM-DD' -> 'YYYY-MM', no local timezone games.
+function referenceMonthOf(date) {
+  return String(date).slice(0, 7);
+}
+
+// The last-index rule wins over parity: on a 4-punch day index 3 is both the
+// last element and an odd index, and we want it typed 'saida', not
+// 'saida_intervalo'.
+function punchTypeForIndex(index, total) {
+  if (index === 0) return 'entrada';
+  if (index === total - 1) return 'saida';
+  if (index % 2 === 1) return 'saida_intervalo';
+  return 'retorno_intervalo';
+}
+
+async function isPeriodClosed(orgId, employeeId, date) {
+  const r = await query(
+    `SELECT closed FROM rh_period_closures WHERE organization_id = $1 AND employee_id = $2 AND reference_month = $3`,
+    [orgId, employeeId, referenceMonthOf(date)]
+  );
+  return r.rows[0]?.closed === true;
+}
+
+// Turns one row of the generate_series query into a day of the card. The
+// punches arrive already grouped by the same civil date, so the grouping never
+// depends on JavaScript date arithmetic.
+function buildCartaoDay(row, { employee, tolerance, closure }) {
+  const date = toCharLocal(row.date) || String(row.date || '').slice(0, 10);
+  const punches = Array.isArray(row.punches) ? row.punches : [];
+  const isoDow = row.iso_dow || isoDowOf(row.date);
+
+  // Schedule: the day-specific assignment wins, then the employee's text
+  // work_schedule ('08:00-17:00'), then the built-in default.
+  const fromScheduleRow = timeColumnToMinutes(row.entry_time) ?? null;
+  const fromScheduleRowExit = timeColumnToMinutes(row.exit_time) ?? null;
+  let entry = fromScheduleRow;
+  let exit = fromScheduleRowExit;
+  if (entry == null || exit == null) {
+    const parsed = parseWorkScheduleString(employee?.work_schedule);
+    entry = entry ?? parsed.entry;
+    exit = exit ?? parsed.exit;
+  }
+  if (entry == null) entry = parseHHMMToMinutes(DEFAULT_ENTRY);
+  if (exit == null) exit = parseHHMMToMinutes(DEFAULT_EXIT);
+
+  const isWorkday = isoDow == null || (isoDow >= 1 && isoDow <= 5);
+  const dayType = classifyDay({
+    isHoliday: Boolean(row.holiday_name),
+    isWorkday,
+  });
+  if (row.absence_type) {
+    // An approved absence overrides the type but keeps the punches visible, so
+    // the manager can see the day was worked on paper but marked as leave.
+    if (!punches.length) {
+      return {
+        date,
+        isoDow,
+        dayType: 'ausencia',
+        absenceType: row.absence_type,
+        punches: [],
+        workedMinutes: 0,
+        creditMinutes: 0,
+        debitMinutes: 0,
+        worked: '--',
+        credit: '--',
+        debit: '--',
+        expected: formatHHMM(exit - entry),
+        schedule: { entry: formatHHMM(entry), exit: formatHHMM(exit), name: row.schedule_name || null },
+        closed: Boolean(closure?.closed),
+      };
+    }
+  }
+
+  const expectedMinutes = exit > entry ? exit - entry : 0;
+  const balance = dayBalance({
+    punches,
+    schedule: { entryMinutes: entry, exitMinutes: exit, expectedMinutes },
+    dayType,
+    tolerance,
+  });
+
+  return {
+    date,
+    isoDow,
+    dayType,
+    holidayName: row.holiday_name || null,
+    absenceType: row.absence_type || null,
+    schedule: { entry: formatHHMM(entry), exit: formatHHMM(exit), name: row.schedule_name || null },
+    expected: expectedMinutes ? formatHHMM(expectedMinutes) : '--',
+    punches: punches.map((p) => ({
+      id: p.id,
+      punch_type: p.punch_type,
+      punched_at: p.punched_at,
+      time: instantToSaoPauloClock(p.punched_at),
+      source: p.source || 'app',
+      adjustment_reason: p.adjustment_reason || null,
+    })),
+    workedMinutes: balance.workedMinutes,
+    creditMinutes: balance.creditMinutes,
+    debitMinutes: balance.debitMinutes,
+    worked: punches.length ? formatHHMM(balance.workedMinutes) : '--',
+    credit: balance.creditMinutes ? formatHHMM(balance.creditMinutes) : '--',
+    debit: balance.debitMinutes ? formatHHMM(balance.debitMinutes) : '--',
+    closed: Boolean(closure?.closed),
+  };
+}
+
+function parseWorkScheduleString(value) {
+  const out = { entry: null, exit: null };
+  if (!value) return out;
+  const str = String(value).trim();
+  // "08:00-17:00", "08:00 às 17:00", or JSON with a dayConfig.
+  const range = str.match(/(\d{1,2}:\d{2})\s*(?:-|até|ate|ao)\s*(\d{1,2}:\d{2})/i);
+  if (range) {
+    out.entry = parseHHMMToMinutes(range[1]);
+    out.exit = parseHHMMToMinutes(range[2]);
+    return out;
+  }
+  if (str.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(str);
+      out.entry = parseHHMMToMinutes(parsed.entry || parsed.start);
+      out.exit = parseHHMMToMinutes(parsed.exit || parsed.end);
+    } catch { /* not JSON, fall through to the default */ }
+  }
+  return out;
+}
+
+// The wall-clock time in São Paulo, as 'HH:MM', for a timestamptz.
+function instantToSaoPauloClock(value) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(d);
+}
+
+// Tolerances come from time_rules when the org configured them: the employee
+// rule wins over the org-wide one, and an absent row falls back to the module
+// default rather than zero.
+async function getCartaoTolerance(orgId, employeeId) {
+  try {
+    const r = await query(
+      `SELECT late_tolerance_minutes, early_leave_tolerance
+         FROM time_rules
+        WHERE organization_id = $1 AND (employee_id = $2 OR employee_id IS NULL)
+        ORDER BY employee_id NULLS LAST
+        LIMIT 1`,
+      [orgId, employeeId]
+    );
+    const row = r.rows[0];
+    if (!row) return {};
+    return {
+      late: row.late_tolerance_minutes ?? undefined,
+      early: row.early_leave_tolerance ?? undefined,
+    };
+  } catch (err) {
+    if (isMissingRelation(err)) return {};
+    throw err;
+  }
+}
+
+// work_schedules/employee_schedules are created at runtime by the schedule
+// router and holidays by the holiday bootstrap, so neither is guaranteed to
+// exist on a fresh database. Probing once lets the day grid degrade to
+// employee.work_schedule instead of failing the whole request.
+let cartaoTableCaps = null;
+async function getCartaoTableCapabilities() {
+  if (cartaoTableCaps) return cartaoTableCaps;
+  const missing = [];
+  const has = async (table) => {
+    try {
+      await query(`SELECT 1 FROM ${table} LIMIT 1`);
+      return true;
+    } catch (err) {
+      if (isMissingRelation(err)) return false;
+      throw err;
+    }
+  };
+  if (!(await has('work_schedules'))) missing.push('escalas');
+  if (!(await has('employee_schedules'))) missing.push('escalas');
+  if (!(await has('holidays'))) missing.push('feriados');
+  if (!(await has('employee_absences'))) missing.push('afastamentos');
+  cartaoTableCaps = {
+    schedules: !missing.includes('escalas'),
+    holidays: !missing.includes('feriados'),
+    absences: !missing.includes('afastamentos'),
+    missing,
+  };
+  return cartaoTableCaps;
+}
+
+// One query builds the full day grid for a period. The LATERAL subqueries are
+// conditional on the probed capabilities so a missing table cannot take the
+// whole statement down with it.
+async function queryCartaoDays({ employeeId, orgId, start, end, capabilities }) {
+  const schedSql = capabilities.schedules ? `
+       LEFT JOIN LATERAL (
+         SELECT ws.entry_time, ws.exit_time, ws.name AS schedule_name
+           FROM employee_schedules es
+           JOIN work_schedules ws ON ws.id = es.schedule_id
+          WHERE es.employee_id = $1
+            AND es.organization_id = $2
+            AND COALESCE(es.active, true) = true
+            AND es.start_date <= d.dt::date
+            AND (es.end_date IS NULL OR es.end_date >= d.dt::date)
+          ORDER BY es.start_date DESC
+          LIMIT 1
+       ) sched ON true` : '';
+
+  const holidaySql = capabilities.holidays ? `
+       LEFT JOIN LATERAL (
+         SELECT hd.name
+           FROM holidays hd
+          WHERE hd.organization_id = $2
+            AND hd.holiday_date = d.dt::date
+            AND COALESCE(hd.active, true) = true
+          ORDER BY hd.name
+          LIMIT 1
+       ) h ON true` : '';
+
+  const absenceSql = capabilities.absences ? `
+       LEFT JOIN LATERAL (
+         SELECT ab.absence_type
+           FROM employee_absences ab
+          WHERE ab.employee_id = $1
+            AND d.dt::date BETWEEN ab.start_date AND ab.end_date
+            AND COALESCE(ab.approved, false) = true
+          ORDER BY ab.start_date DESC
+          LIMIT 1
+       ) a ON true` : '';
+
+  const r = await query(
+    `SELECT
+       to_char(d.dt, 'YYYY-MM-DD') AS date,
+       EXTRACT(ISODOW FROM d.dt)::int AS iso_dow,
+       sched.entry_time,
+       sched.exit_time,
+       sched.name AS schedule_name,
+       h.name AS holiday_name,
+       a.absence_type,
+       COALESCE(
+         (SELECT json_agg(json_build_object(
+             'id', p.id, 'punch_type', p.punch_type, 'punched_at', p.punched_at,
+             'source', p.source, 'adjustment_reason', p.adjustment_reason
+           ) ORDER BY p.punched_at)
+            FROM time_punches p
+           WHERE p.employee_id = $1
+             AND p.organization_id = $2
+             AND (p.punched_at AT TIME ZONE 'America/Sao_Paulo')::date = d.dt::date),
+         '[]'::json) AS punches
+     FROM generate_series($3::date, $4::date, '1 day'::interval) d(dt)
+     ${schedSql}
+     ${holidaySql}
+     ${absenceSql}
+    ORDER BY d.dt`,
+    [employeeId, orgId, start, end]
+  );
+  return r.rows;
+}
+
+// GET /ponto/cartao?employee_id=&start=&end=
+router.get('/ponto/cartao', async (req, res) => {
+  const { employee_id, start, end } = req.query;
+  if (!employee_id) return res.status(400).json({ error: 'employee_id obrigatório' });
+  if (!isValidCivilDate(start) || !isValidCivilDate(end)) {
+    return res.status(400).json({ error: 'start e end devem ser datas válidas (YYYY-MM-DD)' });
+  }
+  if (start > end) return res.status(400).json({ error: 'start deve ser anterior a end' });
+
+  try {
+    const orgId = req.query.org_id || await getUserOrgId(req.userId);
+    if (!orgId) return res.status(400).json({ error: 'Organização não encontrada' });
+
+    const empRes = await query(
+      `SELECT e.id, e.full_name, e.cpf, e.position, e.work_schedule
+         FROM employees e WHERE e.id = $1 AND e.organization_id = $2`,
+      [employee_id, orgId]
+    );
+    const employee = empRes.rows[0];
+    if (!employee) return res.status(404).json({ error: 'Colaborador não encontrado' });
+
+    const tolerance = await getCartaoTolerance(orgId, employee_id);
+
+    const closedRes = await query(
+      `SELECT reference_month, closed, closed_at, reopened_at
+         FROM rh_period_closures
+        WHERE organization_id = $1 AND employee_id = $2 AND reference_month = ANY($3::varchar[])
+        ORDER BY reference_month`,
+      [orgId, employee_id, monthsBetween(start, end)]
+    );
+    const closures = new Map(closedRes.rows.map((c) => [c.reference_month, c]));
+
+    const capabilities = await getCartaoTableCapabilities(orgId);
+    const days = (await queryCartaoDays({
+      employeeId: employee_id, orgId, start, end, capabilities,
+    })).map((row) => buildCartaoDay(row, {
+      employee,
+      tolerance,
+      closure: closures.get(referenceMonthOf(row.date)) || null,
+    }));
+
+    const periodTotals = accumulate(days);
+
+    // Balance is accumulated from 1 January, not read from hour_bank: that
+    // table has no organization_id and is never written, so reading it would
+    // return zero for everyone. Same day-grid query as the visible period, so
+    // the YTD figure and the on-screen rows are computed by identical code.
+    const yearStart = `${String(start).slice(0, 4)}-01-01`;
+    const ytdDays = (await queryCartaoDays({
+      employeeId: employee_id, orgId, start: yearStart, end, capabilities,
+    })).map((row) => buildCartaoDay(row, { employee, tolerance, closure: null }));
+    const ytdTotals = accumulate(ytdDays);
+
+    res.json({
+      employee: {
+        id: employee.id,
+        full_name: employee.full_name,
+        cpf: employee.cpf,
+        position: employee.position,
+        work_schedule: employee.work_schedule,
+      },
+      period: { start, end },
+      days,
+      totals: periodTotals,
+      yearToDate: {
+        from: yearStart,
+        to: end,
+        creditMinutes: ytdTotals.creditMinutes,
+        debitMinutes: ytdTotals.debitMinutes,
+        workedMinutes: ytdTotals.workedMinutes,
+        balanceMinutes: ytdTotals.balanceMinutes,
+        credit: ytdTotals.credit,
+        debit: ytdTotals.debit,
+        worked: ytdTotals.worked,
+        balance: formatSignedHHMM(ytdTotals.balanceMinutes),
+      },
+      warning: capabilities.missing.length
+        ? `Sem ${capabilities.missing.join(' e ')} neste ambiente: jornada e feriados caem no padrão 08:00-17:00.`
+        : undefined,
+    });
+  } catch (err) {
+    logError('rh.ponto.cartao', err);
+    res.status(500).json({ error: 'Erro ao carregar o cartão de ponto' });
+  }
+});
+
+// PUT /ponto/cartao — corrige as batidas de um dia.
+// Bloqueia com 423 quando o mês do dia está fechado.
+router.put('/ponto/cartao', async (req, res) => {
+  const { employee_id, date, times, reason } = req.body || {};
+  if (!employee_id) return res.status(400).json({ error: 'employee_id obrigatório' });
+  if (!isValidCivilDate(date)) return res.status(400).json({ error: 'date deve ser uma data válida (YYYY-MM-DD)' });
+
+  const list = Array.isArray(times) ? times : [];
+  if (list.length > CARTAO_MAX_PUNCHES) {
+    return res.status(400).json({ error: `Máximo de ${CARTAO_MAX_PUNCHES} batidas por dia` });
+  }
+  const cleaned = list
+    .map((t) => (t == null ? '' : String(t).trim()))
+    .filter((t) => t !== '');
+  for (const t of cleaned) {
+    if (!CARTAO_TIME_RE.test(t)) {
+      return res.status(400).json({ error: `Horário inválido: "${t}". Use HH:MM.` });
+    }
+  }
+  // Editing punches without saying why defeats the point of the audit trail.
+  if (!String(reason || '').trim()) {
+    return res.status(400).json({ error: 'Justificativa obrigatória' });
+  }
+
+  try {
+    const orgId = req.query.org_id || await getUserOrgId(req.userId);
+    if (!orgId) return res.status(400).json({ error: 'Organização não encontrada' });
+
+    const empRes = await query(
+      `SELECT id FROM employees WHERE id = $1 AND organization_id = $2`,
+      [employee_id, orgId]
+    );
+    if (!empRes.rows[0]) return res.status(404).json({ error: 'Colaborador não encontrado' });
+
+    if (await isPeriodClosed(orgId, employee_id, date)) {
+      return res.status(423).json({
+        error: `Período ${referenceMonthOf(date)} fechado. Reabra o período para corrigir batidas.`,
+        code: 'PERIOD_CLOSED',
+        reference_month: referenceMonthOf(date),
+      });
+    }
+
+    const before = await query(
+      `SELECT json_agg(json_build_object('punch_type', punch_type, 'punched_at', punched_at) ORDER BY punched_at) AS punches
+         FROM time_punches
+        WHERE employee_id = $1 AND organization_id = $2
+          AND (punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $3::date`,
+      [employee_id, orgId, date]
+    );
+    const previous = before.rows[0]?.punches || [];
+    const oldLabel = previous.map((p) => instantToSaoPauloClock(p.punched_at)).filter(Boolean).join(', ');
+
+    // Replace the day wholesale: a half-updated punch set is what makes the
+    // totals disagree with what the manager sees.
+    await query(
+      `DELETE FROM time_punches
+        WHERE employee_id = $1 AND organization_id = $2
+          AND (punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $3::date`,
+      [employee_id, orgId, date]
+    );
+
+    for (let i = 0; i < cleaned.length; i += 1) {
+      // The instant is built from the civil date and the wall-clock time in
+      // São Paulo, never from the server clock, which runs in another zone.
+      await query(
+        `INSERT INTO time_punches
+           (organization_id, employee_id, punch_type, punched_at, source, punched_by,
+            sync_status, justification, manual_adjustment, adjustment_reason, adjusted_by, adjusted_at)
+         VALUES ($1, $2, $3, (($4::date + $5::time) AT TIME ZONE 'America/Sao_Paulo'), 'manual', $6,
+                 'synced', $7, true, $7, $6, NOW())`,
+        [orgId, employee_id, punchTypeForIndex(i, cleaned.length), date, cleaned[i], req.userId, String(reason).trim()]
+      );
+    }
+
+    const newLabel = cleaned.join(', ');
+    await auditLog(
+      orgId, 'time_punch', employee_id, 'update',
+      [{ field: `times:${date}`, oldVal: oldLabel, newVal: newLabel }],
+      req.userId
+    );
+
+    res.json({ ok: true, date, times: cleaned, previous: previous.length });
+  } catch (err) {
+    logError('rh.ponto.cartao.update', err);
+    res.status(500).json({ error: 'Erro ao salvar as batidas' });
+  }
+});
+
+// GET /ponto/cartao/audit?employee_id=&date=
+router.get('/ponto/cartao/audit', async (req, res) => {
+  const { employee_id, date } = req.query;
+  if (!employee_id) return res.status(400).json({ error: 'employee_id obrigatório' });
+  if (date && !isValidCivilDate(date)) {
+    return res.status(400).json({ error: 'date deve ser uma data válida (YYYY-MM-DD)' });
+  }
+  try {
+    const orgId = req.query.org_id || await getUserOrgId(req.userId);
+    if (!orgId) return res.status(400).json({ error: 'Organização não encontrada' });
+
+    // rh_audit_log.entity_id is a UUID and a day has none, so the day is encoded
+    // in field_name as 'times:YYYY-MM-DD' against the employee id.
+    const r = await query(
+      `SELECT a.id, a.field_name, a.old_value, a.new_value, a.action, a.created_at,
+              u.name AS editor_name
+         FROM rh_audit_log a
+         LEFT JOIN users u ON u.id = a.changed_by
+        WHERE a.organization_id = $1
+          AND a.entity_type = 'time_punch'
+          AND a.entity_id = $2
+          AND a.field_name LIKE 'times:%'
+          AND ($3::date IS NULL OR a.field_name = 'times:' || $3::date::text)
+        ORDER BY a.created_at DESC
+        LIMIT 100`,
+      [orgId, employee_id, date || null]
+    );
+    res.json(r.rows);
+  } catch (err) {
+    logError('rh.ponto.cartao.audit', err);
+    res.status(500).json({ error: 'Erro ao carregar o histórico' });
+  }
+});
+
+// POST /ponto/cartao/period-close — fecha ou reabre o mês de um colaborador.
+router.post('/ponto/cartao/period-close', async (req, res) => {
+  const { employee_id, reference_month, closed } = req.body || {};
+  if (!employee_id) return res.status(400).json({ error: 'employee_id obrigatório' });
+  if (!/^\d{4}-\d{2}$/.test(String(reference_month || ''))) {
+    return res.status(400).json({ error: 'reference_month deve estar no formato YYYY-MM' });
+  }
+  const m = Number(String(reference_month).slice(5, 7));
+  if (m < 1 || m > 12) return res.status(400).json({ error: 'Mês inválido' });
+  const shouldClose = closed !== false;
+
+  try {
+    const orgId = req.query.org_id || await getUserOrgId(req.userId);
+    if (!orgId) return res.status(400).json({ error: 'Organização não encontrada' });
+
+    const empRes = await query(
+      `SELECT id FROM employees WHERE id = $1 AND organization_id = $2`,
+      [employee_id, orgId]
+    );
+    if (!empRes.rows[0]) return res.status(404).json({ error: 'Colaborador não encontrado' });
+
+    await query(
+      `INSERT INTO rh_period_closures
+         (organization_id, employee_id, reference_month, closed, closed_by, closed_at, reopened_by, reopened_at)
+       VALUES ($1, $2, $3, $4, $5, CASE WHEN $4 THEN NOW() ELSE NULL END, $6, CASE WHEN $4 THEN NULL ELSE NOW() END)
+       ON CONFLICT (employee_id, reference_month) DO UPDATE
+         SET closed = EXCLUDED.closed,
+             closed_by = CASE WHEN EXCLUDED.closed THEN EXCLUDED.closed_by ELSE rh_period_closures.closed_by END,
+             closed_at = CASE WHEN EXCLUDED.closed THEN NOW() ELSE rh_period_closures.closed_at END,
+             reopened_by = CASE WHEN EXCLUDED.closed THEN NULL ELSE EXCLUDED.reopened_by END,
+             reopened_at = CASE WHEN EXCLUDED.closed THEN NULL ELSE NOW() END`,
+      [orgId, employee_id, reference_month, shouldClose, req.userId, req.userId]
+    );
+
+    await auditLog(
+      orgId, 'time_period', employee_id, shouldClose ? 'close' : 'reopen',
+      [{ field: `period:${reference_month}`, oldVal: shouldClose ? 'aberto' : 'fechado', newVal: shouldClose ? 'fechado' : 'aberto' }],
+      req.userId
+    );
+
+    res.json({ ok: true, employee_id, reference_month, closed: shouldClose });
+  } catch (err) {
+    logError('rh.ponto.cartao.period_close', err);
+    res.status(500).json({ error: 'Erro ao alterar o fechamento do período' });
   }
 });
 

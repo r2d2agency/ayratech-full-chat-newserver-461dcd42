@@ -1,12 +1,14 @@
 import { useState, useMemo, useCallback } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
-import { useTimeRecords, useSaveTimeRecord, useEmployees, useAppPunches, useConsolidatedTimesheet, usePunchDivergences, useCreatePunch, useUpdatePunch, useDeletePunch } from "@/hooks/use-rh";
+import { useTimeRecords, useSaveTimeRecord, useEmployees, useAppPunches, useConsolidatedTimesheet, usePunchDivergences, useCreatePunch, useUpdatePunch, useDeletePunch, useCartaoPonto, useCartaoPontoUpdate, useCartaoPontoAudit, usePeriodClose } from "@/hooks/use-rh";
+import type { CartaoDay } from "@/hooks/use-rh";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -18,6 +20,7 @@ import {
 } from "lucide-react";
 import { OvertimeRequestsPanel, useOvertimePendingCount } from "@/components/rh/OvertimeRequestsPanel";
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, subMonths } from "date-fns";
+import { exportCartaoPontoPdf } from "@/lib/cartao-ponto-pdf";
 import * as XLSX from "xlsx";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -43,6 +46,23 @@ const DIVERGENCE_ICONS: Record<string, { icon: typeof AlertTriangle; color: stri
 };
 
 type PeriodPreset = 'hoje' | 'semana' | 'mes' | 'mes_anterior' | 'personalizado';
+
+const CARTAO_DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+// O backend manda date como 'YYYY-MM-DD' e nunca como Date: formatar direto,
+// sem passar por date-fns, evita que o fuso do navegador empurre a linha um dia.
+function dayLabel(day: CartaoDay): string {
+  const [, m, d] = day.date.split('-');
+  const dow = day.isoDow ? CARTAO_DOW[day.isoDow - 1] : '';
+  return `${dow} ${d}/${m}`;
+}
+
+function statusLabel(day: CartaoDay): string {
+  if (day.dayType === 'feriado') return day.holidayName || 'Feriado';
+  if (day.dayType === 'ausencia') return day.absenceType || 'Afastado';
+  if (day.dayType === 'folga') return 'Folga';
+  return '';
+}
 
 // new Date()/date-fns usam o fuso horário do navegador de quem está vendo a
 // tela — um admin acessando fora do fuso de Brasília (ou com o relógio do
@@ -151,6 +171,85 @@ export default function RHPonto() {
   const createPunchMut = useCreatePunch();
   const updatePunchMut = useUpdatePunch();
   const deletePunchMut = useDeletePunch();
+
+  // ===== CARTAO DE PONTO =====
+  // A ficha e sempre de UM colaborador: sem selecao nao ha tabela para carregar.
+  const [cartaoEmployee, setCartaoEmployee] = useState("");
+  const [cartaoStart, setCartaoStart] = useState(format(startOfMonth(nowSaoPaulo()), "yyyy-MM-dd"));
+  const [cartaoEnd, setCartaoEnd] = useState(format(nowSaoPaulo(), "yyyy-MM-dd"));
+  const [cartaoDialogOpen, setCartaoDialogOpen] = useState(false);
+  const [cartaoAuditDate, setCartaoAuditDate] = useState<string | null>(null);
+  const [cartaoForm, setCartaoForm] = useState<{ date: string; times: string[]; reason: string; locked: boolean }>(
+    { date: "", times: [], reason: "", locked: false },
+  );
+  const { data: cartao, isLoading: loadingCartao } = useCartaoPonto({
+    employee_id: cartaoEmployee || undefined,
+    start: cartaoStart,
+    end: cartaoEnd,
+  });
+  const { data: cartaoAudit = [] } = useCartaoPontoAudit({
+    employee_id: cartaoEmployee || undefined,
+    date: cartaoAuditDate || undefined,
+  });
+  const cartaoUpdateMut = useCartaoPontoUpdate();
+  const periodCloseMut = usePeriodClose();
+
+  const openCartaoDay = (day: CartaoDay) => {
+    setCartaoForm({
+      date: day.date,
+      times: day.punches.length
+        ? day.punches.map((p) => p.time ?? "00:00")
+        : [day.schedule.entry || "08:00"],
+      reason: "",
+      // Periodo fechado bloqueia a edicao, mas o gestor precisa ainda ler as batidas.
+      locked: day.closed,
+    });
+    setCartaoAuditDate(day.date);
+    setCartaoDialogOpen(true);
+  };
+
+  const saveCartaoDay = async () => {
+    const times = cartaoForm.times.map((t) => String(t).slice(0, 5)).filter(Boolean);
+    if (!times.length) {
+      toast({ title: "Informe ao menos uma batida", variant: "destructive" });
+      return;
+    }
+    if (!cartaoForm.reason.trim()) {
+      toast({ title: "Informe o motivo da correção", variant: "destructive" });
+      return;
+    }
+    try {
+      await cartaoUpdateMut.mutateAsync({
+        employee_id: cartaoEmployee,
+        date: cartaoForm.date,
+        times,
+        reason: cartaoForm.reason.trim(),
+      });
+      setCartaoDialogOpen(false);
+      toast({ title: `Batidas de ${cartaoForm.date.split("-").reverse().join("/")} corrigidas` });
+    } catch (err: any) {
+      // 423: o mes foi fechado depois que o dialogo abriu. Nao fechar a janela,
+      // mostrar por que ela parou de aceitar edicao.
+      const status = err?.status ?? err?.response?.status;
+      if (status === 423) {
+        setCartaoForm((f) => ({ ...f, locked: true }));
+        toast({ title: "Período fechado", description: "Reabra o mês para corrigir este dia.", variant: "destructive" });
+        return;
+      }
+      toast({ title: "Erro ao salvar", description: err?.message, variant: "destructive" });
+    }
+  };
+
+  const toggleCartaoPeriod = (closed: boolean) => {
+    const reference_month = cartaoEnd.slice(0, 7);
+    periodCloseMut.mutate(
+      { employee_id: cartaoEmployee, reference_month, closed },
+      {
+        onSuccess: () => toast({ title: closed ? `Mês ${reference_month} fechado` : `Mês ${reference_month} reaberto` }),
+        onError: (e: any) => toast({ title: "Erro", description: e?.message, variant: "destructive" }),
+      },
+    );
+  };
 
   const [punchDialogOpen, setPunchDialogOpen] = useState(false);
   const [punchForm, setPunchForm] = useState<any>({
@@ -531,7 +630,123 @@ export default function RHPonto() {
               <ShieldAlert className="h-4 w-4" /> Horas Extras
               {overtimePendingCount > 0 && <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-4 min-w-4">{overtimePendingCount}</Badge>}
             </TabsTrigger>
+            <TabsTrigger value="cartao" className="gap-2"><CalendarRange className="h-4 w-4" /> Cartão de Ponto</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="cartao">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm flex items-center gap-2"><CalendarRange className="h-4 w-4 text-primary" /> Ficha individual de ponto</CardTitle>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                  <div>
+                    <Label className="text-xs">Colaborador *</Label>
+                    <Select value={cartaoEmployee} onValueChange={setCartaoEmployee}>
+                      <SelectTrigger><SelectValue placeholder="Selecione um colaborador" /></SelectTrigger>
+                      <SelectContent>
+                        {employees.map((e: any) => <SelectItem key={e.id} value={e.id}>{e.full_name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div><Label className="text-xs">Início</Label><Input type="date" value={cartaoStart} onChange={e => setCartaoStart(e.target.value)} /></div>
+                  <div><Label className="text-xs">Fim</Label><Input type="date" value={cartaoEnd} onChange={e => setCartaoEnd(e.target.value)} /></div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      disabled={!cartao || loadingCartao}
+                      onClick={() => { try { exportCartaoPontoPdf(cartao); } catch { toast({ title: "Não foi possível gerar o PDF", variant: "destructive" }); } }}
+                    ><Download className="h-4 w-4" /> PDF</Button>
+                    <Button
+                      variant="outline"
+                      disabled={!cartaoEmployee || periodCloseMut.isPending}
+                      onClick={() => toggleCartaoPeriod(!cartao?.days.some((d: CartaoDay) => d.closed))}
+                    >
+                      {cartao?.days.some((d: CartaoDay) => d.closed) ? 'Reabrir mês' : 'Fechar mês'}
+                    </Button>
+                  </div>
+                </div>
+                {cartao?.warning && (
+                  <p className="text-xs text-amber-600 flex items-start gap-1"><AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" /> {cartao.warning}</p>
+                )}
+              </CardHeader>
+              <CardContent className="p-0">
+                {!cartaoEmployee ? (
+                  <p className="text-sm text-muted-foreground text-center py-10">Selecione um colaborador para ver a ficha.</p>
+                ) : loadingCartao ? (
+                  <p className="text-sm text-muted-foreground text-center py-10">Carregando...</p>
+                ) : !cartao?.days.length ? (
+                  <p className="text-sm text-muted-foreground text-center py-10">Nenhum dia no período selecionado.</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Dia</TableHead>
+                        <TableHead>Prev. entrada</TableHead>
+                        <TableHead>Prev. saída</TableHead>
+                        <TableHead>Prev. jornada</TableHead>
+                        <TableHead>Batidas</TableHead>
+                        <TableHead></TableHead>
+                        <TableHead className="text-right">Trabalhado</TableHead>
+                        <TableHead className="text-right">Crédito</TableHead>
+                        <TableHead className="text-right">Débito</TableHead>
+                        <TableHead>Situação</TableHead>
+                        <TableHead></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {cartao.days.map((day: CartaoDay) => {
+                        const today = day.date === format(nowSaoPaulo(), "yyyy-MM-dd");
+                        const rowBg = day.dayType === 'feriado' ? 'bg-purple-500/5'
+                          : day.dayType === 'folga' ? 'bg-muted/30'
+                          : day.dayType === 'ausencia' ? 'bg-sky-500/5'
+                          : today ? 'bg-primary/5' : '';
+                        const editada = day.punches.some((p) => p.source === 'manual');
+                        return (
+                          <TableRow key={day.date} className={rowBg}>
+                            <TableCell className="font-medium whitespace-nowrap">{dayLabel(day)}</TableCell>
+                            <TableCell>{day.schedule.entry || '--'}</TableCell>
+                            <TableCell>{day.schedule.exit || '--'}</TableCell>
+                            <TableCell>{day.expected}</TableCell>
+                            <TableCell>
+                              {day.punches.length
+                                ? day.punches.map((p) => p.time ?? '--').join('  ')
+                                : <span className="text-muted-foreground">--</span>}
+                            </TableCell>
+                            <TableCell>{editada && <Badge variant="outline" className="border-amber-500 text-amber-600 text-[10px]">corrigido</Badge>}</TableCell>
+                            <TableCell className="text-right">{day.worked}</TableCell>
+                            <TableCell className="text-right text-primary">{day.credit}</TableCell>
+                            <TableCell className="text-right text-destructive">{day.debit}</TableCell>
+                            <TableCell>
+                              {day.closed
+                                ? <Badge variant="outline" className="text-[10px]">Período fechado</Badge>
+                                : statusLabel(day)}
+                            </TableCell>
+                            <TableCell>
+                              <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => openCartaoDay(day)} title={day.closed ? 'Período fechado — reabra o mês para corrigir' : 'Corrigir batidas'}>
+                                <Pencil className="h-3 w-3" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                )}
+                {cartao && (
+                  <div className="border-t p-3 flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <div className="flex gap-4">
+                      <span>Trabalhado: <strong>{cartao.totals.worked}</strong></span>
+                      <span className="text-primary">Crédito: <strong>{cartao.totals.credit}</strong></span>
+                      <span className="text-destructive">Débito: <strong>{cartao.totals.debit}</strong></span>
+                      <span className="text-muted-foreground">{cartao.totals.daysWorked} dias trabalhados</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      Acumulado do ano (desde {cartao.yearToDate.from.split('-').reverse().join('/')}): <strong>{cartao.yearToDate.balance}</strong>
+                    </span>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           <TabsContent value="validation">
             <Card>
@@ -792,6 +1007,86 @@ export default function RHPonto() {
           <div className="flex justify-end gap-2 mt-4">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
             <Button onClick={handleSave} disabled={saveMut.isPending}>{saveMut.isPending ? "Salvando..." : "Salvar"}</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={cartaoDialogOpen} onOpenChange={setCartaoDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wrench className="h-4 w-4 text-amber-600" />
+              Corrigir batidas — {cartaoForm.date.split('-').reverse().join('/')}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {cartaoForm.locked && (
+              <p className="text-sm text-destructive flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                Período fechado. Reabra o mês para corrigir este dia.
+              </p>
+            )}
+            <div>
+              <Label>Batidas do dia</Label>
+              <div className="space-y-2 mt-1">
+                {cartaoForm.times.map((t, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Badge variant="outline" className="w-32 justify-center text-[10px]">
+                      {cartaoForm.times.length === 1
+                        ? 'Entrada / saída'
+                        : i === 0 ? 'Entrada' : i === cartaoForm.times.length - 1 ? 'Saída' : i % 2 === 1 ? 'Saída intervalo' : 'Retorno'}
+                    </Badge>
+                    <Input
+                      type="time" step="1" value={t} disabled={cartaoForm.locked}
+                      onChange={e => setCartaoForm(f => {
+                        const times = [...f.times];
+                        times[i] = e.target.value;
+                        return { ...f, times };
+                      })}
+                    />
+                    <Button
+                      variant="ghost" size="sm" className="h-8 w-8 p-0" disabled={cartaoForm.locked || cartaoForm.times.length <= 1}
+                      onClick={() => setCartaoForm(f => ({ ...f, times: f.times.filter((_, idx) => idx !== i) }))}
+                    ><Trash2 className="h-3.5 w-3.5" /></Button>
+                  </div>
+                ))}
+              </div>
+              <Button
+                variant="outline" size="sm" className="mt-2" disabled={cartaoForm.locked || cartaoForm.times.length >= 8}
+                onClick={() => setCartaoForm(f => ({ ...f, times: [...f.times, ''] }))}
+              ><Plus className="h-3.5 w-3.5" /> Adicionar batida</Button>
+              <p className="text-[11px] text-muted-foreground mt-1">O tipo de cada batida é definido pela ordem: a primeira é entrada e a última é saída.</p>
+            </div>
+            <div>
+              <Label>Motivo da correção *</Label>
+              <Textarea
+                rows={3} placeholder="Ex.: esquecimento do colaborador, falha do totem..."
+                value={cartaoForm.reason} disabled={cartaoForm.locked}
+                onChange={e => setCartaoForm(f => ({ ...f, reason: e.target.value }))}
+              />
+            </div>
+            {cartaoAudit.length > 0 && (
+              <div>
+                <Label>Histórico deste dia</Label>
+                <div className="mt-1 space-y-1 max-h-32 overflow-y-auto">
+                  {cartaoAudit.map((a) => (
+                    <div key={a.id} className="text-[11px] text-muted-foreground border rounded p-2">
+                      <div className="flex justify-between gap-2">
+                        <span>{a.old_value || '--'} → <b>{a.new_value || '--'}</b></span>
+                        <span>{a.editor_name || 'sistema'}</span>
+                      </div>
+                      <div>{formatDateValue(a.created_at, 'dd/MM/yyyy HH:mm')}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => setCartaoDialogOpen(false)}>Fechar</Button>
+            <Button onClick={saveCartaoDay} disabled={cartaoForm.locked || cartaoUpdateMut.isPending}>
+              {cartaoUpdateMut.isPending ? 'Salvando...' : 'Salvar correção'}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

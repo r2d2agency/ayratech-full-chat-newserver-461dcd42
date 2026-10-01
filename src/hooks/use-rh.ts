@@ -324,6 +324,140 @@ export function useConsolidatedTimesheet(filters?: { employee_id?: string; start
   });
 }
 
+// ===== CARTAO DE PONTO =====
+
+export type CartaoPunch = {
+  id: string;
+  punch_type: string;
+  punched_at: string;
+  time: string | null;
+  source: string;
+  adjustment_reason: string | null;
+};
+
+export type CartaoDay = {
+  date: string;                 // sempre 'YYYY-MM-DD', nunca Date
+  isoDow: number | null;        // 1 = segunda ... 7 = domingo
+  dayType: 'util' | 'folga' | 'feriado' | 'ausencia';
+  holidayName: string | null;
+  absenceType: string | null;
+  schedule: { entry: string; exit: string; name: string | null };
+  expected: string;
+  punches: CartaoPunch[];
+  workedMinutes: number;
+  creditMinutes: number;
+  debitMinutes: number;
+  worked: string;               // '--' quando não há batida
+  credit: string;
+  debit: string;
+  closed: boolean;
+};
+
+export type CartaoPonto = {
+  employee: {
+    id: string;
+    full_name: string;
+    cpf?: string;
+    position?: string;
+    work_schedule?: string;
+  };
+  period: { start: string; end: string };
+  days: CartaoDay[];
+  totals: {
+    workedMinutes: number;
+    creditMinutes: number;
+    debitMinutes: number;
+    balanceMinutes: number;
+    daysWorked: number;
+    daysAbsent: number;
+    worked: string;
+    credit: string;
+    debit: string;
+  };
+  yearToDate: {
+    from: string;
+    to: string;
+    creditMinutes: number;
+    debitMinutes: number;
+    workedMinutes: number;
+    balanceMinutes: number;
+    credit: string;
+    debit: string;
+    worked: string;
+    balance: string;
+  };
+  warning?: string;
+};
+
+export function useCartaoPonto(filters?: { employee_id?: string; start?: string; end?: string }) {
+  // Sem colaborador a tabela não carrega: a ficha é de UMA pessoa, não da empresa.
+  return useQuery({
+    queryKey: ['rh-cartao-ponto', filters?.employee_id || '', filters?.start || '', filters?.end || ''],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (filters?.employee_id) params.set('employee_id', filters.employee_id);
+      if (filters?.start) params.set('start', filters.start);
+      if (filters?.end) params.set('end', filters.end);
+      return api<CartaoPonto>(`/api/rh/ponto/cartao?${params.toString()}`);
+    },
+    enabled: Boolean(filters?.employee_id && filters?.start && filters?.end),
+  });
+}
+
+export function useCartaoPontoUpdate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { employee_id: string; date: string; times: string[]; reason: string }) =>
+      api<{ ok: boolean; date: string; times: string[]; previous: number }>('/api/rh/ponto/cartao', {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['rh-cartao-ponto'] });
+      qc.invalidateQueries({ queryKey: ['rh-cartao-ponto-audit'] });
+      qc.invalidateQueries({ queryKey: ['rh-consolidated-timesheet'] });
+      qc.invalidateQueries({ queryKey: ['rh-punch-divergences'] });
+    },
+  });
+}
+
+export type CartaoAuditEntry = {
+  id: string;
+  field_name: string;
+  old_value: string | null;
+  new_value: string | null;
+  action: string;
+  created_at: string;
+  editor_name: string | null;
+};
+
+export function useCartaoPontoAudit(filters?: { employee_id?: string; date?: string }) {
+  return useQuery({
+    queryKey: ['rh-cartao-ponto-audit', filters?.employee_id || '', filters?.date || ''],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (filters?.employee_id) params.set('employee_id', filters.employee_id);
+      if (filters?.date) params.set('date', filters.date);
+      return api<CartaoAuditEntry[]>(`/api/rh/ponto/cartao/audit?${params.toString()}`);
+    },
+    enabled: Boolean(filters?.employee_id && filters?.date),
+  });
+}
+
+export function usePeriodClose() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { employee_id: string; reference_month: string; closed: boolean }) =>
+      api<{ ok: boolean; closed: boolean }>('/api/rh/ponto/cartao/period-close', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['rh-cartao-ponto'] });
+    },
+  });
+}
+
 // ===== PUNCH DIVERGENCES =====
 export function usePunchDivergences(filters?: { start_date?: string; end_date?: string }) {
   const params = new URLSearchParams();

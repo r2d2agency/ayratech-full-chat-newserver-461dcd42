@@ -3815,6 +3815,21 @@ CREATE TABLE IF NOT EXISTS hour_bank (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Fechamento de periodo do ponto (bloqueia edicao de batidas do mes)
+CREATE TABLE IF NOT EXISTS rh_period_closures (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  reference_month VARCHAR(7) NOT NULL,
+  closed BOOLEAN NOT NULL DEFAULT TRUE,
+  closed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  closed_at TIMESTAMPTZ DEFAULT NOW(),
+  reopened_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  reopened_at TIMESTAMPTZ,
+  UNIQUE (employee_id, reference_month)
+);
+CREATE INDEX IF NOT EXISTS idx_rh_period_closures ON rh_period_closures(employee_id, reference_month);
+
 -- Afastamentos
 CREATE TABLE IF NOT EXISTS employee_absences (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -3974,6 +3989,11 @@ CREATE TABLE IF NOT EXISTS time_punches (id UUID PRIMARY KEY DEFAULT gen_random_
 CREATE INDEX IF NOT EXISTS idx_time_punches_emp ON time_punches(employee_id);
 CREATE INDEX IF NOT EXISTS idx_time_punches_date ON time_punches(punched_at);
 CREATE INDEX IF NOT EXISTS idx_time_punches_org ON time_punches(organization_id);
+-- Colunas adicionadas depois do DDL original de time_punches. 'app' = capturada
+-- pelo celular/totem; 'manual' = inserida ou corrigida pelo RH na tela do
+-- Cartao de Ponto. punched_by registra quem fez a correcao.
+ALTER TABLE time_punches ADD COLUMN IF NOT EXISTS source VARCHAR(20) NOT NULL DEFAULT 'app';
+ALTER TABLE time_punches ADD COLUMN IF NOT EXISTS punched_by UUID REFERENCES users(id) ON DELETE SET NULL;
 
 -- Time Rules
 CREATE TABLE IF NOT EXISTS time_rules (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, employee_id UUID REFERENCES employees(id) ON DELETE CASCADE, name VARCHAR(255), late_tolerance_minutes INTEGER DEFAULT 10, early_leave_tolerance INTEGER DEFAULT 10, break_tolerance INTEGER DEFAULT 5, max_late_minutes INTEGER DEFAULT 30, require_justification BOOLEAN DEFAULT true, absence_on_no_punch BOOLEAN DEFAULT true, punch_window_minutes INTEGER DEFAULT 60, allow_manual_adjustment BOOLEAN DEFAULT true, require_geo BOOLEAN DEFAULT true, allow_offline_punch BOOLEAN DEFAULT true, allow_exception_punch BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT NOW());
