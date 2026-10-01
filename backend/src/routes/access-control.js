@@ -854,9 +854,15 @@ router.post('/totem/validate', authenticateTotem, async (req, res) => {
     const cleanCpf = cpf.replace(/\D/g, '');
     if (cleanCpf.length !== 11) return res.status(400).json({ authorized: false, reason: 'CPF inválido' });
 
-    const now = new Date();
-    const currentDay = now.getDay(); // 0=dom..6=sab
-    const currentTime = now.toTimeString().slice(0, 5); // HH:MM
+    // Horário do Brasil, não do servidor. `new Date()` usa o fuso da máquina
+    // (frequentemente UTC no servidor), o que deslocava a comparação em 3 horas
+    // e recusava batidas válidas como "fora do horário".
+    const nowParts = await query(
+      `SELECT EXTRACT(DOW FROM (NOW() AT TIME ZONE 'America/Sao_Paulo'))::int AS dow,
+              TO_CHAR(NOW() AT TIME ZONE 'America/Sao_Paulo', 'HH24:MI') AS time_str`
+    );
+    const currentDay = Number(nowParts.rows[0]?.dow ?? 0);
+    const currentTime = nowParts.rows[0]?.time_str || '00:00';
 
     // Find promoter by CPF (agency promoter or internal employee)
     const promoter = await query(

@@ -399,6 +399,13 @@ router.get('/home', authenticatePromotor, async (req, res) => {
       pdvVisits = visitRes.rows;
     } catch { /* table may not exist */ }
 
+    // Parse seguro de coluna JSONB que pode chegar como string.
+    const safeParseObj = (raw) => {
+      if (raw && typeof raw === 'object') return raw;
+      if (typeof raw !== 'string' || !raw.trim().startsWith('{')) return null;
+      try { return JSON.parse(raw); } catch { return null; }
+    };
+
     // Check schedule status (prioritize daily assignment or recurring schedule)
     let scheduleStart = null;
     let scheduleEnd = null;
@@ -416,6 +423,31 @@ router.get('/home', authenticatePromotor, async (req, res) => {
         const dowMap = { 0: 'dom', 1: 'seg', 2: 'ter', 3: 'qua', 4: 'qui', 5: 'sex', 6: 'sab' };
         const dowRes = await query("SELECT EXTRACT(DOW FROM (NOW() AT TIME ZONE 'America/Sao_Paulo')) as dow");
         const dayOfWeek = dowMap[Math.floor(dowRes.rows[0].dow)];
+        // Escala recorrente atual (work_schedules/employee_schedules). Precisa
+        // ser lida aqui também: o POST /punch já usava essa tabela, e ler só a
+        // tabela legada fazia o card mostrar um horário diferente do validado.
+        const recurringNew = await safeQuery(
+          `SELECT ws.entry_time, ws.exit_time, ws.workdays
+             FROM employee_schedules es
+             JOIN work_schedules ws ON ws.id = es.schedule_id
+            WHERE es.employee_id = $1
+              AND es.organization_id = (SELECT organization_id FROM employees WHERE id = $1)
+              AND es.active = true
+              AND ws.active = true
+              AND es.start_date <= CURRENT_DATE
+              AND (es.end_date IS NULL OR es.end_date >= CURRENT_DATE)
+            ORDER BY es.created_at DESC`,
+          [empId]
+        );
+        const dowNum = Math.floor(dowRes.rows[0].dow);
+        const currentSchedule = (recurringNew.rows || []).find((row) =>
+          !Array.isArray(row.workdays) || row.workdays.map(Number).includes(dowNum)
+        );
+        if (currentSchedule?.entry_time && currentSchedule?.exit_time) {
+          scheduleStart = String(currentSchedule.entry_time).slice(0, 5);
+          scheduleEnd = String(currentSchedule.exit_time).slice(0, 5);
+        }
+
         const recurring = await safeQuery(
           `SELECT s.items FROM rh_employee_schedules es
            JOIN rh_schedules s ON s.id = es.schedule_id
@@ -424,8 +456,8 @@ router.get('/home', authenticatePromotor, async (req, res) => {
           [empId]
         );
         
-        if (recurring.rows && recurring.rows.length > 0) {
-          // Find the first schedule that has items for today
+        // A escala nova tem precedência; a legada só entra se nada foi resolvido.
+        if (!scheduleStart && recurring.rows && recurring.rows.length > 0) {
           for (const row of recurring.rows) {
             if (row.items) {
               const items = row.items;
@@ -448,7 +480,17 @@ router.get('/home', authenticatePromotor, async (req, res) => {
       // Sem escala específica, a jornada global da organização é a fonte oficial.
       // A jornada individual só é usada quando realmente está preenchida.
       const individualRaw = employee.rows[0]?.work_schedule;
-      const wsRaw = individualRaw || employee.rows[0]?.organization_work_schedule || '08:00-17:00';
+      // Sem jornada individual e sem global, cai no padrão só como último caso.
+      // A individual só entra quando tem entrada/saída reais: o formulário de
+      // colaboradores grava `days`/`dayConfig`, que não define jornada nenhuma.
+      const individualParsed = safeParseObj(individualRaw);
+      const hasIndividualSchedule = !!(individualParsed?.entry || individualParsed?.work_start)
+        || !!(individualParsed?.dayConfig && Object.keys(individualParsed.dayConfig || {}).length);
+      const individualIsLegacyDefault = !individualParsed
+        && String(individualRaw || '').trim() === '08:00-17:00';
+      const wsRaw = (hasIndividualSchedule && !individualIsLegacyDefault)
+        ? individualRaw
+        : (employee.rows[0]?.organization_work_schedule || '08:00-17:00');
       try {
         const parsed = typeof wsRaw === 'object' ? wsRaw : (typeof wsRaw === 'string' && wsRaw.trim().startsWith('{') ? JSON.parse(wsRaw) : null);
         if (parsed) {
@@ -465,12 +507,12 @@ router.get('/home', authenticatePromotor, async (req, res) => {
             } else {
               scheduleStart = day.start || day.entry || null;
               scheduleEnd = day.end || day.exit || null;
-              scheduleSource = individualRaw ? 'JORNADA_FUNCIONARIO' : 'JORNADA_GLOBAL';
+              scheduleSource = (hasIndividualSchedule && !individualIsLegacyDefault) ? 'JORNADA_FUNCIONARIO' : 'JORNADA_GLOBAL';
             }
           } else if (parsed.entry) {
             scheduleStart = parsed.entry;
             scheduleEnd = parsed.exit || '17:00';
-            scheduleSource = individualRaw ? 'JORNADA_FUNCIONARIO' : 'JORNADA_GLOBAL';
+            scheduleSource = (hasIndividualSchedule && !individualIsLegacyDefault) ? 'JORNADA_FUNCIONARIO' : 'JORNADA_GLOBAL';
           }
         }
         
@@ -526,7 +568,12 @@ router.get('/home', authenticatePromotor, async (req, res) => {
     
     // Punch tolerance logic: Individual employee > Global org setting > 15 min default
     const globalSchedule = employee.rows[0]?.organization_work_schedule;
-    const globalTolerance = (globalSchedule && typeof globalSchedule === 'object') ? (globalSchedule.punch_tolerance_minutes || 15) : 15;
+    const parsedGlobal = safeParseObj(globalSchedule);
+    // `?? 15` e não `|| 15`: tolerância 0 é uma configuração válida (sem
+    // entrada antecipada) e virava 15, liberando no card o que o POST recusa.
+    const globalTolerance = (parsedGlobal && typeof parsedGlobal === 'object')
+      ? (parsedGlobal.punch_tolerance_minutes ?? 15)
+      : 15;
     const toleranceMinutes = employee.rows[0]?.punch_tolerance_minutes ?? globalTolerance;
     
     const isWithinSchedule = currentMin >= (startMin - toleranceMinutes) && currentMin <= (endMin + toleranceMinutes);
@@ -587,6 +634,12 @@ router.get('/home', authenticatePromotor, async (req, res) => {
 // =============================================
 router.post('/punch', authenticatePromotor, async (req, res) => {
   try {
+    // Parse seguro de coluna JSONB que pode chegar como string.
+    const safeParseObj = (raw) => {
+      if (raw && typeof raw === 'object') return raw;
+      if (typeof raw !== 'string' || !raw.trim().startsWith('{')) return null;
+      try { return JSON.parse(raw); } catch { return null; }
+    };
     const { punch_type, latitude, longitude, accuracy_meters, pdv_id, is_offline, offline_local_time, justification, local_id, facial_verified } = req.body;
 
     // ===== WORK SCHEDULE VALIDATION =====
@@ -754,8 +807,19 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
       const dow = Number(dowResult.rows[0]?.dow ?? 0);
       const dailyConfig = globalConfig?.dayConfig?.[String(dow)] || globalConfig?.dayConfig?.[dow];
 
+      // A jornada individual gravada no cadastro do colaborador usa dias por
+      // sigla (seg/ter/...) e não dias numéricos como o painel global.
+      const dowNames = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+      const employeeParsed = employeeSchedule?.parsed;
+      const employeeDayConfig = employeeParsed?.dayConfig?.[dowNames[dow]] || employeeParsed?.dayConfig?.[dow];
+
       // O valor legado criado automaticamente no cadastro não deve bloquear o global.
+      // Também não conta como jornada explícita quando o objeto do cadastro não
+      // tem entry/work_start/exit/work_end de verdade — o formulário de
+      // colaboradores grava apenas `days`/`dayConfig`, e sem este filtro o
+      // objeto "vazio" vencia o global e fazia o ponto cair no padrão 08:00-17:00.
       const hasExplicitEmployeeSchedule = employeeSchedule
+        && !!(employeeSchedule.start && employeeSchedule.end)
         && !(
           employeeSchedule.start === '08:00'
           && employeeSchedule.end === '17:00'
@@ -765,6 +829,10 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
       if (hasExplicitEmployeeSchedule) {
         scheduleStart = employeeSchedule.start;
         scheduleEnd = employeeSchedule.end;
+        scheduleSource = 'JORNADA_FUNCIONARIO';
+      } else if (employeeDayConfig && employeeDayConfig.enabled !== false) {
+        scheduleStart = employeeDayConfig.start || employeeDayConfig.entry;
+        scheduleEnd = employeeDayConfig.end || employeeDayConfig.exit;
         scheduleSource = 'JORNADA_FUNCIONARIO';
       } else if (dailyConfig) {
         if (dailyConfig.enabled === false) globalDayOff = true;
