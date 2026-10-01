@@ -1041,12 +1041,44 @@ router.post('/time-records', async (req, res) => {
   }
 });
 
+// work_schedules is created with CREATE TABLE IF NOT EXISTS, which never adds
+// a column to a table that already exists. An environment provisioned before
+// entry_time/exit_time/workdays existed therefore lacks them, and selecting
+// them takes the whole query down. Probing once lets the SELECT fall back to
+// the columns that are actually there.
+let scheduleColumnCache = null;
+async function getScheduleColumns() {
+  if (scheduleColumnCache) return scheduleColumnCache;
+  try {
+    const r = await query(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'work_schedules'
+          AND column_name = ANY($1::text[])`,
+      [['entry_time', 'exit_time', 'workdays', 'daily_hours']]
+    );
+    const present = new Set(r.rows.map((x) => x.column_name));
+    scheduleColumnCache = {
+      entry_time: present.has('entry_time'),
+      exit_time: present.has('exit_time'),
+      workdays: present.has('workdays'),
+      daily_hours: present.has('daily_hours'),
+    };
+  } catch (err) {
+    if (!isMissingRelation(err)) throw err;
+    scheduleColumnCache = { entry_time: false, exit_time: false, workdays: false, daily_hours: false };
+  }
+  return scheduleColumnCache;
+}
+
 // Consolidated timesheet (app punches grouped by employee+date)
 router.get('/consolidated-timesheet', async (req, res) => {
   try {
     const orgId = req.query.org_id || await getUserOrgId(req.userId);
     if (!orgId) return res.json([]);
     const { employee_id, start_date, end_date } = req.query;
+
+    const cols = await getScheduleColumns();
+    const col = (name) => (cols[name] ? `ws.${name}` : 'NULL');
 
     let sql = `
       SELECT
@@ -1072,8 +1104,8 @@ router.get('/consolidated-timesheet', async (req, res) => {
       JOIN employees e ON e.id = tp.employee_id
       LEFT JOIN pdvs p ON p.id = tp.pdv_id
       LEFT JOIN LATERAL (
-        SELECT ws.daily_hours, ws.name AS schedule_name, ws.workdays,
-               ws.entry_time, ws.exit_time
+        SELECT ${col('daily_hours')}, ws.name AS schedule_name, ${col('workdays')},
+               ${col('entry_time')}, ${col('exit_time')}
         FROM employee_schedules es
         JOIN work_schedules ws ON ws.id = es.schedule_id
         WHERE es.employee_id = tp.employee_id
@@ -1446,9 +1478,14 @@ async function ensureCartaoSchema() {
 // conditional on the probed capabilities so a missing table cannot take the
 // whole statement down with it.
 async function queryCartaoDays({ employeeId, orgId, start, end, capabilities }) {
+  // Same column caveat as the consolidated view: work_schedules may predate
+  // entry_time/exit_time. Selecting a missing column kills the whole grid.
+  const schedCols = await getScheduleColumns();
+  const sc = (name) => (schedCols[name] ? `ws.${name}` : 'NULL');
+
   const schedSql = capabilities.schedules ? `
        LEFT JOIN LATERAL (
-         SELECT ws.entry_time, ws.exit_time, ws.name AS schedule_name
+         SELECT ${sc('entry_time')}, ${sc('exit_time')}, ws.name AS schedule_name
            FROM employee_schedules es
            JOIN work_schedules ws ON ws.id = es.schedule_id
           WHERE es.employee_id = $1
