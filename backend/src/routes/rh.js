@@ -1057,6 +1057,9 @@ router.get('/consolidated-timesheet', async (req, res) => {
         e.work_schedule,
         schedule.daily_hours,
         schedule.schedule_name,
+        schedule.entry_time,
+        schedule.exit_time,
+        schedule.workdays,
         (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date as record_date,
         json_agg(json_build_object(
           'id', tp.id, 'punch_type', tp.punch_type, 'punched_at', tp.punched_at,
@@ -1069,7 +1072,8 @@ router.get('/consolidated-timesheet', async (req, res) => {
       JOIN employees e ON e.id = tp.employee_id
       LEFT JOIN pdvs p ON p.id = tp.pdv_id
       LEFT JOIN LATERAL (
-        SELECT ws.daily_hours, ws.name AS schedule_name, ws.workdays
+        SELECT ws.daily_hours, ws.name AS schedule_name, ws.workdays,
+               ws.entry_time, ws.exit_time
         FROM employee_schedules es
         JOIN work_schedules ws ON ws.id = es.schedule_id
         WHERE es.employee_id = tp.employee_id
@@ -1097,65 +1101,34 @@ router.get('/consolidated-timesheet', async (req, res) => {
              ORDER BY (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date DESC, e.full_name`;
     const result = await query(sql, params);
     
-    // Server-side calculation logic for hours
+    // Server-side calculation logic for hours.
+    // Uses the same shared module as the Cartão de Ponto (lib/time-calc.js), so
+    // the two screens can never disagree about a day's total.
     const rows = result.rows.map(row => {
       const punches = Array.isArray(row.punches) ? row.punches : [];
-      
-      let total_minutes = 0;
 
-      // Function to format minutes to HH:MM
-      const formatHHMM = (m) => {
-        const h = Math.floor(m / 60);
-        const mm = m % 60;
-        return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+      const entryMinutes = timeColumnToMinutes(row.entry_time);
+      const exitMinutes = timeColumnToMinutes(row.exit_time);
+      const schedule = {
+        entryMinutes: entryMinutes ?? parseHHMMToMinutes(DEFAULT_ENTRY),
+        exitMinutes: exitMinutes ?? parseHHMMToMinutes(DEFAULT_EXIT),
+        expectedMinutes: row.daily_hours != null ? Math.round(Number(row.daily_hours) * 60) : undefined,
       };
 
-      // We look for specific sequences: 
-      // 1. entrada -> saida_intervalo
-      // 2. retorno_intervalo -> saida
-      
-      const entrada = punches.find(p => p.punch_type === 'entrada');
-      const saida_int = punches.find(p => p.punch_type === 'saida_intervalo');
-      const retorno = punches.find(p => p.punch_type === 'retorno_intervalo');
-      const saida = punches.find(p => p.punch_type === 'saida');
-      
-      let total_ms = 0;
-      
-      // First period: Entry to Lunch Start
-      if (entrada && saida_int) {
-        const t1 = new Date(entrada.punched_at).getTime();
-        const t2 = new Date(saida_int.punched_at).getTime();
-        if (t2 > t1) total_ms += (t2 - t1);
-      }
-      
-      // Second period: Return to Exit
-      if (retorno && saida) {
-        const t3 = new Date(retorno.punched_at).getTime();
-        const t4 = new Date(saida.punched_at).getTime();
-        if (t4 > t3) total_ms += (t4 - t3);
-      }
-      
-      // Fallback 1: If it's a 2-punch day (entrada -> saida) or no lunch marks
-      if (total_ms === 0 && punches.length >= 2) {
-        // If there's an entry and an exit, but no lunch marks
-        if (entrada && saida) {
-           const t1 = new Date(entrada.punched_at).getTime();
-           const t2 = new Date(saida.punched_at).getTime();
-           if (t2 > t1) total_ms = (t2 - t1);
-        } else if (punches.length >= 2) {
-           // Basic fallback: last - first
-           const first = new Date(punches[0].punched_at).getTime();
-           const last = new Date(punches[punches.length-1].punched_at).getTime();
-           
-           // Only count as final if the last one is actually a 'saida'
-           const lastType = punches[punches.length-1].punch_type;
-           if (lastType === 'saida' || lastType === 'extraordinaria') {
-              if (last > first) total_ms = (last - first);
-           }
-        }
-      }
-      
-      total_minutes = Math.round(total_ms / (1000 * 60));
+      // A day is a workday when the employee is scheduled on it. With no scale
+      // on file we fall back to Mon-Fri, the assumption the rest of RH makes.
+      const workdays = Array.isArray(row.workdays) && row.workdays.length
+        ? row.workdays.map(Number)
+        : [1, 2, 3, 4, 5];
+      // record_date is a DATE column: it arrives as a JS Date at UTC midnight,
+      // so getUTCDay() is the civil weekday with no timezone shift involved.
+      const civil = row.record_date instanceof Date
+        ? row.record_date.toISOString().slice(0, 10)
+        : String(row.record_date).slice(0, 10);
+      const isoDow = new Date(`${civil}T12:00:00Z`).getUTCDay() || 7;
+      const dayType = classifyDay({ date: civil, isHoliday: false, isWorkday: workdays.includes(isoDow) });
+
+      const { workedMinutes: total_minutes } = dayBalance({ punches, schedule, dayType });
 
       return {
         ...row,
