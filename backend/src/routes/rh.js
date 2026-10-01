@@ -1407,6 +1407,41 @@ async function getCartaoTableCapabilities() {
   return cartaoTableCaps;
 }
 
+// The Cartao de Ponto reads time_punches.source and rh_period_closures, but
+// neither exists in schema-promotor-app.sql -- the columns and the table are
+// only added by init-db.js. On a database provisioned from that schema the
+// grid query would 500 on an unqualified column name. Every statement is
+// idempotent and the whole thing is best-effort: if it cannot run we still
+// try the request and let the real error surface.
+let cartaoSchemaPromise = null;
+async function ensureCartaoSchema() {
+  if (!cartaoSchemaPromise) {
+    cartaoSchemaPromise = (async () => {
+      await query(`ALTER TABLE time_punches ADD COLUMN IF NOT EXISTS source VARCHAR(20) NOT NULL DEFAULT 'app'`);
+      await query(`ALTER TABLE time_punches ADD COLUMN IF NOT EXISTS punched_by UUID REFERENCES users(id) ON DELETE SET NULL`);
+      await query(`
+        CREATE TABLE IF NOT EXISTS rh_period_closures (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+          reference_month VARCHAR(7) NOT NULL,
+          closed BOOLEAN DEFAULT true,
+          closed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+          closed_at TIMESTAMPTZ DEFAULT NOW(),
+          reopened_by UUID REFERENCES users(id) ON DELETE SET NULL,
+          reopened_at TIMESTAMPTZ,
+          UNIQUE (employee_id, reference_month)
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_rh_period_closures ON rh_period_closures(employee_id, reference_month)`);
+    })().catch((error) => {
+      logError('rh.ponto.cartao.schema', error);
+      cartaoSchemaPromise = null;
+    });
+  }
+  return cartaoSchemaPromise;
+}
+
 // One query builds the full day grid for a period. The LATERAL subqueries are
 // conditional on the probed capabilities so a missing table cannot take the
 // whole statement down with it.
@@ -1488,6 +1523,8 @@ router.get('/ponto/cartao', async (req, res) => {
   try {
     const orgId = req.query.org_id || await getUserOrgId(req.userId);
     if (!orgId) return res.status(400).json({ error: 'Organização não encontrada' });
+
+    await ensureCartaoSchema();
 
     const empRes = await query(
       `SELECT e.id, e.full_name, e.cpf, e.position, e.work_schedule
@@ -1590,6 +1627,8 @@ router.put('/ponto/cartao', async (req, res) => {
     const orgId = req.query.org_id || await getUserOrgId(req.userId);
     if (!orgId) return res.status(400).json({ error: 'Organização não encontrada' });
 
+    await ensureCartaoSchema();
+
     const empRes = await query(
       `SELECT id FROM employees WHERE id = $1 AND organization_id = $2`,
       [employee_id, orgId]
@@ -1661,6 +1700,8 @@ router.get('/ponto/cartao/audit', async (req, res) => {
     const orgId = req.query.org_id || await getUserOrgId(req.userId);
     if (!orgId) return res.status(400).json({ error: 'Organização não encontrada' });
 
+    await ensureCartaoSchema();
+
     // rh_audit_log.entity_id is a UUID and a day has none, so the day is encoded
     // in field_name as 'times:YYYY-MM-DD' against the employee id.
     const r = await query(
@@ -1698,6 +1739,8 @@ router.post('/ponto/cartao/period-close', async (req, res) => {
   try {
     const orgId = req.query.org_id || await getUserOrgId(req.userId);
     if (!orgId) return res.status(400).json({ error: 'Organização não encontrada' });
+
+    await ensureCartaoSchema();
 
     const empRes = await query(
       `SELECT id FROM employees WHERE id = $1 AND organization_id = $2`,
