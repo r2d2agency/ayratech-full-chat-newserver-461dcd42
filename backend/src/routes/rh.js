@@ -1129,7 +1129,13 @@ router.get('/consolidated-timesheet', async (req, res) => {
     sql += ` AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date >= $${idx++}`; params.push(sd);
     sql += ` AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date <= $${idx++}`; params.push(ed);
     
-    sql += ` GROUP BY tp.employee_id, e.full_name, e.cpf, e.position, e.work_schedule, schedule.daily_hours, schedule.schedule_name, (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date
+    // Every non-aggregated column must appear in GROUP BY. entry_time,
+    // exit_time and workdays were added to the SELECT after the original
+    // list was written, and a missing one takes the whole query down.
+    sql += ` GROUP BY tp.employee_id, e.full_name, e.cpf, e.position, e.work_schedule,
+                    (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date,
+                    schedule.daily_hours, schedule.schedule_name,
+                    schedule.entry_time, schedule.exit_time, schedule.workdays
              ORDER BY (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date DESC, e.full_name`;
     const result = await query(sql, params);
     
@@ -1525,7 +1531,7 @@ async function queryCartaoDays({ employeeId, orgId, start, end, capabilities }) 
        EXTRACT(ISODOW FROM d.dt)::int AS iso_dow,
        sched.entry_time,
        sched.exit_time,
-       sched.name AS schedule_name,
+       sched.schedule_name,
        h.name AS holiday_name,
        a.absence_type,
        COALESCE(
