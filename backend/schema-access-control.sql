@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS supermarket_units (
   latitude NUMERIC(10,7),
   longitude NUMERIC(10,7),
   radius_meters INTEGER DEFAULT 200,
+  -- Perimeter drawn on the map, same shape as pdvs.geofence_polygon: an array
+  -- of {lat, lng} points. Either the polygon or the radius accepts a check-in.
+  geofence_polygon JSONB,
   opening_time TIME DEFAULT '06:00',
   closing_time TIME DEFAULT '22:00',
   operating_days JSONB DEFAULT '[1,2,3,4,5,6]', -- 0=dom..6=sab

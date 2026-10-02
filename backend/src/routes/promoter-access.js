@@ -16,6 +16,7 @@ import crypto from 'crypto';
 import QRCode from 'qrcode';
 import { query } from '../db.js';
 import { logError, logInfo } from '../logger.js';
+import { validatePdvLocation, recordGeofenceAttempt } from '../lib/geofence.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
@@ -126,6 +127,9 @@ async function ensureSchema() {
     )`);
     await query(`CREATE INDEX IF NOT EXISTS idx_pv_promoter ON promoter_visits(agency_promoter_id, created_at DESC)`);
     await query(`CREATE INDEX IF NOT EXISTS idx_pv_unit ON promoter_visits(supermarket_unit_id, created_at DESC)`);
+    // CREATE TABLE IF NOT EXISTS does not add columns to a table that already
+    // exists, so environments provisioned before this feature need the ALTER.
+    await query(`ALTER TABLE supermarket_units ADD COLUMN IF NOT EXISTS geofence_polygon JSONB`).catch(() => {});
     await query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_pv_one_open
       ON promoter_visits(agency_promoter_id) WHERE status='open'`).catch(() => {});
   })();
@@ -666,9 +670,22 @@ router.post('/promoter-app/checkin', authPromoterApp, async (req, res) => {
     let deniedReason = null;
 
     // ---- 1) QR -> resolve unit
+    // The polygon column may not exist on an environment provisioned before
+    // this feature, and a missing column aborts the whole query -- including
+    // the check-in itself. Ask for it only once it is known to be there.
+    let hasUnitPolygon = false;
+    try {
+      const colR = await query(
+        `SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'supermarket_units' AND column_name = 'geofence_polygon' LIMIT 1`
+      );
+      hasUnitPolygon = colR.rows.length > 0;
+    } catch (_) { hasUnitPolygon = false; }
+
     const qrR = await query(
       `SELECT q.token, q.active, su.id AS unit_id, su.name AS unit_name, su.latitude, su.longitude,
-              su.radius_meters, su.network_id, su.organization_id
+              su.radius_meters, su.network_id, su.organization_id,
+              ${hasUnitPolygon ? 'su.geofence_polygon' : 'NULL::jsonb'} AS geofence_polygon
        FROM pdv_fixed_qrcodes q
        JOIN supermarket_units su ON su.id = q.supermarket_unit_id
        WHERE q.token = $1 LIMIT 1`,
@@ -722,20 +739,35 @@ router.post('/promoter-app/checkin', authPromoterApp, async (req, res) => {
       }
     }
 
-    // ---- 4) GPS radius
+    // ---- 4) GPS
+    //
+    // This used to compute the radius inline, so a PDV with a drawn polygon was
+    // judged by the radius alone while the punch endpoint honoured the polygon.
+    // The same person standing in the same place was accepted by one and
+    // refused by the other. validatePdvLocation accepts either rule, which is
+    // what makes the two agree.
     let distance = null;
+    let geoMode = null;
+    let geoMatchedBy = null;
     if (!deniedReason) {
-      if (unit.latitude == null || unit.longitude == null) {
-        // Allow if PDV has no coords configured
+      const check = validatePdvLocation({
+        userLat: lat, userLng: lng,
+        pdvLat: unit.latitude, pdvLng: unit.longitude,
+        radiusMeters: unit.radius_meters,
+        polygon: unit.geofence_polygon || null,
+      });
+      distance = check.distance;
+      geoMode = check.mode;
+      if (check.status === 'inside') {
+        snapshot.gps = true;
+        geoMatchedBy = check.mode;
+      } else if (check.status === 'unknown') {
+        // No PDV coordinates and no polygon: nothing to check against.
         snapshot.gps = true;
       } else {
-        distance = haversineMeters(Number(unit.latitude), Number(unit.longitude), lat, lng);
         const radius = unit.radius_meters || 200;
-        if (distance <= radius) {
-          snapshot.gps = true;
-        } else {
-          deniedReason = `Você está a ${distance}m do PDV (máx. ${radius}m)`;
-        }
+        const where = geoMode === 'polygon' ? 'do polígono' : 'do centro';
+        deniedReason = `Você está a ${Math.round(distance)}m ${where} do PDV (máx. ${radius}m)`;
       }
     }
 
@@ -759,6 +791,27 @@ router.post('/promoter-app/checkin', authPromoterApp, async (req, res) => {
       [req.agencyPromoterId, req.agencyId, unit?.unit_id || null, scheduleId, qr_token,
        lat, lng, accuracy || null, distance, JSON.stringify(snapshot), status, deniedReason]
     );
+
+    // Log the attempt either way. A refused check-in is the row an operator
+    // needs when the promoter calls saying they were standing right there.
+    await recordGeofenceAttempt(query, {
+      organizationId: unit?.organization_id || null,
+      promoterId: req.agencyPromoterId,
+      pdvId: unit?.unit_id || null,
+      latitude: lat,
+      longitude: lng,
+      accuracyMeters: accuracy ?? null,
+      accepted: !deniedReason,
+      matchedBy: geoMatchedBy,
+      mode: geoMode,
+      distanceMeters: distance,
+      radiusMeters: unit?.radius_meters ?? null,
+      polygonVertices: Array.isArray(unit?.geofence_polygon) ? unit.geofence_polygon.length : null,
+      reasonCode: deniedReason ? 'DENIED' : 'ACCEPTED',
+      reason: deniedReason,
+      action: 'checkin',
+      deviceInfo: req.headers['user-agent'] || null,
+    });
 
     if (deniedReason) return res.status(403).json({ ok: false, reason: deniedReason, visit: insR.rows[0] });
     res.json({ ok: true, visit: insR.rows[0], unit: { id: unit.unit_id, name: unit.unit_name } });

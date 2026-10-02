@@ -50,11 +50,13 @@ export default function RHRastreamento() {
   const polylineRef = useRef<L.Polyline | null>(null);
   const markerRef = useRef<L.Marker | null>(null);
   const pointsLayerRef = useRef<L.LayerGroup | null>(null);
+  const attemptsLayerRef = useRef<L.LayerGroup | null>(null);
 
   const { data: employees = [], isLoading: loadingEmps } = useTrackableEmployees(date);
   const { data: historyData, isLoading: loadingHistory } = useLocationHistory(selectedEmployee, date);
 
   const points = historyData?.points || [];
+  const attempts = historyData?.attempts || [];
   const employee = historyData?.employee;
 
   const totalDistance = useMemo(() => {
@@ -81,6 +83,7 @@ export default function RHRastreamento() {
     }).addTo(map);
     mapInstanceRef.current = map;
     pointsLayerRef.current = L.layerGroup().addTo(map);
+    attemptsLayerRef.current = L.layerGroup().addTo(map);
 
     return () => { map.remove(); mapInstanceRef.current = null; };
   }, []);
@@ -94,6 +97,7 @@ export default function RHRastreamento() {
     if (polylineRef.current) { map.removeLayer(polylineRef.current); polylineRef.current = null; }
     if (markerRef.current) { map.removeLayer(markerRef.current); markerRef.current = null; }
     if (pointsLayerRef.current) pointsLayerRef.current.clearLayers();
+    if (attemptsLayerRef.current) attemptsLayerRef.current.clearLayers();
 
     if (points.length === 0) return;
 
@@ -133,6 +137,73 @@ export default function RHRastreamento() {
     setPlaybackIndex(0);
     setIsPlaying(false);
   }, [points]);
+
+  // Every recorded position gets a marker with its clock time. Clicking one
+  // opens the detail: the manager reads the history as a list of moments, not
+  // as a single dot they have to guess the time of.
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !pointsLayerRef.current) return;
+    if (!points.length) return;
+
+    points.forEach((p: any, i: number) => {
+      const lat = parseFloat(p.latitude);
+      const lng = parseFloat(p.longitude);
+      if (!isFinite(lat) || !isFinite(lng)) return;
+      const hhmm = format(new Date(p.recorded_at), 'HH:mm:ss', { locale: ptBR });
+      L.circleMarker([lat, lng], { radius: 5, fillColor: '#3b82f6', color: '#fff', weight: 1, fillOpacity: 0.9 })
+        .bindPopup(
+          `<div style="min-width:150px">
+             <div style="font-weight:600;margin-bottom:4px">${format(new Date(p.recorded_at), "dd/MM/yyyy 'às' HH:mm:ss", { locale: ptBR })}</div>
+             <div style="color:#555">Precisão: ${p.accuracy_meters != null ? Math.round(Number(p.accuracy_meters)) + ' m' : '—'}</div>
+             ${p.is_moving === false ? '<div style="color:#555">Parado</div>' : ''}
+             ${p.battery_level != null ? `<div style="color:#555">Bateria: ${Math.round(Number(p.battery_level))}%</div>` : ''}
+           </div>`
+        )
+        .addTo(pointsLayerRef.current!);
+    });
+  }, [points]);
+
+  // Check-in attempts, accepted and refused alike. A refusal is the whole point:
+  // the promoter was there, the app said no, and until now nothing recorded it.
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !attemptsLayerRef.current) return;
+    attemptsLayerRef.current.clearLayers();
+
+    attempts.forEach((a: any) => {
+      const lat = parseFloat(a.latitude);
+      const lng = parseFloat(a.longitude);
+      if (!isFinite(lat) || !isFinite(lng)) return;
+      const ok = Boolean(a.accepted);
+      const time = a.attempt_local ? format(new Date(a.attempt_local), 'HH:mm:ss', { locale: ptBR }) : '—';
+      const rule = a.mode === 'polygon'
+        ? 'Polígono'
+        : a.mode === 'radius' ? 'Raio' : '—';
+      const quando = a.action === 'punch' ? 'Batida de ponto' : a.action === 'checkout' ? 'Check-out' : 'Check-in';
+      L.marker([lat, lng], {
+        icon: L.divIcon({
+          className: '',
+          html: `<div style="background:${ok ? '#22c55e' : '#ef4444'};color:#fff;width:22px;height:22px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${ok ? '✓' : '✕'}</div>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        }),
+      })
+        .bindPopup(
+          `<div style="min-width:200px">
+             <div style="font-weight:700;margin-bottom:2px">${ok ? 'Check-in permitido' : 'Check-in recusado'}</div>
+             <div style="color:#555;margin-bottom:6px">${quando} · ${time}</div>
+             <div style="font-weight:600">${a.pdv_name || 'PDV não informado'}</div>
+             <div style="color:#555">Regra: ${rule}${a.matched_by ? ` (pelo ${a.matched_by === 'polygon' ? 'polígono' : 'raio'})` : ''}</div>
+             ${a.distance_meters != null ? `<div style="color:#555">Distância: ${Math.round(Number(a.distance_meters))} m${a.radius_meters != null ? ` (máx. ${a.radius_meters} m)` : ''}</div>` : ''}
+             ${a.accuracy_meters != null ? `<div style="color:#555">Precisão do GPS: ${Math.round(Number(a.accuracy_meters))} m</div>` : ''}
+             ${!ok && a.reason ? `<div style="color:#b91c1c;margin-top:6px">Motivo: ${a.reason}</div>` : ''}
+             ${a.justification ? `<div style="color:#555;margin-top:4px">Justificativa: ${a.justification}</div>` : ''}
+           </div>`
+        )
+        .addTo(attemptsLayerRef.current!);
+    });
+  }, [attempts]);
 
   // Playback animation
   useEffect(() => {

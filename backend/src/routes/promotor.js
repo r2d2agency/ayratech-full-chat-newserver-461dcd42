@@ -6,7 +6,7 @@ import { query } from '../db.js';
 import { authenticate } from '../middleware/auth.js';
 import { logInfo, logError, logWarn } from '../logger.js';
 import { setRequestContext } from '../request-context.js';
-import { validatePdvLocation, ensurePdvGeofenceColumn } from '../lib/geofence.js';
+import { validatePdvLocation, ensurePdvGeofenceColumn, recordGeofenceAttempt } from '../lib/geofence.js';
 import { parseWorkSchedule, resolveDaySchedule, normalizeDow } from '../lib/work-schedule.js';
 import { DEFAULT_ENTRY, DEFAULT_EXIT, formatHHMM } from '../lib/time-calc.js';
 
@@ -332,7 +332,7 @@ router.get('/home', authenticatePromotor, async (req, res) => {
       safeQuery(`SELECT * FROM time_punches WHERE employee_id = $1 AND (punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $2 ORDER BY punched_at`, [empId, today]),
       safeQuery(`SELECT COUNT(*) as count FROM rh_document_deliveries WHERE employee_id = $1 AND status IN ('enviado', 'entregue', 'visualizado') AND (requires_signature = true OR requires_confirmation = true)`, [empId]),
       safeQuery(`SELECT * FROM collaborator_notifications WHERE employee_id = $1 AND read = false ORDER BY created_at DESC LIMIT 10`, [empId]),
-      safeQuery(`SELECT da.*, p.name as pdv_name, p.latitude, p.longitude, p.radius_meters FROM collaborator_daily_assignments da LEFT JOIN pdvs p ON p.id = da.pdv_id WHERE da.employee_id = $1 AND da.assignment_date = $2 LIMIT 1`, [empId, today]),
+      safeQuery(`SELECT da.*, p.name as pdv_name, p.latitude, p.longitude, p.radius_meters, p.geofence_polygon FROM collaborator_daily_assignments da LEFT JOIN pdvs p ON p.id = da.pdv_id WHERE da.employee_id = $1 AND da.assignment_date = $2 LIMIT 1`, [empId, today]),
       safeQuery(`SELECT * FROM collaborator_app_settings WHERE employee_id = $1`, [empId]),
     ]);
 
@@ -1059,7 +1059,14 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
     let geo_status = 'sem_gps';
     let geoLastPdvMeta = null;
 
-    if (latitude && longitude && pdv_id) {
+    // `0` is a real coordinate (Null Island, and a valid longitude on the
+    // Greenwich meridian). Testing truthiness let a 0 skip validation entirely
+    // and register the punch as unlocated. Ask whether the values exist.
+    const hasCoords = latitude !== null && latitude !== undefined
+      && longitude !== null && longitude !== undefined
+      && Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude));
+
+    if (hasCoords && pdv_id) {
       const pdv = await query(`SELECT p.id, p.name, p.type, p.latitude, p.longitude, p.radius_meters, p.geofence_polygon
                                 FROM pdvs p WHERE p.id = $1`, [pdv_id]);
       if (pdv.rows[0]) {
@@ -1083,7 +1090,7 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
         else if (v.status === 'outside') geo_status = 'fora_area';
         else geo_status = 'sem_gps';
       }
-    } else if (latitude && longitude) {
+    } else if (hasCoords) {
       geo_status = 'sem_pdv';
     }
 
@@ -1123,6 +1130,27 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
         const modeText = meta.mode === 'polygon'
           ? 'Perímetro (polígono geográfico) do local.'
           : 'Raio (em metros) do local.';
+        // A refused punch left no trace anywhere: pdv_visits only holds visits
+        // that happened. Log it so the manager can see where the promoter was
+        // when the app turned the punch away.
+        await recordGeofenceAttempt(query, {
+          organizationId: req.organizationId,
+          promoterId: req.employeeId,
+          pdvId: pdv_id || null,
+          latitude,
+          longitude,
+          accuracyMeters: accuracy_meters ?? null,
+          accepted: false,
+          matchedBy: null,
+          mode: meta.mode,
+          distanceMeters: meta.distance_meters,
+          radiusMeters: meta.radius_meters,
+          reasonCode: 'GEO_OUT_OF_RANGE',
+          reason: modeText,
+          action: 'punch',
+          justification: justification || null,
+          deviceInfo: req.headers['user-agent'] || null,
+        });
         return res.status(400).json({
           error: `Você precisa estar ${placeShort}${sedeExtra} dentro da área permitida para bater o ponto.${dist}`,
           error_code: 'GEO_OUT_OF_RANGE',
@@ -1705,16 +1733,34 @@ router.put('/rh/pdvs/:id', async (req, res) => {
     }
     
     await ensurePdvGeofenceColumn(query);
-    const polygon = Array.isArray(d.geofence_polygon) && d.geofence_polygon.length >= 3 ? JSON.stringify(d.geofence_polygon)
-      : (d.geofence_polygon === null ? null : undefined);
+
+    // How the polygon field was addressed. `null` means "clear the polygon",
+    // an array means "replace it", and the field being absent from the request
+    // means "leave it as it is".
+    //
+    // This used to be COALESCE($15::jsonb, geofence_polygon), which cannot
+    // express the first case: COALESCE skips NULL and hands back the old value,
+    // so clearing the polygon in the editor answered 200 and silently kept it.
+    // A separate flag is what makes clearing distinguishable from omitting.
+    const polygonGiven = Object.prototype.hasOwnProperty.call(d, 'geofence_polygon');
+    const polygonPoints = Array.isArray(d.geofence_polygon) ? d.geofence_polygon : null;
+    const polygonValue = polygonPoints && polygonPoints.length >= 3
+      ? JSON.stringify(polygonPoints)
+      : null;
+
     const result = await query(
       `UPDATE pdvs SET name=$2, client_name=$3, address=$4, zip_code=$5, city=$6, state=$7, neighborhood=$8, latitude=$9, longitude=$10, radius_meters=$11, supervisor_id=$12, notes=$13, active=$14,
-        geofence_polygon = COALESCE($15::jsonb, geofence_polygon), type=$16, updated_at=NOW() WHERE id=$1 RETURNING *`,
-      [req.params.id, d.name, d.client_name, d.address, d.zip_code, d.city, d.state, d.neighborhood, lat, lng, d.radius_meters, d.supervisor_id || null, d.notes, d.active !== false, polygon ?? null, d.type || 'pdv']
+        geofence_polygon = CASE WHEN $15::boolean THEN $16::jsonb ELSE geofence_polygon END,
+        type=$17, updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [req.params.id, d.name, d.client_name, d.address, d.zip_code, d.city, d.state, d.neighborhood, lat, lng, d.radius_meters, d.supervisor_id || null, d.notes, d.active !== false, polygonGiven, polygonValue, d.type || 'pdv']
     );
 
+    if (!result.rows[0]) return res.status(404).json({ error: 'PDV não encontrado' });
     res.json(result.rows[0]);
-  } catch (err) { res.status(500).json({ error: 'Erro' }); }
+  } catch (err) {
+    logError('promotor.pdvs.update', err);
+    res.status(500).json({ error: 'Erro ao salvar o PDV' });
+  }
 });
 
 router.delete('/rh/pdvs/:id', async (req, res) => {
@@ -2369,10 +2415,95 @@ router.get('/rh/location-history', async (req, res) => {
       query(`SELECT id, full_name, photo_url, position FROM employees WHERE id = $1 AND organization_id = $2`, [employee_id, orgId]),
     ]);
 
-    res.json({ points: points.rows, employee: emp.rows[0] || null });
+    // Geofence attempts for the same day. These are the check-ins the map never
+    // showed, because employee_location_history only starts once a visit exists.
+    let attempts = [];
+    try {
+      const hasAttempts = await tableExists('public.pdv_geofence_attempts');
+      if (hasAttempts) {
+        const r = await query(
+          `SELECT a.id, a.pdv_id, p.name AS pdv_name, p.type AS pdv_type,
+                  a.latitude, a.longitude, a.accuracy_meters,
+                  a.accepted, a.matched_by, a.mode, a.distance_meters, a.radius_meters,
+                  a.polygon_vertices, a.reason_code, a.reason, a.action,
+                  TO_CHAR(a.attempt_at AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS') AS attempt_local
+           FROM pdv_geofence_attempts a
+           LEFT JOIN pdvs p ON p.id = a.pdv_id
+           WHERE a.organization_id = $1 AND a.promoter_id = $2
+             AND (a.attempt_at AT TIME ZONE 'America/Sao_Paulo')::date = $3::date
+           ORDER BY a.attempt_at ASC`,
+          [orgId, employee_id, date]
+        );
+        attempts = r.rows;
+      }
+    } catch (e) { logError('promotor.location-history.attempts', e); }
+
+    res.json({ points: points.rows, attempts, employee: emp.rows[0] || null });
   } catch (err) {
     logError('promotor.location-history', err);
     res.status(500).json({ error: 'Erro' });
+  }
+});
+
+// =============================================
+// RH: GEOFENCE ATTEMPTS (accepted and refused)
+// =============================================
+router.get('/rh/geofence-attempts', async (req, res) => {
+  try {
+    const orgId = await resolveOrganizationId(req);
+    if (!orgId) return res.status(401).json({ error: 'organization_id missing' });
+
+    if (!(await tableExists('public.pdv_geofence_attempts'))) {
+      return res.json({ attempts: [], summary: { accepted: 0, refused: 0 } });
+    }
+
+    const { employee_id, pdv_id, result, date, start, end, limit } = req.query;
+    const where = ['a.organization_id = $1'];
+    const params = [orgId];
+    const add = (clause, value) => { params.push(value); where.push(clause.replace('$?', `$${params.length}`)); };
+
+    if (employee_id) add('a.promoter_id = $?', employee_id);
+    if (pdv_id) add('a.pdv_id = $?', pdv_id);
+    if (result === 'accepted') where.push('a.accepted = true');
+    else if (result === 'refused') where.push('a.accepted = false');
+    if (start) add("(a.attempt_at AT TIME ZONE 'America/Sao_Paulo')::date >= $?::date", start);
+    if (end) add("(a.attempt_at AT TIME ZONE 'America/Sao_Paulo')::date <= $?::date", end);
+    else if (date && !start) add("(a.attempt_at AT TIME ZONE 'America/Sao_Paulo')::date = $?::date", date);
+
+    const cap = Math.min(Number(limit) || 200, 1000);
+    const rows = await query(
+      `SELECT a.id, a.promoter_id, e.full_name AS employee_name,
+              a.pdv_id, p.name AS pdv_name, p.type AS pdv_type,
+              a.latitude, a.longitude, a.accuracy_meters,
+              a.accepted, a.matched_by, a.mode, a.distance_meters, a.radius_meters,
+              a.polygon_vertices, a.reason_code, a.reason, a.action, a.justification,
+              TO_CHAR(a.attempt_at AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS') AS attempt_local
+         FROM pdv_geofence_attempts a
+         LEFT JOIN employees e ON e.id = a.promoter_id
+         LEFT JOIN pdvs p ON p.id = a.pdv_id
+        WHERE ${where.join(' AND ')}
+        ORDER BY a.attempt_at DESC
+        LIMIT ${cap}`,
+      params
+    );
+
+    const summary = await query(
+      `SELECT COUNT(*) FILTER (WHERE accepted) AS accepted,
+              COUNT(*) FILTER (WHERE NOT accepted) AS refused
+         FROM pdv_geofence_attempts a WHERE ${where.join(' AND ')}`,
+      params
+    );
+
+    res.json({
+      attempts: rows.rows,
+      summary: {
+        accepted: Number(summary.rows[0]?.accepted || 0),
+        refused: Number(summary.rows[0]?.refused || 0),
+      },
+    });
+  } catch (err) {
+    logError('promotor.geofence-attempts', err);
+    res.status(500).json({ error: 'Erro ao carregar as tentativas' });
   }
 });
 

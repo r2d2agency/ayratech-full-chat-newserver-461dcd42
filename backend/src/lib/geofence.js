@@ -83,9 +83,54 @@ async function ensurePdvGeofenceColumn(query) {
   } catch (_) { /* ignore */ }
 }
 
+/**
+ * Records a check-in/checkout/punch attempt against a PDV geofence, accepted or
+ * refused. Fire-and-forget: a failure here must never turn a working check-in
+ * into an error, so the caller does not await it and every failure is swallowed.
+ *
+ * Refusals are the point. pdv_visits only holds visits that happened, so before
+ * this there was no trace of the promoter who arrived and was turned away.
+ */
+async function recordGeofenceAttempt(query, entry) {
+  try {
+    await query(
+      `INSERT INTO pdv_geofence_attempts
+         (organization_id, promoter_id, pdv_id, latitude, longitude, accuracy_meters,
+          accepted, matched_by, mode, distance_meters, radius_meters, polygon_vertices,
+          reason_code, reason, action, justification, device_info)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+      [
+        entry.organizationId || null,
+        entry.promoterId || null,
+        entry.pdvId || null,
+        entry.latitude ?? null,
+        entry.longitude ?? null,
+        entry.accuracyMeters ?? null,
+        Boolean(entry.accepted),
+        entry.matchedBy || null,
+        entry.mode || null,
+        entry.distanceMeters != null ? Math.round(entry.distanceMeters) : null,
+        entry.radiusMeters ?? null,
+        entry.polygonVertices ?? null,
+        entry.reasonCode || null,
+        entry.reason || null,
+        entry.action || 'checkin',
+        entry.justification || null,
+        entry.deviceInfo || null,
+      ]
+    );
+  } catch (e) {
+    // A missing table (environments provisioned before this schema) or a dead
+    // pool. The attempt log is diagnostics: losing a row is better than
+    // failing a check-in the promoter is standing inside.
+    console.error('[Geofence] falha ao registrar tentativa:', e?.message || e);
+  }
+}
+
 export {
   haversineMeters,
   pointInPolygon,
   validatePdvLocation,
   ensurePdvGeofenceColumn,
+  recordGeofenceAttempt,
 };
