@@ -657,6 +657,78 @@ router.get('/promoter-app/me', authPromoterApp, async (req, res) => {
   }
 });
 
+// The PWA runs the same geofence check in the browser before it will call
+// /promoter-app/checkin, so a promoter standing outside the area is turned away
+// without the server ever hearing about it. That refusal used to leave no trace
+// at all -- nothing in the tracking journal, nothing to answer "why could he
+// not check in". This endpoint records the attempt the client blocked.
+router.post('/promoter-app/geo-attempt', authPromoterApp, async (req, res) => {
+  try {
+    const { lat, lng, accuracy, pdv_id, pdv_name, mode, distance_meters, radius_meters } = req.body || {};
+    if (typeof lat !== 'number' || typeof lng !== 'number') {
+      return res.status(400).json({ error: 'Localização (GPS) obrigatória' });
+    }
+    // The PDV coordinates are read from the server, never taken from the body:
+    // the client is the party being judged here, so its version of the
+    // perimeter is not evidence.
+    let unit = null;
+    if (pdv_id) {
+      // Same guard as the check-in route: an environment provisioned before the
+      // polygon feature may not have the column, and asking for it blindly
+      // would abort the whole insert.
+      let hasUnitPolygon = false;
+      try {
+        const colR = await query(
+          `SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'supermarket_units' AND column_name = 'geofence_polygon' LIMIT 1`
+        );
+        hasUnitPolygon = colR.rows.length > 0;
+      } catch (_) { hasUnitPolygon = false; }
+      const r = await query(
+        `SELECT su.id AS unit_id, su.name AS unit_name, su.organization_id,
+                su.latitude, su.longitude, su.radius_meters,
+                ${hasUnitPolygon ? 'su.geofence_polygon' : 'NULL::jsonb'} AS geofence_polygon
+           FROM supermarket_units su
+          WHERE su.id = $1`,
+        [pdv_id]
+      );
+      unit = r.rows[0] || null;
+    }
+    let linkedEmployeeId = null;
+    try {
+      const empR = await query(
+        `SELECT employee_id FROM agency_promoters WHERE id = $1`, [req.agencyPromoterId]
+      );
+      linkedEmployeeId = empR.rows[0]?.employee_id || null;
+    } catch (_) { /* promoter without employee link */ }
+    await recordGeofenceAttempt(query, {
+      organizationId: unit?.organization_id || null,
+      promoterId: linkedEmployeeId || req.agencyPromoterId,
+      pdvId: unit?.unit_id || pdv_id || null,
+      latitude: lat,
+      longitude: lng,
+      accuracyMeters: accuracy ?? null,
+      accepted: false,
+      matchedBy: null,
+      mode: mode === 'polygon' ? 'polygon' : 'radius',
+      distanceMeters: distance_meters ?? null,
+      radiusMeters: radius_meters ?? null,
+      polygonVertices: Array.isArray(unit?.geofence_polygon) ? unit.geofence_polygon.length : null,
+      reasonCode: 'CLIENT_BLOCKED',
+      reason: pdv_name
+        ? `Tentativa de check-in fora da área autorizada — ${pdv_name}.`
+        : 'Tentativa de check-in fora da área autorizada.',
+      action: 'checkin',
+      deviceInfo: req.headers['user-agent'] || null,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    // Never fail the promoter flow over a diagnostic write.
+    logError('promoter-access.app.geo-attempt', err);
+    res.status(200).json({ ok: false });
+  }
+});
+
 router.post('/promoter-app/checkin', authPromoterApp, async (req, res) => {
   await ensureSchema();
   try {

@@ -230,6 +230,30 @@ export default function PromotorHome() {
     });
   }, [todayRoutes, pdvVisits]);
 
+  // Fire-and-forget: the promoter is already being refused, so a failure here
+  // must not change what they see. It exists only to leave a trace for the RH.
+  const reportBlockedAttempt = useCallback((payload: {
+    lat: number; lng: number; accuracy?: number | null;
+    pdv_id?: string | null; pdv_name?: string | null;
+    mode?: string; distance_meters?: number | null; radius_meters?: number | null;
+    action?: string;
+  }) => {
+    try {
+      const token = localStorage.getItem('promoter_app_token');
+      if (!token) return;
+      const body = JSON.stringify({ ...payload, action: payload.action || 'checkin' });
+      // keepalive lets the request outlive the error handler that follows.
+      // sendBeacon is not an option here: it cannot carry the Authorization
+      // header, so the route would answer 401 and the attempt would be lost.
+      void fetch('/api/promoter-app/geo-attempt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body,
+        keepalive: true,
+      }).catch(() => {});
+    } catch (_) { /* diagnostics only */ }
+  }, []);
+
   const preValidateGeoForPdv = useCallback(async (pdvId: string, pdvName: string | undefined, mode: 'pdv_checkin' | 'punch') => {
     const { validatePdvLocation, formatDistanceMeters } = await import('@/lib/geofence');
     const target: any = (mode === 'punch' ? (dailyAssignment || availablePdvs[0]) : null) || null;
@@ -294,6 +318,20 @@ export default function PromotorHome() {
       const hint = isPolygon
         ? 'Fora do perímetro (polígono geográfico) cadastrado. Aproxime-se do local.'
         : `Fora do raio de alcance (em metros) cadastrado. Verificação: ${modeLabel}. Aproxime-se do local para habilitar. Caso impossibilitado, envie justificativa.`;
+      // Report the refusal before blocking. The check-in endpoint logs refused
+      // attempts, but the browser stops this one long before that call, so
+      // without this the tracking journal never sees the attempt at all.
+      reportBlockedAttempt({
+        lat: userPos.lat,
+        lng: userPos.lng,
+        accuracy: null,
+        pdv_id: pdv?.id || pdvId || null,
+        pdv_name: pdv?.name || pdvName || null,
+        mode: preCheck.mode,
+        distance_meters: preCheck.distance,
+        radius_meters: pdv?.radius_meters != null ? Number(pdv.radius_meters) : null,
+        action: mode === 'punch' ? 'punch' : 'checkin',
+      });
       const explicit: any = new Error(msg);
       explicit._geoPreBlocked = true;
       explicit.details = {
@@ -308,7 +346,7 @@ export default function PromotorHome() {
     }
 
     return userPos;
-  }, [todayRoutes, availablePdvs, dailyAssignment, currentPos]);
+  }, [todayRoutes, availablePdvs, dailyAssignment, currentPos, reportBlockedAttempt]);
 
   // PDV Check-in handler
   const handlePdvCheckin = useCallback(async (pdvId: string, photoOverride?: string) => {
