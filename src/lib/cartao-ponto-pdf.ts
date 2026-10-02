@@ -33,11 +33,20 @@ function statusCell(day: CartaoDay) {
   return '';
 }
 
+// Minutos com sinal, em HH:MM. O sinal é explícito porque "00:15" ao lado de
+// uma soma não diz se entrou ou saiu do banco.
+function formatSigned(minutes: number | null | undefined) {
+  const m = Math.round(minutes || 0);
+  const sign = m > 0 ? '+' : m < 0 ? '-' : '';
+  const abs = Math.abs(m);
+  return `${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`;
+}
+
 function typeStyles(day: CartaoDay) {
-  if (day.dayType === 'feriado') return { fillColor: [250, 245, 255] as [number, number, number] };
-  if (day.dayType === 'ausencia') return { fillColor: [239, 246, 255] as [number, number, number] };
-  if (day.dayType === 'folga') return { fillColor: [243, 244, 246] as [number, number, number] };
-  return undefined;
+  if (day.dayType === 'feriado') return [250, 245, 255] as [number, number, number];
+  if (day.dayType === 'ausencia') return [239, 246, 255] as [number, number, number];
+  if (day.dayType === 'folga') return [243, 244, 246] as [number, number, number];
+  return null;
 }
 
 export function exportCartaoPontoPdf(data: CartaoPonto) {
@@ -85,9 +94,9 @@ export function exportCartaoPontoPdf(data: CartaoPonto) {
     margin: { left: margin, right: margin },
     head: [['Dia', 'Prev. entrada', 'Prev. saída', 'Prev. jornada', 'Batidas', '', 'Trabalhado', 'Crédito', 'Débito', 'Situação']],
     body,
-    styles: { fontSize: 7.5, cellPadding: 1.4 },
+    styles: { fontSize: 7.5, cellPadding: 1.4, textColor: [30, 30, 46] },
     headStyles: { fillColor: [30, 30, 46], textColor: 255, fontStyle: 'bold', fontSize: 7.5, halign: 'center' },
-    alternateRowStyles: { fillColor: [250, 250, 252] },
+    alternateRowStyles: { fillColor: [252, 252, 254] },
     columnStyles: {
       0: { cellWidth: 22 },
       1: { cellWidth: 18, halign: 'center' },
@@ -101,10 +110,23 @@ export function exportCartaoPontoPdf(data: CartaoPonto) {
       9: { cellWidth: 40 },
     },
     // A linha de cada dia herda a cor do seu tipo, para o papel bater com a tela.
+    // O "--" de um valor ausente é cinza e o débito é vermelho: sem isso, um dia
+    // inteiro sem batida imprime uma coluna de zeros que parece um saldo real.
     didParseCell: (hookData) => {
-      const day = data.days[hookData.section === 'body' ? hookData.row.index : -1];
-      const style = day ? typeStyles(day) : undefined;
-      if (style) hookData.cell.styles.fillColor = style.fillColor;
+      if (hookData.section !== 'body') return;
+      const day = data.days[hookData.row.index];
+      if (!day) return;
+      const tint = typeStyles(day);
+      if (tint) hookData.cell.styles.fillColor = tint;
+      const raw = hookData.cell.raw;
+      const text = typeof raw === 'string' ? raw : String(raw ?? '');
+      if (text.trim() === '--') {
+        hookData.cell.styles.textColor = [160, 160, 170];
+      } else if (hookData.column.index === 8 && text.trim()) {
+        hookData.cell.styles.textColor = [200, 40, 40];
+      } else if (hookData.column.index === 7 && text.trim()) {
+        hookData.cell.styles.textColor = [22, 130, 70];
+      }
     },
     foot: [[
       '',
@@ -124,10 +146,13 @@ export function exportCartaoPontoPdf(data: CartaoPonto) {
   const lastY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
+  doc.setTextColor(30);
+  // Só o total do período. O acumulado do ano entrava no rodapé, mas este
+  // documento é a ficha de um mês: um número de doze meses ao lado da soma do
+  // mês não se compara com nada, e o gestor não sabe em que base foi calculado.
   doc.text(
     `Esperado no periodo: ${data.totals.expected}  |  `
-    + `Acumulado do ano (desde ${data.yearToDate.from.split('-').reverse().join('/')}): `
-    + `${data.yearToDate.saldo} h`,
+    + `Saldo do periodo: ${formatSigned(data.totals.saldoMinutes)}`,
     margin,
     lastY + 8,
   );
