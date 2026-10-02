@@ -7,6 +7,36 @@ import { authenticate } from '../middleware/auth.js';
 import { logInfo, logError, logWarn } from '../logger.js';
 import { setRequestContext } from '../request-context.js';
 import { validatePdvLocation, ensurePdvGeofenceColumn } from '../lib/geofence.js';
+import { parseWorkSchedule, resolveDaySchedule, normalizeDow } from '../lib/work-schedule.js';
+import { DEFAULT_ENTRY, DEFAULT_EXIT, formatHHMM } from '../lib/time-calc.js';
+
+const hhmmOf = (minutes) => (minutes == null ? null : formatHHMM(minutes));
+
+// True when a jornada carries no real intent: the flat legacy "08:00-17:00", or
+// the DEFAULT_SCHEDULE the collaborator form pre-fills (08:00-17:00 with an
+// identical dayConfig on every day). Such a value must not outrank the
+// organization's global jornada, or the app rejects a legitimate early punch.
+function isAutoFilledJornada(raw) {
+  if (raw == null) return true;
+  let parsed = raw;
+  if (typeof raw === 'string') {
+    const str = raw.trim();
+    if (!str) return true;
+    if (!str.startsWith('{')) return /^0?8:00\s*(?:-|até|ate|ao)\s*0?17:00$/i.test(str);
+    try { parsed = JSON.parse(str); } catch { return true; }
+  }
+  if (!parsed || typeof parsed !== 'object') return true;
+  const isDefaultWindow = (c) => (c?.entry ?? c?.start) === '08:00' && (c?.exit ?? c?.end) === '17:00';
+  const dayConfig = parsed.dayConfig;
+  const anyFilledDay = dayConfig && typeof dayConfig === 'object'
+    ? Object.values(dayConfig).some((d) => d && (d.entry || d.start) && (d.exit || d.end) && !isDefaultWindow(d))
+    : false;
+  if (anyFilledDay) return false;
+  // No dayConfig at all, or every day is 08:00-17:00: only the top-level window
+  // decides, and it counts as intent only if it is not the default.
+  if (isDefaultWindow(parsed)) return true;
+  return !isDefaultWindow(parsed) && !parsed.entry && !parsed.exit && !parsed.work_start;
+}
 
 const router = express.Router();
 
@@ -794,80 +824,60 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
       }
     } catch (e) { /* ignore table/column missing */ }
 
-    // 2. Fallback: jornada individual; sem ela, jornada global configurada por dia.
+    // 2. Sem escala: jornada individual, depois a global da organização, depois
+    //    o padrão. A resolução é a mesma do Cartão de Ponto, senão o app aceitaria
+    //    uma batida que o cartão de ponto lê como fora da jornada.
     let scheduleSource = scheduleStart ? 'ESCALA' : null;
     let globalDayOff = false;
     if (!scheduleStart) {
-      const parseSchedule = (raw) => {
-        if (!raw) return null;
-        try {
-          const parsed = typeof raw === 'object' ? raw : (typeof raw === 'string' && raw.trim().startsWith('{') ? JSON.parse(raw) : null);
-          if (parsed && (parsed.entry || parsed.work_start || parsed.dayConfig || parsed.work_days)) {
-            return { start: parsed.entry || parsed.work_start, end: parsed.exit || parsed.work_end, parsed };
-          }
-          const parts = String(raw).split('-');
-          return parts.length >= 2 ? { start: parts[0].trim(), end: parts[1].trim(), parsed: null } : null;
-        } catch { return null; }
-      };
-      const employeeSchedule = parseSchedule(empRes.rows[0]?.work_schedule);
-      const organizationSchedule = parseSchedule(empRes.rows[0]?.organization_work_schedule);
-      const globalConfig = organizationSchedule?.parsed;
       const dowResult = await query("SELECT EXTRACT(DOW FROM ($1::date))::int AS dow", [today]);
       const dow = Number(dowResult.rows[0]?.dow ?? 0);
-      const dailyConfig = globalConfig?.dayConfig?.[String(dow)] || globalConfig?.dayConfig?.[dow];
 
-      // O valor legado criado automaticamente no cadastro não deve bloquear o global.
-      // O formulário de colaboradores pré-preenche `DEFAULT_SCHEDULE`, que traz
-      // entry/exit 08:00-17:00 e dayConfig idêntico dia a dia. Sem detectar isso,
-      // esse objeto vazio de intenção era aceito como jornada explícita e o
-      // ponto batia contra 08:00 mesmo com a jornada global em 07:00.
-      const DOW_NAMES = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
-      const empDayConfigs = employeeSchedule?.parsed?.dayConfig;
-      const empDayConfigsFilled = empDayConfigs && typeof empDayConfigs === 'object'
-        ? Object.values(empDayConfigs).some((day) => day
-          && (day.start || day.entry) && (day.end || day.exit)
-          && !(
-            (day.start || day.entry) === '08:00'
-            && (day.end || day.exit) === '17:00'
-          ))
-        : false;
-      const isAutoFilledEmployeeSchedule = !empDayConfigsFilled
-        && (!employeeSchedule?.parsed
-          || ((employeeSchedule.start || '') === '08:00' && (employeeSchedule.end || '') === '17:00'));
+      const resolved = resolveDaySchedule({
+        scale: null,
+        employee: empRes.rows[0]?.work_schedule,
+        organizationSchedule: empRes.rows[0]?.organization_work_schedule,
+        isoDow: normalizeDow(dow),
+      });
 
-      const hasExplicitEmployeeSchedule = employeeSchedule
-        && !isAutoFilledEmployeeSchedule;
+      // O valor legado criado automaticamente no cadastro não deve bloquear o
+      // global: o formulário de colaboradores pré-preenche 08:00-17:00 com um
+      // dayConfig idêntico dia a dia, e esse objeto vazio de intenção era
+      // aceito como jornada explícita -- batendo o ponto contra 08:00 mesmo com
+      // a jornada global em 07:00.
+      const employeeSchedule = parseWorkSchedule(empRes.rows[0]?.work_schedule, normalizeDow(dow));
+      const isAutoFilled = isAutoFilledJornada(empRes.rows[0]?.work_schedule);
+      const individualIsExplicit = employeeSchedule.entry != null && !isAutoFilled;
 
-      if (hasExplicitEmployeeSchedule) {
-        scheduleStart = employeeSchedule.start;
-        scheduleEnd = employeeSchedule.end;
+      if (individualIsExplicit) {
+        scheduleStart = hhmmOf(resolved.entry);
+        scheduleEnd = hhmmOf(resolved.exit);
         scheduleSource = 'JORNADA_FUNCIONARIO';
-      } else if (dailyConfig) {
-        if (dailyConfig.enabled === false) globalDayOff = true;
-        else {
-          scheduleStart = dailyConfig.start || dailyConfig.entry;
-          scheduleEnd = dailyConfig.end || dailyConfig.exit;
-          scheduleSource = 'JORNADA_GLOBAL';
-        }
-      } else if (organizationSchedule) {
-        const workDays = globalConfig?.work_days;
-        if (Array.isArray(workDays) && !workDays.includes(dow)) globalDayOff = true;
-        else {
-          scheduleStart = organizationSchedule.start;
-          scheduleEnd = organizationSchedule.end;
-          scheduleSource = 'JORNADA_GLOBAL';
-        }
+      } else if (resolved.isWorkday === false) {
+        // A folga pode vir do cadastro do colaborador ou da jornada global; a
+        // mensagem precisa dizer qual, senão o gestor procura a configuração
+        // errada quando a batida é recusada.
+        globalDayOff = true;
+        scheduleSource = resolved.source === 'JORNADA_FUNCIONARIO'
+          ? 'JORNADA_FUNCIONARIO'
+          : 'JORNADA_GLOBAL';
+      } else if (resolved.source === 'JORNADA_GLOBAL') {
+        scheduleStart = hhmmOf(resolved.entry);
+        scheduleEnd = hhmmOf(resolved.exit);
+        scheduleSource = 'JORNADA_GLOBAL';
       } else {
-        scheduleStart = '08:00';
-        scheduleEnd = '17:00';
+        scheduleStart = DEFAULT_ENTRY;
+        scheduleEnd = DEFAULT_EXIT;
         scheduleSource = 'PADRAO';
       }
 
       if (globalDayOff) {
         return res.status(403).json({
-          error: 'Hoje é dia de folga conforme a jornada global configurada pela empresa.',
-          code: 'GLOBAL_SCHEDULE_DAY_OFF',
-          schedule_source: 'JORNADA_GLOBAL',
+          error: scheduleSource === 'JORNADA_FUNCIONARIO'
+            ? 'Hoje é dia de folga conforme a jornada cadastrada para este colaborador.'
+            : 'Hoje é dia de folga conforme a jornada global configurada pela empresa.',
+          code: scheduleSource === 'JORNADA_FUNCIONARIO' ? 'EMPLOYEE_SCHEDULE_DAY_OFF' : 'GLOBAL_SCHEDULE_DAY_OFF',
+          schedule_source: scheduleSource,
           schedule: null,
         });
       }
