@@ -794,9 +794,25 @@ router.post('/promoter-app/checkin', authPromoterApp, async (req, res) => {
 
     // Log the attempt either way. A refused check-in is the row an operator
     // needs when the promoter calls saying they were standing right there.
+    //
+    // The RH tracks people through employees.id, but req.agencyPromoterId is
+    // agency_promoters.id. Those are different ids for the same person, and
+    // writing the promoter id here left every row invisible to the tracking
+    // screen even though the insert succeeded. Resolve the employee link.
+    let linkedEmployeeId = null;
+    try {
+      const empR = await query(
+        `SELECT employee_id FROM agency_promoters WHERE id = $1`, [req.agencyPromoterId]
+      );
+      linkedEmployeeId = empR.rows[0]?.employee_id || null;
+    } catch (_) { /* promoter without employee link */ }
+
     await recordGeofenceAttempt(query, {
       organizationId: unit?.organization_id || null,
-      promoterId: req.agencyPromoterId,
+      // Fall back to the promoter id when there is no employee link: an
+      // external promoter has no employee record, and losing the attempt would
+      // be worse than storing an id the RH filter will not match.
+      promoterId: linkedEmployeeId || req.agencyPromoterId,
       pdvId: unit?.unit_id || null,
       latitude: lat,
       longitude: lng,

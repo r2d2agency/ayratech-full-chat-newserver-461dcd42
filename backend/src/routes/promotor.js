@@ -187,6 +187,48 @@ async function tableExists(tableName) {
   return Boolean(result.rows[0]?.table_name);
 }
 
+// Geofence check-in attempts: every attempt, accepted or refused.
+//
+// pdv_visits only holds visits that actually happened, so a promoter turned
+// away by the geofence left no row anywhere -- "I was standing right there" was
+// unanswerable. This records the attempt itself.
+//
+// Created at runtime rather than from backend/schema-pdv-geofence-attempts.sql:
+// nothing in this project loads those .sql files, the DDL runs from the route
+// that needs it, which is why the table has to be declared here too.
+let geofenceAttemptsReady = null;
+async function ensureGeofenceAttemptsTable() {
+  if (geofenceAttemptsReady) return geofenceAttemptsReady;
+  geofenceAttemptsReady = (async () => {
+    await query(`CREATE TABLE IF NOT EXISTS pdv_geofence_attempts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID,
+      promoter_id UUID,
+      pdv_id UUID,
+      attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      latitude DOUBLE PRECISION,
+      longitude DOUBLE PRECISION,
+      accuracy_meters DOUBLE PRECISION,
+      accepted BOOLEAN NOT NULL DEFAULT false,
+      matched_by VARCHAR(20),
+      mode VARCHAR(20),
+      distance_meters DOUBLE PRECISION,
+      radius_meters DOUBLE PRECISION,
+      polygon_vertices INTEGER,
+      reason_code VARCHAR(40),
+      reason TEXT,
+      action VARCHAR(20) NOT NULL DEFAULT 'checkin',
+      justification TEXT,
+      device_info TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_pdv_geo_att_promoter ON pdv_geofence_attempts(promoter_id, attempt_at DESC)`).catch(() => {});
+    await query(`CREATE INDEX IF NOT EXISTS idx_pdv_geo_att_org ON pdv_geofence_attempts(organization_id, attempt_at DESC)`).catch(() => {});
+    await query(`CREATE INDEX IF NOT EXISTS idx_pdv_geo_att_refused ON pdv_geofence_attempts(organization_id, accepted, attempt_at DESC)`).catch(() => {});
+  })();
+  try { await geofenceAttemptsReady; } catch (e) { geofenceAttemptsReady = null; throw e; }
+}
+
 async function isOrgAdmin(userId, orgId) {
   if (!userId || !orgId) return false;
   const r = await query(
@@ -1133,6 +1175,7 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
         // A refused punch left no trace anywhere: pdv_visits only holds visits
         // that happened. Log it so the manager can see where the promoter was
         // when the app turned the punch away.
+        await ensureGeofenceAttemptsTable().catch(() => {});
         await recordGeofenceAttempt(query, {
           organizationId: req.organizationId,
           promoterId: req.employeeId,
@@ -2419,7 +2462,9 @@ router.get('/rh/location-history', async (req, res) => {
     // showed, because employee_location_history only starts once a visit exists.
     let attempts = [];
     try {
-      const hasAttempts = await tableExists('public.pdv_geofence_attempts');
+      const hasAttempts = await ensureGeofenceAttemptsTable()
+        .then(() => true)
+        .catch(() => tableExists('public.pdv_geofence_attempts'));
       if (hasAttempts) {
         const r = await query(
           `SELECT a.id, a.pdv_id, p.name AS pdv_name, p.type AS pdv_type,
@@ -2429,7 +2474,9 @@ router.get('/rh/location-history', async (req, res) => {
                   TO_CHAR(a.attempt_at AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS') AS attempt_local
            FROM pdv_geofence_attempts a
            LEFT JOIN pdvs p ON p.id = a.pdv_id
-           WHERE a.organization_id = $1 AND a.promoter_id = $2
+           WHERE a.organization_id = $1
+             AND (a.promoter_id = $2 OR a.promoter_id IN (
+                    SELECT id FROM agency_promoters WHERE employee_id = $2))
              AND (a.attempt_at AT TIME ZONE 'America/Sao_Paulo')::date = $3::date
            ORDER BY a.attempt_at ASC`,
           [orgId, employee_id, date]
@@ -2453,7 +2500,7 @@ router.get('/rh/geofence-attempts', async (req, res) => {
     const orgId = await resolveOrganizationId(req);
     if (!orgId) return res.status(401).json({ error: 'organization_id missing' });
 
-    if (!(await tableExists('public.pdv_geofence_attempts'))) {
+    if (!await ensureGeofenceAttemptsTable().then(() => true).catch(() => false)) {
       return res.json({ attempts: [], summary: { accepted: 0, refused: 0 } });
     }
 
@@ -2462,7 +2509,14 @@ router.get('/rh/geofence-attempts', async (req, res) => {
     const params = [orgId];
     const add = (clause, value) => { params.push(value); where.push(clause.replace('$?', `$${params.length}`)); };
 
-    if (employee_id) add('a.promoter_id = $?', employee_id);
+    // An attempt may be stored under employees.id (internal promoter or punch)
+    // or agency_promoters.id (external promoter with no employee record).
+    // Match both so the listing does not silently omit one of them.
+    if (employee_id) {
+      params.push(employee_id);
+      where.push(`(a.promoter_id = $${params.length} OR a.promoter_id IN (
+        SELECT id FROM agency_promoters WHERE employee_id = $${params.length}))`);
+    }
     if (pdv_id) add('a.pdv_id = $?', pdv_id);
     if (result === 'accepted') where.push('a.accepted = true');
     else if (result === 'refused') where.push('a.accepted = false');
@@ -2472,7 +2526,8 @@ router.get('/rh/geofence-attempts', async (req, res) => {
 
     const cap = Math.min(Number(limit) || 200, 1000);
     const rows = await query(
-      `SELECT a.id, a.promoter_id, e.full_name AS employee_name,
+      `SELECT a.id, a.promoter_id,
+              COALESCE(e.full_name, ap.name) AS employee_name,
               a.pdv_id, p.name AS pdv_name, p.type AS pdv_type,
               a.latitude, a.longitude, a.accuracy_meters,
               a.accepted, a.matched_by, a.mode, a.distance_meters, a.radius_meters,
@@ -2480,6 +2535,7 @@ router.get('/rh/geofence-attempts', async (req, res) => {
               TO_CHAR(a.attempt_at AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS') AS attempt_local
          FROM pdv_geofence_attempts a
          LEFT JOIN employees e ON e.id = a.promoter_id
+         LEFT JOIN agency_promoters ap ON ap.id = a.promoter_id
          LEFT JOIN pdvs p ON p.id = a.pdv_id
         WHERE ${where.join(' AND ')}
         ORDER BY a.attempt_at DESC
