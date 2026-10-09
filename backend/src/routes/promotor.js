@@ -388,6 +388,9 @@ router.get('/home', authenticatePromotor, async (req, res) => {
     }
 
     // ===== TODAY'S ROUTES =====
+    // Inclui rotas onde o promotor é titular OU está vinculado como apoio
+    // (route_person_assignments ativa). Sem esse vínculo, o promotor de apoio
+    // não via a própria rota na tela inicial do app.
     let todayRoutes = [];
     try {
       const routesRes = await query(
@@ -397,13 +400,21 @@ router.get('/home', authenticatePromotor, async (req, res) => {
          p.geofence_polygon as pdv_geofence_polygon,
          b.name as brand_name, b.logo_url as brand_logo,
          bc.name as checklist_name,
+         CASE WHEN r.promoter_id = $1 THEN 'titular' ELSE 'apoio' END as promoter_role,
          (SELECT COUNT(*) FROM route_product_executions rpe WHERE rpe.route_id = r.id) as product_count,
          (SELECT COUNT(*) FROM route_product_executions rpe WHERE rpe.route_id = r.id AND rpe.status = 'completed') as products_done
          FROM merch_routes r
          LEFT JOIN pdvs p ON p.id = r.pdv_id
          LEFT JOIN merch_brands b ON b.id = r.brand_id
          LEFT JOIN brand_checklists bc ON bc.id = r.checklist_id
-         WHERE r.promoter_id = $1 AND r.visit_date = $2
+         WHERE r.visit_date = $2 AND (
+           r.promoter_id = $1
+           OR EXISTS (
+             SELECT 1 FROM route_person_assignments rpa
+             WHERE rpa.route_id = r.id AND rpa.employee_id = $1
+               AND COALESCE(rpa.active, true) = true
+           )
+         )
          ORDER BY r.scheduled_time, r.created_at`,
         [empId, today]
       );
@@ -418,6 +429,7 @@ router.get('/home', authenticatePromotor, async (req, res) => {
              NULL::jsonb as pdv_geofence_polygon,
              b.name as brand_name, b.logo_url as brand_logo,
              NULL::text as checklist_name,
+             'titular'::text as promoter_role,
              0::bigint as product_count,
              0::bigint as products_done
              FROM merch_routes r
@@ -439,6 +451,7 @@ router.get('/home', authenticatePromotor, async (req, res) => {
                  NULL::text as brand_name,
                  NULL::text as brand_logo,
                  NULL::text as checklist_name,
+                 'titular'::text as promoter_role,
                  0::bigint as product_count,
                  0::bigint as products_done
                  FROM merch_routes r
