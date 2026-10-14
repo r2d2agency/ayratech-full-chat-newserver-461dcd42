@@ -993,7 +993,7 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
             SELECT punched_at,
                    FLOOR(EXTRACT(EPOCH FROM (NOW() - punched_at)) / 60) AS elapsed_minutes
             FROM time_punches
-            WHERE employee_id = $1 AND punched_at::date = $2 AND punch_type = 'saida_intervalo'
+            WHERE employee_id = $1 AND (punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $2 AND punch_type = 'saida_intervalo'
             ORDER BY punched_at DESC LIMIT 1`, [req.employeeId, today]);
           const breakOut = lastBreak.rows[0];
           if (breakOut) {
@@ -1251,7 +1251,10 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
     if (geo_status === 'fora_area' || geo_status === 'excecao') {
       await query(
         `INSERT INTO time_alerts (organization_id, employee_id, alert_type, alert_date, description) VALUES ($1,$2,'fora_pdv',$3,$4)`,
-        [req.organizationId, req.employeeId, new Date().toISOString().slice(0,10), `Ponto registrado ${Math.round(distance)}m do PDV (${geo_status})`]
+        // Dia civil de Brasilia: `toISOString()` e UTC e, entre 21:00 e 23:59,
+        // jogava o alerta do ponto de hoje para o dia seguinte (o mesmo atraso
+        // de um dia que aparecia no consolidado/monitor).
+        [req.organizationId, req.employeeId, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()), `Ponto registrado ${Math.round(distance)}m do PDV (${geo_status})`]
       );
     }
 
@@ -1275,7 +1278,7 @@ router.post('/overtime-request', authenticatePromotor, async (req, res) => {
   try {
     const { reason, request_date, requested_start, requested_end } = req.body;
     if (!reason) return res.status(400).json({ error: 'Informe o motivo da hora extra' });
-    const date = request_date || new Date().toISOString().slice(0, 10);
+    const date = request_date || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 
     // Check for existing pending request
     const existing = await query(
@@ -1421,8 +1424,8 @@ router.get('/punches', authenticatePromotor, async (req, res) => {
     let sql = `SELECT tp.*, p.name as pdv_name FROM time_punches tp LEFT JOIN pdvs p ON p.id = tp.pdv_id WHERE tp.employee_id = $1`;
     const params = [req.employeeId];
     let idx = 2;
-    if (start_date) { sql += ` AND tp.punched_at::date >= $${idx++}`; params.push(start_date); }
-    if (end_date) { sql += ` AND tp.punched_at::date <= $${idx++}`; params.push(end_date); }
+    if (start_date) { sql += ` AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date >= $${idx++}`; params.push(start_date); }
+    if (end_date) { sql += ` AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date <= $${idx++}`; params.push(end_date); }
     sql += ` ORDER BY tp.punched_at DESC LIMIT 200`;
     res.json((await query(sql, params)).rows);
   } catch (err) {
@@ -2168,19 +2171,22 @@ router.put('/rh/inbound-documents/:id', async (req, res) => {
 router.get('/rh/punch-monitor', async (req, res) => {
   try {
     const orgId = await resolveOrganizationId(req);
-    const today = new Date().toISOString().slice(0, 10);
+    // Dia civil de Brasilia. `new Date().toISOString()` e o UTC do servidor:
+    // entre 21:00 e 23:59 de Brasilia ele ainda ontem para o consolidado,
+    // que e o atraso de um dia que aparecia no monitor.
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 
     const [punched, notPunched, alerts, outsidePdv] = await Promise.all([
       query(`SELECT DISTINCT ON (tp.employee_id) tp.*, e.full_name, e.position, p.name as pdv_name
              FROM time_punches tp JOIN employees e ON e.id = tp.employee_id LEFT JOIN pdvs p ON p.id = tp.pdv_id
-             WHERE tp.organization_id = $1 AND tp.punched_at::date = $2 ORDER BY tp.employee_id, tp.punched_at DESC`, [orgId, today]),
+             WHERE tp.organization_id = $1 AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $2 ORDER BY tp.employee_id, tp.punched_at DESC`, [orgId, today]),
       query(`SELECT e.id, e.full_name, e.position, e.work_schedule, d.name as department_name
              FROM employees e LEFT JOIN rh_departments d ON d.id = e.department_id
              WHERE e.organization_id = $1 AND e.status = 'ativo'
-               AND NOT EXISTS (SELECT 1 FROM time_punches tp WHERE tp.employee_id = e.id AND tp.punched_at::date = $2)
+               AND NOT EXISTS (SELECT 1 FROM time_punches tp WHERE tp.employee_id = e.id AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $2)
              ORDER BY e.full_name`, [orgId, today]),
       query(`SELECT ta.*, e.full_name FROM time_alerts ta JOIN employees e ON e.id = ta.employee_id WHERE ta.organization_id = $1 AND ta.alert_date = $2 AND ta.resolved = false ORDER BY ta.created_at DESC`, [orgId, today]),
-      query(`SELECT tp.*, e.full_name, p.name as pdv_name FROM time_punches tp JOIN employees e ON e.id = tp.employee_id LEFT JOIN pdvs p ON p.id = tp.pdv_id WHERE tp.organization_id = $1 AND tp.punched_at::date = $2 AND tp.geo_status IN ('fora_area','excecao') ORDER BY tp.punched_at DESC`, [orgId, today]),
+      query(`SELECT tp.*, e.full_name, p.name as pdv_name FROM time_punches tp JOIN employees e ON e.id = tp.employee_id LEFT JOIN pdvs p ON p.id = tp.pdv_id WHERE tp.organization_id = $1 AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $2 AND tp.geo_status IN ('fora_area','excecao') ORDER BY tp.punched_at DESC`, [orgId, today]),
     ]);
 
     res.json({
@@ -2383,7 +2389,10 @@ router.get('/rh/live-map', async (req, res) => {
       return res.status(401).json({ error: 'organization_id missing', employees: [], pdvs: [], regions: [] });
     }
 
-    const today = new Date().toISOString().slice(0, 10);
+    // Dia civil de Brasilia. `toISOString()` e UTC: entre 21:00 e 23:59 de
+    // Brasilia as batidas de hoje caiam no dia seguinte e o mapa mostrava
+    // o colaborador como se nao tivesse batido ponto.
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
     const [hasLiveLocations, hasServiceRegions, hasMerchBrands, hasMerchPdvBrands] = await Promise.all([
       tableExists('public.employee_live_locations'),
       tableExists('public.service_regions'),
@@ -2409,7 +2418,7 @@ router.get('/rh/live-map', async (req, res) => {
            JOIN merch_brands mb ON mb.id = mpb.brand_id
            JOIN time_punches tp2 ON tp2.pdv_id = mpb.pdv_id
            WHERE tp2.employee_id = e.id
-             AND tp2.punched_at::date = $2
+             AND (tp2.punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $2
              AND mpb.active = true) as current_brands`
       : `NULL::text as current_brands`;
 
@@ -2418,11 +2427,11 @@ router.get('/rh/live-map', async (req, res) => {
         SELECT e.id, e.full_name, e.position, e.worker_profile, e.work_schedule, e.photo_url,
           e.home_latitude, e.home_longitude,
           ${liveLocationSelect}
-          (SELECT COUNT(*) FROM time_punches tp WHERE tp.employee_id = e.id AND tp.punched_at::date = $2) as punch_count,
-          (SELECT tp.punch_type FROM time_punches tp WHERE tp.employee_id = e.id AND tp.punched_at::date = $2 ORDER BY tp.punched_at DESC LIMIT 1) as last_punch_type,
-          (SELECT tp.punched_at FROM time_punches tp WHERE tp.employee_id = e.id AND tp.punched_at::date = $2 ORDER BY tp.punched_at DESC LIMIT 1) as last_punch_at,
-          (SELECT tp.pdv_id FROM time_punches tp WHERE tp.employee_id = e.id AND tp.punched_at::date = $2 ORDER BY tp.punched_at DESC LIMIT 1) as last_pdv_id,
-          (SELECT p.name FROM time_punches tp JOIN pdvs p ON p.id = tp.pdv_id WHERE tp.employee_id = e.id AND tp.punched_at::date = $2 ORDER BY tp.punched_at DESC LIMIT 1) as last_pdv_name,
+          (SELECT COUNT(*) FROM time_punches tp WHERE tp.employee_id = e.id AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $2) as punch_count,
+          (SELECT tp.punch_type FROM time_punches tp WHERE tp.employee_id = e.id AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $2 ORDER BY tp.punched_at DESC LIMIT 1) as last_punch_type,
+          (SELECT tp.punched_at FROM time_punches tp WHERE tp.employee_id = e.id AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $2 ORDER BY tp.punched_at DESC LIMIT 1) as last_punch_at,
+          (SELECT tp.pdv_id FROM time_punches tp WHERE tp.employee_id = e.id AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $2 ORDER BY tp.punched_at DESC LIMIT 1) as last_pdv_id,
+          (SELECT p.name FROM time_punches tp JOIN pdvs p ON p.id = tp.pdv_id WHERE tp.employee_id = e.id AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $2 ORDER BY tp.punched_at DESC LIMIT 1) as last_pdv_name,
           ${currentBrandsSelect}
         FROM employees e
         ${liveLocationJoin}
@@ -2585,7 +2594,7 @@ router.get('/rh/trackable-employees', async (req, res) => {
     if (!orgId) return res.status(401).json({ error: 'organization_id missing' });
 
     const { date } = req.query;
-    const targetDate = date || new Date().toISOString().slice(0, 10);
+    const targetDate = date || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 
     const hasTable = await tableExists('public.employee_location_history');
     if (!hasTable) return res.json([]);
@@ -2596,7 +2605,7 @@ router.get('/rh/trackable-employees', async (req, res) => {
               MIN(lh.recorded_at) as first_point,
               MAX(lh.recorded_at) as last_point
        FROM employees e
-       JOIN employee_location_history lh ON lh.employee_id = e.id AND lh.recorded_at::date = $2
+       JOIN employee_location_history lh ON lh.employee_id = e.id AND (lh.recorded_at AT TIME ZONE 'America/Sao_Paulo')::date = $2
        WHERE e.organization_id = $1 AND e.status = 'ativo'
        GROUP BY e.id, e.full_name, e.photo_url, e.position, e.worker_profile
        ORDER BY e.full_name`,
@@ -2733,13 +2742,15 @@ router.get('/supervisor/team', authenticatePromotor, requireSupervisor, async (r
     }
 
     if (existingTables.has('attendance_punches')) {
-      sql += `, (SELECT p2.pdv_name FROM attendance_punches p2 WHERE p2.employee_id = e.id AND p2.punched_at::date = CURRENT_DATE ORDER BY p2.punched_at DESC LIMIT 1) as last_pdv_name`;
+      // CURRENT_DATE e a data da sessao do banco (UTC em servidor UTC), que
+      // entre 21:00 e 23:59 de Brasilia ja e o dia seguinte.
+      sql += `, (SELECT p2.pdv_name FROM attendance_punches p2 WHERE p2.employee_id = e.id AND (p2.punched_at AT TIME ZONE 'America/Sao_Paulo')::date = CURRENT_DATE ORDER BY p2.punched_at DESC LIMIT 1) as last_pdv_name`;
     } else {
       sql += `, NULL as last_pdv_name`;
     }
 
     if (existingTables.has('merch_routes')) {
-      sql += `, (SELECT COUNT(*) FROM merch_routes mr WHERE mr.promoter_id = e.id AND mr.visit_date = CURRENT_DATE) as today_routes_count`;
+      sql += `, (SELECT COUNT(*) FROM merch_routes mr WHERE mr.promoter_id = e.id AND mr.visit_date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date) as today_routes_count`;
     } else {
       sql += `, 0 as today_routes_count`;
     }

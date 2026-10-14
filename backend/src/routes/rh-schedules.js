@@ -353,10 +353,12 @@ router.post('/totem/punch', totemAuth, async (req, res) => {
     // Determine punch_type automatically if not provided (alternate entrada/saida)
     let type = punch_type;
     if (!type) {
-      const today = new Date().toISOString().slice(0,10);
+      // Dia civil de Brasilia. `toISOString()` e UTC do servidor: entre 21:00 e
+      // 23:59 aqui ainda e ontem, e o totem repetia o ultimo tipo do dia errado.
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
       const last = await query(
         `SELECT punch_type FROM time_punches
-         WHERE employee_id=$1 AND punched_at::date=$2
+         WHERE employee_id=$1 AND (punched_at AT TIME ZONE 'America/Sao_Paulo')::date=$2
          ORDER BY punched_at DESC LIMIT 1`,
         [employee_id, today]
       );
@@ -387,11 +389,13 @@ function pad(s, n, ch = '0') { s = String(s || ''); return s.length >= n ? s.sli
 function padR(s, n, ch = ' ') { s = String(s || ''); return s.length >= n ? s.slice(0,n) : s + ch.repeat(n - s.length); }
 function onlyDigits(s) { return String(s || '').replace(/\D/g,''); }
 function afdDate(d) {
-  const dt = new Date(d);
+  // Data/hora do AFD tem que ser a civil de Brasilia; `getDate()`/`getHours()`
+  // usam o fuso do servidor e, em UTC, atrasavam um dia nas batidas da noite.
+  const dt = new Date(new Date(d).getTime() + (-3 * 60 + new Date(d).getTimezoneOffset()) * 60000);
   return `${pad(dt.getDate(),2)}${pad(dt.getMonth()+1,2)}${dt.getFullYear()}`;
 }
 function afdTime(d) {
-  const dt = new Date(d);
+  const dt = new Date(new Date(d).getTime() + (-3 * 60 + new Date(d).getTimezoneOffset()) * 60000);
   return `${pad(dt.getHours(),2)}${pad(dt.getMinutes(),2)}`;
 }
 
@@ -402,18 +406,21 @@ router.get('/afd/export', authenticate, async (req, res) => {
     const { start, end } = req.query;
     if (!start || !end) return res.status(400).json({ error: 'start e end são obrigatórios (YYYY-MM-DD)' });
 
+    // `toISOString()` e UTC do servidor; entre 21:00 e 23:59 de Brasilia o AFD
+    // era emitido com a data do dia seguinte.
+    const afdNow = new Date(new Date().getTime() + (-3 * 60 + new Date().getTimezoneOffset()) * 60000);
     const org = await query(`SELECT name, cnpj FROM organizations WHERE id=$1`, [orgId]);
     const punches = await query(
       `SELECT tp.*, e.cpf, e.pis, e.full_name
        FROM time_punches tp
        JOIN employees e ON e.id = tp.employee_id
        WHERE tp.organization_id = $1
-         AND tp.punched_at::date BETWEEN $2 AND $3
+         AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $2 AND $3
        ORDER BY tp.punched_at ASC`,
       [orgId, start, end]
     );
 
-    const now = new Date();
+    const now = afdNow;
     const lines = [];
     let nsr = 1;
     const cnpj = pad(onlyDigits(org.rows[0]?.cnpj), 14);
