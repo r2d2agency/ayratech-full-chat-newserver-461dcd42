@@ -375,11 +375,17 @@ export default function PromotorHome() {
 
       const baseUrl = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
       
-      // Buscamos a rota ativa do PDV para usar o id correto.
-      const activeRouteForPdv = todayRoutes.find((r: any) => r.pdv_id === pdvId && r.status !== 'completed');
+      // Buscamos a rota do PDV para usar o id correto.
+      // Não filtramos por status aqui: se a rota do dia do PDV não aceitar
+      // check-in, quem responde com o motivo real é o servidor. Filtrar antes
+      // da chamada produzia um erro falso de "nenhuma rota ativa" quando a
+      // rota existia e estava visível na tela (ex.: cache desatualizado).
+      const routesForPdv = todayRoutes.filter((r: any) => r.pdv_id === pdvId);
+      const activeRouteForPdv = routesForPdv.find((r: any) => r.status !== 'completed')
+        || routesForPdv[routesForPdv.length - 1];
       if (!activeRouteForPdv?.id) {
-        logger.warn('[handlePdvCheckin] Nenhuma rota ativa encontrada', { pdvId, todayRoutes });
-        throw new Error('Nenhuma rota ativa encontrada para este PDV.');
+        logger.warn('[handlePdvCheckin] Nenhuma rota encontrada para este PDV', { pdvId, routesForPdv });
+        throw new Error('Nenhuma rota encontrada para este PDV. Fale com o supervisor para liberar sua rota.');
       }
       
       const url = `${baseUrl}/api/merch/promotor/routes/${activeRouteForPdv.id}/checkin`;

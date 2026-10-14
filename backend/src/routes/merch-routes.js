@@ -3589,16 +3589,10 @@ router.post('/promotor/routes/:id/checkin', promotorAuth, async (req, res) => {
       );
     }
 
-    // Auto-fechar rotas abertas de OUTROS PDVs para não ficarem ativas
-    // enquanto o promotor trabalha em um estabelecimento diferente.
-    try {
-      await query(
-        `UPDATE merch_routes SET status='completed', checkout_at=NOW(), completed_at=NOW(),
-           progress_pct=100, updated_at=NOW()
-         WHERE promoter_id=$1 AND pdv_id != $2 AND visit_date=$3 AND status IN ('scheduled','confirmed','in_progress')`,
-        [req.employeeId, pdvId, route.rows[0].visit_date]
-      );
-    } catch (e) { logError('promotor.checkin.auto_close_other_pdvs', e); }
+    // Rotas de outros PDVs permanecem intencionalmente abertas.
+    // O checkout é sempre uma ação manual do promotor: qualquer fechamento
+    // automático aqui gravaria um checkout sem o promotor ter saido da loja e
+    // poderia travar o check-in do próximo PDV do dia.
 
     if (effectivePhotoUrl) {
       await query(
@@ -4222,15 +4216,8 @@ router.post('/promotor/routes/:id/checkout', promotorAuth, async (req, res) => {
       [req.params.id, latitude, longitude, notes, req.employeeId]
     );
 
-    // Auto-fechar rotas abertas de OUTROS PDVs para não ficarem ativas
-    try {
-      await query(
-        `UPDATE merch_routes SET status='completed', checkout_at=NOW(), completed_at=NOW(),
-           progress_pct=100, updated_at=NOW()
-         WHERE promoter_id=$1 AND pdv_id != $2 AND visit_date=$3 AND status IN ('scheduled','confirmed','in_progress')`,
-        [req.employeeId, route.pdv_id, todayStr]
-      );
-    } catch (e) { logError('promotor.checkout.auto_close_other_pdvs', e); }
+    // Rotas de outros PDVs permanecem abertas: o checkout é sempre manual.
+    // Fechá-las aqui gravaria check-out sem o promotor ter saido dessas lojas.
 
     // Timeline: route completed
     try {
