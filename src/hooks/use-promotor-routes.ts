@@ -67,7 +67,7 @@ export function usePromotorCheckin() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...data }: any) => promotorApi<any>(`/api/merch/promotor/routes/${id}/checkin`, { method: 'POST', body: data }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['promotor-agenda'] }); qc.invalidateQueries({ queryKey: ['promotor-route'] }); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['promotor-agenda'] }); qc.invalidateQueries({ queryKey: ['promotor-route'] }); qc.invalidateQueries({ queryKey: ['promotor-home'] }); },
   });
 }
 
@@ -75,7 +75,7 @@ export function usePromotorCheckout() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...data }: any) => promotorApi<any>(`/api/merch/promotor/routes/${id}/checkout`, { method: 'POST', body: data }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['promotor-agenda'] }); qc.invalidateQueries({ queryKey: ['promotor-route'] }); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['promotor-agenda'] }); qc.invalidateQueries({ queryKey: ['promotor-route'] }); qc.invalidateQueries({ queryKey: ['promotor-home'] }); },
   });
 }
 

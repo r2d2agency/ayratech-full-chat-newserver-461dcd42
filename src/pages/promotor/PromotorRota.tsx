@@ -1408,19 +1408,61 @@ export default function PromotorRota() {
       }
       // Removed toast per user request
 
+      // Otimista offline: marcar rota como in_progress no cache para UI funcionar sem rede
+      const nowIso = new Date().toISOString();
+      const lat = pos?.coords.latitude ?? null;
+      const lng = pos?.coords.longitude ?? null;
+      qc.setQueryData(['promotor-route', id], (old: any) => old ? {
+        ...old,
+        status: 'in_progress',
+        checkin_at: nowIso,
+        checkin_latitude: lat,
+        checkin_longitude: lng,
+        checkin_device: navigator.userAgent || 'Unknown Device',
+        checkin_photo_url: effectivePhotoUrl || old.checkin_photo_url,
+      } : old);
+
+      // Otimista: atualizar today_routes e pdv_visits na Home
+      qc.setQueryData(['promotor-home'], (old: any) => {
+        if (!old) return old;
+        const todayRoutes = (old.today_routes || []).map((r: any) =>
+          r.id === id ? { ...r, status: 'in_progress', checkin_at: nowIso } : r
+        );
+        const pdvVisits = [...(old.pdv_visits || [])];
+        const visitIdx = pdvVisits.findIndex((v: any) => v.pdv_id === route?.pdv_id && !v.checkin_at);
+        if (visitIdx >= 0) {
+          pdvVisits[visitIdx] = {
+            ...pdvVisits[visitIdx],
+            checkin_at: nowIso,
+            checkin_latitude: lat,
+            checkin_longitude: lng,
+            status: 'active',
+          };
+        }
+        return { ...old, today_routes: todayRoutes, pdv_visits: pdvVisits };
+      });
+
+      // Otimista: atualizar agenda
+      qc.setQueryData(['promotor-agenda'], (old: any) => {
+        if (!Array.isArray(old)) return old;
+        return old.map((r: any) =>
+          r.id === id ? { ...r, status: 'in_progress', checkin_at: nowIso } : r
+        );
+      });
+
       // Otimista: libera a UI imediatamente para o promotor seguir o trabalho
       // sem esperar o refetch (a chamada de check-in é processada em background).
       setCheckinSubmitted(true);
-      // We still want to refetch the route data to show updated status, 
+      // We still want to refetch the route data to show updated status,
       // but we do it immediately without waiting for the checkin call to finish.
       // The backend check-in usually takes care of the status.
-      setTimeout(() => refetch(), 1000); 
+      setTimeout(() => refetch(), 1000);
     } catch (err: any) {
       (handleCheckin as any)._running = false;
       logger.error('[handleCheckin] Erro fatal no check-in', { message: err.message, routeId: id }, err);
       toast.error(err.message || 'Não foi possível realizar o check-in');
     }
-  }, [id, checkin, route, checkinPhotoUrl, isFacialActiveCheckin, faceVerifyAction, isOnline, queueApiCall, refetch, checkinSubmitted]);
+  }, [id, checkin, route, checkinPhotoUrl, isFacialActiveCheckin, faceVerifyAction, isOnline, queueApiCall, refetch, checkinSubmitted, qc]);
 
   const handleCompleteRoute = useCallback(async () => {
     if (!id) return;
@@ -1438,12 +1480,45 @@ export default function PromotorRota() {
       body: { notes: actionForm.notes },
       headers: { 'Authorization': `Bearer ${localStorage.getItem('promotor_token') || localStorage.getItem('auth_token')}` }
     });
-    
+
+    // Otimista offline: marcar rota como concluída no cache para refletir na Home
+    const nowIso = new Date().toISOString();
+    qc.setQueryData(['promotor-route', id], (old: any) => old ? {
+      ...old,
+      status: 'completed',
+      checkout_at: nowIso,
+      completed_at: nowIso,
+      progress_pct: 100,
+      completion_notes: actionForm.notes || old.completion_notes,
+    } : old);
+
+    // Otimista: atualizar pdv_visits e today_routes na Home
+    qc.setQueryData(['promotor-home'], (old: any) => {
+      if (!old) return old;
+      const todayRoutes = (old.today_routes || []).map((r: any) =>
+        r.id === id ? { ...r, status: 'completed', checkout_at: nowIso, progress_pct: 100 } : r
+      );
+      const pdvVisits = [...(old.pdv_visits || [])];
+      const visitIdx = pdvVisits.findIndex((v: any) => v.pdv_id === route?.pdv_id && !v.checkout_at);
+      if (visitIdx >= 0) {
+        pdvVisits[visitIdx] = { ...pdvVisits[visitIdx], checkout_at: nowIso, status: 'completed' };
+      }
+      return { ...old, today_routes: todayRoutes, pdv_visits: pdvVisits };
+    });
+
+    // Otimista: atualizar agenda
+    qc.setQueryData(['promotor-agenda'], (old: any) => {
+      if (!Array.isArray(old)) return old;
+      return old.map((r: any) =>
+        r.id === id ? { ...r, status: 'completed', checkout_at: nowIso, progress_pct: 100 } : r
+      );
+    });
+
     // Optimistically update UI and redirect immediately
     setShowCompleteRoute(false);
     navigate('/promotor/home');
 
-  }, [id, actionForm.notes, navigate, isFacialActiveCheckin, faceVerifyAction, queueApiCall]);
+  }, [id, actionForm.notes, navigate, isFacialActiveCheckin, faceVerifyAction, queueApiCall, qc, route?.pdv_id]);
 
   const handlePdvCheckout = useCallback(async () => {
     if (!route?.pdv_id) return;
@@ -1491,6 +1566,16 @@ export default function PromotorRota() {
           dependsOnUploadId: pdvCheckoutPhoto!.replace('local-file://', ''),
         });
       }
+
+      // Otimista offline: fechar PDV no cache para Home não mostrar mais como ativo
+      const nowIso = new Date().toISOString();
+      qc.setQueryData(['promotor-home'], (old: any) => {
+        if (!old) return old;
+        const pdvVisits = (old.pdv_visits || []).map((v: any) =>
+          v.pdv_id === route.pdv_id ? { ...v, checkout_at: nowIso, status: 'completed' } : v
+        );
+        return { ...old, pdv_visits: pdvVisits };
+      });
       // Removed toast per user request
 
       setShowPdvCheckout(false);
@@ -1498,7 +1583,7 @@ export default function PromotorRota() {
     } catch (err: any) {
       toast.error(err.message || 'Erro no checkout do PDV');
     }
-  }, [route?.pdv_id, pdvCheckout, pdvCheckoutPhoto, actionForm, navigate, isOnline, queueApiCall]);
+  }, [route?.pdv_id, pdvCheckout, pdvCheckoutPhoto, actionForm, navigate, isOnline, queueApiCall, qc]);
 
   const handleOpenProduct = useCallback((exec: any) => {
     const routeBrandId = exec.route_brand_id;
