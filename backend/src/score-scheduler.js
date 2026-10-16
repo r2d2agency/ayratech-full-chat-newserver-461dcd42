@@ -42,9 +42,12 @@ export async function executeScoreCalculation() {
     await ensureScoreInfra();
 
     // Get all active promoters with their orgs
+    // O organizacao do promotor de agencia vem da agencia (agency_promoters -> agencies -> organizations),
+    // por isso o join: agency_promoters nao tem organization_id proprio.
     const promoters = await query(`
-      SELECT ap.id as promoter_id, ap.organization_id
+      SELECT ap.id as promoter_id, ag.organization_id
       FROM agency_promoters ap
+      JOIN agencies ag ON ag.id = ap.agency_id
       WHERE ap.status = 'active'
     `);
 
