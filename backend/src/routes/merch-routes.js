@@ -1442,6 +1442,206 @@ router.post('/routes/bulk-delete', async (req, res) => {
   }
 });
 
+// ===== TRANSFERÊNCIA DE ROTAS ENTRE PROMOTORES =====
+// Passa todas as rotas de um promotor (que saiu da empresa) para outro promotor.
+// preview=true apenas devolve o resumo sem alterar nada.
+// Escopo: a partir de from_date (padrão: hoje) e, opcionalmente, até to_date.
+// Apenas admin/superadmin pode transferir.
+
+async function assertCanTransferRoutes(req, res) {
+  const su = await query('SELECT is_superadmin FROM users WHERE id=$1', [req.userId]);
+  const isSu = !!su.rows[0]?.is_superadmin;
+  const mem = await query(`SELECT role FROM organization_members WHERE user_id=$1`, [req.userId]);
+  const isAdmin = mem.rows.some(r => ['owner', 'admin'].includes(r.role));
+  if (!isSu && !isAdmin) {
+    res.status(403).json({ error: 'Apenas admin ou superadmin' });
+    return null;
+  }
+  return { isSu, isAdmin };
+}
+
+// Monta a clause WHERE compartilhada entre preview e execução.
+function buildTransferFilter({ fromPromoterId, orgId, fromDate, toDate, includeCompleted }) {
+  const params = [orgId, fromPromoterId];
+  let sql = `WHERE organization_id = $1 AND promoter_id = $2`;
+  // Sem from_date, transferimos apenas a partir de hoje: rotas passadas
+  // pertencem ao histórico de quem as executou.
+  if (fromDate) { params.push(fromDate); sql += ` AND visit_date >= $${params.length}::date`; }
+  else { sql += ` AND visit_date >= CURRENT_DATE`; }
+  if (toDate) { params.push(toDate); sql += ` AND visit_date <= $${params.length}::date`; }
+  if (!includeCompleted) {
+    sql += ` AND status IN ('scheduled','confirmed','changed','in_progress','not_done','pending_justification')`;
+  }
+  return { sql, params };
+}
+
+router.post('/routes/transfer-promoter', async (req, res) => {
+  try {
+    const guard = await assertCanTransferRoutes(req, res);
+    if (!guard) return;
+
+    const {
+      from_promoter_id, to_promoter_id,
+      from_date, to_date,
+      include_completed = false,
+      preview = false,
+      reason = '',
+    } = req.body || {};
+
+    if (!from_promoter_id || !to_promoter_id) {
+      return res.status(400).json({ error: 'from_promoter_id e to_promoter_id sao obrigatorios' });
+    }
+    if (from_promoter_id === to_promoter_id) {
+      return res.status(400).json({ error: 'O promotor de origem e destino sao o mesmo' });
+    }
+
+    const orgRes = await query('SELECT organization_id FROM organization_members WHERE user_id=$1 LIMIT 1', [req.userId]);
+    let orgId = orgRes.rows[0]?.organization_id;
+
+    // A organizacao e a do promotor de origem: e ela que define o escopo das
+    // rotas que serao transferidas. Isso tambem cobre o superadmin, que pode
+    // nao ter membro em organization_members.
+    const fromOrgRes = await query('SELECT organization_id FROM employees WHERE id=$1', [from_promoter_id]);
+    const fromOrgId = fromOrgRes.rows[0]?.organization_id;
+    if (!fromOrgId) return res.status(404).json({ error: 'Promotor de origem nao encontrado' });
+    if (orgId && orgId !== fromOrgId) {
+      return res.status(403).json({ error: 'O promotor de origem pertence a outra organizacao' });
+    }
+    orgId = fromOrgId;
+
+    // Ambos os promotores precisam existir e estar ativos na mesma organizacao.
+    const empRes = await query(
+      `SELECT id, full_name, worker_profile, status FROM employees
+        WHERE id = ANY($1::uuid[]) AND organization_id = $2`,
+      [[from_promoter_id, to_promoter_id], orgId]
+    );
+    const emps = empRes.rows;
+    const fromEmp = emps.find(e => e.id === from_promoter_id);
+    const toEmp = emps.find(e => e.id === to_promoter_id);
+    if (!fromEmp) return res.status(404).json({ error: 'Promotor de origem nao encontrado' });
+    if (!toEmp) return res.status(404).json({ error: 'Promotor de destino nao encontrado' });
+    if (toEmp.status && toEmp.status !== 'ativo') {
+      return res.status(400).json({ error: 'O promotor de destino nao esta ativo' });
+    }
+
+    const { sql: whereSql, params: whereParams } = buildTransferFilter({
+      fromPromoterId: from_promoter_id, orgId, from_date, to_date, includeCompleted
+    });
+
+    // Resumo por status (para preview e para o retorno da execucao)
+    const summaryRes = await query(
+      `SELECT status, COUNT(*)::int AS total FROM merch_routes ${whereSql} GROUP BY status`,
+      whereParams
+    );
+    const byStatus = {};
+    let total = 0;
+    for (const r of summaryRes.rows) {
+      byStatus[r.status] = r.total;
+      total += r.total;
+    }
+
+    if (preview) {
+      return res.json({
+        ok: true, preview: true, total,
+        by_status: byStatus,
+        from_promoter: { id: fromEmp.id, name: fromEmp.full_name },
+        to_promoter: { id: toEmp.id, name: toEmp.full_name },
+      });
+    }
+
+    if (total === 0) {
+      return res.json({ ok: true, transferred: 0, by_status: byStatus, skipped: 'sem rotas no escopo' });
+    }
+
+    // Rotas a transferir
+    const targetRes = await query(
+      `SELECT id, promoter_id, status, progress_pct FROM merch_routes ${whereSql} FOR UPDATE`,
+      whereParams
+    );
+    const targetIds = targetRes.rows.map(r => r.id);
+
+    // Histórico de atribuição de pessoas (mesmo formato do assign-promoter)
+    try {
+      for (const r of targetRes.rows) {
+        await query(
+          `INSERT INTO route_person_assignment_history (route_id, employee_id, action, reason, changed_by, progress_at_change)
+           VALUES ($1,$2,'replace',$3,$4,$5)`,
+          [r.id, to_promoter_id, reason || 'Transferencia de rotas entre promotores', req.userId, r.progress_pct || 0]
+        );
+      }
+    } catch (e) { logWarn('routes.transfer.history', e); }
+
+    // Auditoria de edicao (um registro por rota alterada)
+    try {
+      for (const r of targetRes.rows) {
+        await query(
+          `INSERT INTO route_edit_audit_logs (route_id, field_changed, old_value, new_value, edited_by, editor_role, source, reason, route_was_completed)
+           VALUES ($1,'promoter_id',$2,$3,$4,'supervisor','web',$5,$6)`,
+          [r.id, from_promoter_id, to_promoter_id, req.userId, reason || 'Transferencia de rotas entre promotores', r.status === 'completed']
+        );
+      }
+    } catch (e) { logWarn('routes.transfer.audit', e); }
+
+    // O supervisor da rota acompanha o novo promotor, quando a rota nao tem
+    // supervisor proprio. Precisa rodar ANTES da troca de promotor, porque a
+    // condicao compara o supervisor com o promotor antigo.
+    try {
+      await query(
+        `UPDATE merch_routes r SET supervisor_id = e.mgr
+           FROM (SELECT id, COALESCE(direct_manager_id, supervisor_id) AS mgr
+                   FROM employees WHERE id = $2) e
+          WHERE r.id = ANY($1::uuid[]) AND e.mgr IS NOT NULL
+            AND (r.supervisor_id IS NULL OR r.supervisor_id = $3)`,
+        [targetIds, to_promoter_id, from_promoter_id]
+      );
+    } catch (e) { logWarn('routes.transfer.supervisor', e); }
+
+    // Transfere de fato
+    const upd = await query(
+      `UPDATE merch_routes SET promoter_id = $2, updated_at = NOW()
+        WHERE id = ANY($1::uuid[])`,
+      [targetIds, to_promoter_id]
+    );
+
+    // O destino passa a constar como executor ativo nas rotas transferidas,
+    // e a promotora que saiu deixa de constar como executor.
+    try {
+      if (await hasTable('route_person_assignments')) {
+        for (const id of targetIds) {
+          await query(
+            `INSERT INTO route_person_assignments (route_id, employee_id, role, assigned_by)
+             SELECT $1,$2,'executor',$3
+              WHERE NOT EXISTS (
+                SELECT 1 FROM route_person_assignments
+                 WHERE route_id=$1 AND employee_id=$2 AND active = true
+              )`,
+            [id, to_promoter_id, req.userId]
+          );
+        }
+        await query(
+          `UPDATE route_person_assignments
+              SET active = false, removed_at = NOW(), reason = $3
+            WHERE route_id = ANY($1::uuid[]) AND employee_id = $2 AND active = true`,
+          [targetIds, from_promoter_id, reason || 'Transferencia de rotas entre promotores']
+        );
+      }
+    } catch (e) { logWarn('routes.transfer.assignments', e); }
+
+    logInfo('routes.transfer_promoter', {
+      from: from_promoter_id, to: to_promoter_id, transferred: upd.rowCount
+    });
+
+    res.json({
+      ok: true, transferred: upd.rowCount, by_status: byStatus,
+      from_promoter: { id: fromEmp.id, name: fromEmp.full_name },
+      to_promoter: { id: toEmp.id, name: toEmp.full_name },
+    });
+  } catch (err) {
+    logError('routes.transfer_promoter', err);
+    res.status(500).json({ error: 'Erro ao transferir rotas', detail: err.message });
+  }
+});
+
 router.delete('/routes/:id', async (req, res) => {
   try {
     const orgRes = await query('SELECT organization_id FROM organization_members WHERE user_id=$1 LIMIT 1', [req.userId]);

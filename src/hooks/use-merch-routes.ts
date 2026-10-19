@@ -125,6 +125,27 @@ export function useBulkDeleteMerchRoutes() {
   });
 }
 
+// Transferencia de rotas de um promotor para outro (admin/superadmin)
+export function useTransferPromoterRoutes() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      from_promoter_id: string;
+      to_promoter_id: string;
+      from_date?: string;
+      to_date?: string;
+      include_completed?: boolean;
+      preview?: boolean;
+      reason?: string;
+    }) => api<any>('/api/merch/routes/transfer-promoter', { method: 'POST', body: data }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['merch-routes'] });
+      qc.invalidateQueries({ queryKey: ['merch-routes-live'] });
+      qc.invalidateQueries({ queryKey: ['merch-route'] });
+    },
+  });
+}
+
 
 
 export function useDuplicateMerchRoute() {

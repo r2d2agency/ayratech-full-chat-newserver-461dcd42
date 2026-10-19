@@ -16,7 +16,7 @@ import { Progress } from "@/components/ui/progress";
 import { Calendar, ChevronLeft, ChevronRight, Plus, MapPin, Clock, User, UserPlus, Eye, Copy, Trash2, Edit, Filter, Repeat, Sparkles, Package, RefreshCw, X, CheckCircle2, Activity, Store, Info, ChevronsUpDown, Check, AlertTriangle, Camera, Boxes } from "lucide-react";
 import { cn } from "@/lib/utils";
 import AIRoutePlanner from "@/components/merch/AIRoutePlanner";
-import { useMerchRoutes, useCreateMerchRoute, useUpdateMerchRoute, useDeleteMerchRoute, useDuplicateMerchRoute, useBulkDeleteMerchRoutes, useBrandChecklists, useBrandPromoters, useRouteMixPreview, useRouteProducts, useAddRouteProduct, useRemoveRouteProduct, useSyncRouteProducts, useJustifyRoute, useAssignPromoter } from "@/hooks/use-merch-routes";
+import { useMerchRoutes, useCreateMerchRoute, useUpdateMerchRoute, useDeleteMerchRoute, useDuplicateMerchRoute, useBulkDeleteMerchRoutes, useBrandChecklists, useBrandPromoters, useRouteMixPreview, useRouteProducts, useAddRouteProduct, useRemoveRouteProduct, useSyncRouteProducts, useJustifyRoute, useAssignPromoter, useTransferPromoterRoutes } from "@/hooks/use-merch-routes";
 import { useSuperadmin } from "@/hooks/use-superadmin";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBrands, useBrandPdvs, usePdvBrands } from "@/hooks/use-merchandising";
@@ -65,6 +65,22 @@ export default function MerchRotas() {
   const [supportRoute, setSupportRoute] = useState<any>(null);
   const [supportEmployeeId, setSupportEmployeeId] = useState('');
   const [supportReason, setSupportReason] = useState('');
+  // Transferencia de rotas entre promotores (promotora que saiu)
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferFrom, setTransferFrom] = useState('');
+  const [transferTo, setTransferTo] = useState('');
+  const [transferFromDate, setTransferFromDate] = useState('');
+  const [transferToDate, setTransferToDate] = useState('');
+  const [transferIncludeCompleted, setTransferIncludeCompleted] = useState(false);
+  const [transferReason, setTransferReason] = useState('');
+  const [transferPreview, setTransferPreview] = useState<any>(null);
+  const transferMutation = useTransferPromoterRoutes();
+  // A API de RH nao filtra por perfil, entao separamos os promotores aqui.
+  const promoterOptions = useMemo(() => {
+    const arr = Array.isArray(employees) ? (employees as any[]) : [];
+    const filtered = arr.filter((e: any) => e?.id && (e.worker_profile === 'promotor' || e.worker_profile === 'operacional'));
+    return filtered.length > 0 ? filtered : arr.filter((e: any) => e?.id);
+  }, [employees]);
 
   // Calculate date range
   const dateRange = useMemo(() => {
@@ -272,6 +288,11 @@ export default function MerchRotas() {
             <Button variant="outline" size="sm" onClick={() => setShowAIPlanner(true)} className="border-primary/30 text-primary hover:bg-primary/10">
               <Sparkles className="h-4 w-4 mr-1" /> Planejamento IA
             </Button>
+            {isSuperadmin && (
+              <Button variant="outline" size="sm" onClick={() => { setTransferOpen(true); setTransferPreview(null); }}>
+                <UserPlus className="h-4 w-4 mr-1" /> Transferir rotas
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={() => setShowFilters(!showFilters)}>
               <Filter className="h-4 w-4 mr-1" /> Filtros
             </Button>
@@ -825,6 +846,139 @@ export default function MerchRotas() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        {/* Transferir rotas entre promotores (admin/superadmin) */}
+        <Dialog open={transferOpen} onOpenChange={(o) => { if (!o) { setTransferOpen(false); setTransferPreview(null); } }}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <UserPlus className="h-5 w-5 text-primary" />
+                Transferir rotas de um promotor para outro
+              </DialogTitle>
+              <DialogDescription>
+                Use quando uma promotora sair da empresa. Todas as rotas dela no período escolhido passam a
+                pertencer ao promotor de destino, com registro de auditoria e histórico de atribuição.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="transfer-from">Promotor de origem (saiu)</Label>
+                  <Select value={transferFrom} onValueChange={(v) => { setTransferFrom(v); setTransferPreview(null); }}>
+                    <SelectTrigger id="transfer-from">
+                      <SelectValue placeholder="Selecione..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {promoterOptions.map((e: any) => (
+                        <SelectItem key={e.id} value={e.id}>{e.full_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="transfer-to">Promotor de destino (assume)</Label>
+                  <Select value={transferTo} onValueChange={(v) => { setTransferTo(v); setTransferPreview(null); }}>
+                    <SelectTrigger id="transfer-to">
+                      <SelectValue placeholder="Selecione..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {promoterOptions.filter((e: any) => e.id !== transferFrom).map((e: any) => (
+                        <SelectItem key={e.id} value={e.id}>{e.full_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="transfer-from-date">De (data inicial)</Label>
+                  <Input id="transfer-from-date" type="date" value={transferFromDate} onChange={(e) => { setTransferFromDate(e.target.value); setTransferPreview(null); }} />
+                  <p className="text-[11px] text-muted-foreground">Vazio = a partir de hoje</p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="transfer-to-date">Até (data final)</Label>
+                  <Input id="transfer-to-date" type="date" value={transferToDate} onChange={(e) => { setTransferToDate(e.target.value); setTransferPreview(null); }} />
+                  <p className="text-[11px] text-muted-foreground">Vazio = sem limite</p>
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <Checkbox
+                  checked={transferIncludeCompleted}
+                  onCheckedChange={(c) => { setTransferIncludeCompleted(!!c); setTransferPreview(null); }}
+                />
+                Incluir rotas já concluídas
+              </label>
+              <div className="space-y-1.5">
+                <Label htmlFor="transfer-reason">Motivo (opcional)</Label>
+                <Input
+                  id="transfer-reason"
+                  value={transferReason}
+                  onChange={(e) => setTransferReason(e.target.value)}
+                  placeholder="Ex.: saída da promotora"
+                />
+              </div>
+              {transferPreview && (
+                <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
+                  <div className="font-medium">
+                    {transferPreview.total} rota(s) serão transferidas
+                  </div>
+                  {Object.entries(transferPreview.by_status || {}).map(([st, n]: any) => (
+                    <div key={st} className="text-xs text-muted-foreground">
+                      {STATUS_LABELS[st] || st}: {n}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => { setTransferOpen(false); setTransferPreview(null); }}>Cancelar</Button>
+              <Button
+                variant="outline"
+                disabled={!transferFrom || !transferTo || transferMutation.isPending}
+                onClick={() => {
+                  transferMutation.mutate({
+                    from_promoter_id: transferFrom,
+                    to_promoter_id: transferTo,
+                    from_date: transferFromDate || undefined,
+                    to_date: transferToDate || undefined,
+                    include_completed: transferIncludeCompleted,
+                    preview: true,
+                  } as any, {
+                    onSuccess: (res: any) => setTransferPreview(res),
+                    onError: (e: any) => toast.error(e?.message || 'Erro ao simular a transferência'),
+                  });
+                }}
+              >
+                Simular
+              </Button>
+              <Button
+                disabled={!transferFrom || !transferTo || transferMutation.isPending}
+                onClick={() => {
+                  transferMutation.mutate({
+                    from_promoter_id: transferFrom,
+                    to_promoter_id: transferTo,
+                    from_date: transferFromDate || undefined,
+                    to_date: transferToDate || undefined,
+                    include_completed: transferIncludeCompleted,
+                    reason: transferReason.trim() || undefined,
+                  } as any, {
+                    onSuccess: (res: any) => {
+                      toast.success(`${res?.transferred || 0} rota(s) transferida(s) para o novo promotor`);
+                      setTransferOpen(false);
+                      setTransferPreview(null);
+                      setTransferFrom('');
+                      setTransferTo('');
+                      setTransferReason('');
+                    },
+                    onError: (e: any) => toast.error(e?.message || 'Erro ao transferir rotas'),
+                  });
+                }}
+              >
+                {transferMutation.isPending ? 'Transferindo...' : 'Transferir rotas'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Add Support Promoter Dialog */}
         <Dialog open={!!supportRoute} onOpenChange={(o) => { if (!o) { setSupportRoute(null); setSupportEmployeeId(''); setSupportReason(''); } }}>
