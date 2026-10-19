@@ -75,12 +75,6 @@ export default function MerchRotas() {
   const [transferReason, setTransferReason] = useState('');
   const [transferPreview, setTransferPreview] = useState<any>(null);
   const transferMutation = useTransferPromoterRoutes();
-  // A API de RH nao filtra por perfil, entao separamos os promotores aqui.
-  const promoterOptions = useMemo(() => {
-    const arr = Array.isArray(employees) ? (employees as any[]) : [];
-    const filtered = arr.filter((e: any) => e?.id && (e.worker_profile === 'promotor' || e.worker_profile === 'operacional'));
-    return filtered.length > 0 ? filtered : arr.filter((e: any) => e?.id);
-  }, [employees]);
 
   // Calculate date range
   const dateRange = useMemo(() => {
@@ -97,6 +91,12 @@ export default function MerchRotas() {
   });
   const { data: pdvs = [] } = usePDVs();
   const { data: employees = [] } = useEmployees();
+  // A API de RH nao filtra por perfil, entao separamos os promotores aqui.
+  const promoterOptions = useMemo(() => {
+    const arr = Array.isArray(employees) ? (employees as any[]) : [];
+    const filtered = arr.filter((e: any) => e?.id && (e.worker_profile === 'promotor' || e.worker_profile === 'operacional'));
+    return filtered.length > 0 ? filtered : arr.filter((e: any) => e?.id);
+  }, [employees]);
   const createRoute = useCreateMerchRoute();
   const updateRoute = useUpdateMerchRoute();
   const deleteRoute = useDeleteMerchRoute();
