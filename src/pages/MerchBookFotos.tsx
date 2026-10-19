@@ -12,6 +12,7 @@ import { usePhotoBook, useRotatePhoto } from "@/hooks/use-merch-routes";
 import { useBrands, useCategories } from "@/hooks/use-merchandising";
 import { usePDVs } from "@/hooks/use-promotor";
 import { usePromoters } from "@/hooks/use-access-control";
+import { useEmployees } from "@/hooks/use-rh";
 import { useRedes } from "@/hooks/use-price-research";
 import { resolveMediaUrl } from "@/lib/media";
 import { format, startOfMonth, endOfMonth } from "date-fns";
@@ -30,7 +31,7 @@ const PHOTO_TYPES: Record<string, string> = {
   rupture: 'Ruptura',
 };
 
-function MultiSelectPopover({ label, values, options, onToggle, onClear, searchPlaceholder = 'Buscar...' }: { label: string; values: string[]; options: { id: string; name: string }[]; onToggle: (id: string) => void; onClear: () => void; searchPlaceholder?: string }) {
+function MultiSelectPopover({ label, values, options, onToggle, onClear, searchPlaceholder = 'Buscar...', disabled = false }: { label: string; values: string[]; options: { id: string; name: string }[]; onToggle: (id: string) => void; onClear: () => void; searchPlaceholder?: string; disabled?: boolean }) {
   const [query, setQuery] = useState('');
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -41,7 +42,7 @@ function MultiSelectPopover({ label, values, options, onToggle, onClear, searchP
     <div className="flex-1 min-w-[170px]">
       <Popover onOpenChange={(open) => { if (!open) setQuery(''); }}>
         <PopoverTrigger asChild>
-          <Button variant="outline" className="w-full justify-between font-normal">
+          <Button variant="outline" className="w-full justify-between font-normal" disabled={disabled}>
             <span className="truncate">{label}</span>
             <ChevronDown className="h-4 w-4 opacity-50 shrink-0 ml-2" />
           </Button>
@@ -89,6 +90,7 @@ export default function MerchBookFotos() {
   const [promoterFilter, setPromoterFilter] = useState<string[]>([]);
   const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
   const [supervisorFilter, setSupervisorFilter] = useState<string[]>([]);
+  const [extraSupervisors, setExtraSupervisors] = useState<{ id: string; name: string }[]>([]);
   const [photoTypeFilter, setPhotoTypeFilter] = useState<string[]>([]);
   const [redeFilter, setRedeFilter] = useState<string[]>([]);
   const [cityFilter, setCityFilter] = useState<string[]>([]);
@@ -106,8 +108,15 @@ export default function MerchBookFotos() {
   const { data: categories = [] } = useCategories();
   const { data: redes = [] } = useRedes();
 
-  // Supervisors derived from photos (each row already carries supervisor_id/supervisor_name)
-  const [supervisorsFromPhotos, setSupervisorsFromPhotos] = useState<{ id: string; name: string }[]>([]);
+  // Supervisors come from employees table (independent of photos having loaded).
+  // A API de RH nao filtra por perfil, entao filtramos por worker_profile aqui.
+  const supervisorQuery = useEmployees();
+  const supervisorList = useMemo(() => {
+    const arr = Array.isArray(supervisorQuery.data) ? supervisorQuery.data : [];
+    return (arr as any[])
+      .filter((e: any) => e?.id && (e.worker_profile === 'supervisor' || e.worker_profile === 'administrativo'))
+      .map((e: any) => ({ id: e.id, name: e.full_name || e.name }));
+  }, [supervisorQuery.data]);
 
   // City options derived from PDVs
   const cities = useMemo(() => {
@@ -139,10 +148,11 @@ export default function MerchBookFotos() {
   const toggleRede = toggleIn(setRedeFilter);
   const toggleCity = toggleIn(setCityFilter);
 
-  // Accumulate distinct supervisors seen in photos (union across queries so filter list is stable)
+  // Accumulate distinct supervisors seen in photos, merged over the employees list so the
+  // dropdown still shows supervisors referenced by photos even if they are inactive.
   useEffect(() => {
     if (!Array.isArray(photos) || photos.length === 0) return;
-    setSupervisorsFromPhotos(prev => {
+    setExtraSupervisors(prev => {
       const map = new Map(prev.map(s => [s.id, s.name]));
       (photos as any[]).forEach((p: any) => {
         if (p.supervisor_id && p.supervisor_name && !map.has(p.supervisor_id)) {
@@ -150,9 +160,16 @@ export default function MerchBookFotos() {
         }
       });
       if (map.size === prev.length) return prev;
-      return Array.from(map, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+      return Array.from(map, ([id, name]) => ({ id, name }));
     });
   }, [photos]);
+
+  const supervisorsFromPhotos = useMemo(() => {
+    const map = new Map<string, { id: string; name: string }>();
+    supervisorList.forEach(s => map.set(s.id, s));
+    extraSupervisors.forEach(s => { if (!map.has(s.id)) map.set(s.id, s); });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [supervisorList, extraSupervisors]);
 
   const buildLabel = (arr: string[], list: { id: string; name: string }[], allLabel: string, singularSuffix = '') => {
     if (arr.length === 0) return allLabel;
@@ -286,7 +303,7 @@ export default function MerchBookFotos() {
               </div>
               <MultiSelectPopover label={pdvLabel} values={pdvFilter} options={(pdvs as any[]).filter((p: any) => p?.id).map((p: any) => ({ id: p.id, name: p.name }))} onToggle={togglePdv} onClear={() => setPdvFilter([])} />
               <MultiSelectPopover label={promoterLabel} values={promoterFilter} options={(promoters as any[]).filter((p: any) => p?.id).map((p: any) => ({ id: p.id, name: p.full_name || p.name }))} onToggle={togglePromoter} onClear={() => setPromoterFilter([])} />
-              <MultiSelectPopover label={supervisorLabel} values={supervisorFilter} options={supervisorsFromPhotos} onToggle={toggleSupervisor} onClear={() => setSupervisorFilter([])} />
+              <MultiSelectPopover label={supervisorLabel} values={supervisorFilter} options={supervisorsFromPhotos} onToggle={toggleSupervisor} onClear={() => setSupervisorFilter([])} disabled={supervisorsFromPhotos.length === 0} />
               <MultiSelectPopover label={categoryLabel} values={categoryFilter} options={(categories as any[]).filter((c: any) => c?.id).map((c: any) => ({ id: c.id, name: c.name }))} onToggle={toggleCategory} onClear={() => setCategoryFilter([])} />
               <MultiSelectPopover label={photoTypeLabel} values={photoTypeFilter} options={Object.entries(PHOTO_TYPES).map(([id, name]) => ({ id, name }))} onToggle={togglePhotoType} onClear={() => setPhotoTypeFilter([])} />
               <MultiSelectPopover label={redeLabel} values={redeFilter} options={(redes as any[]).filter((r: any) => r?.id).map((r: any) => ({ id: r.id, name: r.name }))} onToggle={toggleRede} onClear={() => setRedeFilter([])} />
@@ -365,6 +382,24 @@ export default function MerchBookFotos() {
             <p className="text-xs text-muted-foreground">Promotores</p>
           </CardContent></Card>
         </div>
+
+        {/* Empty state: distinguish "no photos for these filters" from a broken filter */}
+        {!isLoading && photos.length === 0 && (
+          <Card><CardContent className="pt-6 text-center space-y-2">
+            <Camera className="h-8 w-8 mx-auto text-muted-foreground" />
+            <p className="text-sm font-medium">Nenhuma foto encontrada</p>
+            <p className="text-xs text-muted-foreground">
+              Nenhuma foto no período de {dateFrom} a {dateTo} com os filtros selecionados.
+              {' '}Tente ampliar as datas ou limpar os filtros.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => {
+              setBrandFilter(''); setPdvFilter([]); setPromoterFilter([]); setCategoryFilter([]);
+              setSupervisorFilter([]); setPhotoTypeFilter([]); setRedeFilter([]); setCityFilter([]);
+            }}>
+              <X className="h-4 w-4 mr-1" /> Limpar filtros
+            </Button>
+          </CardContent></Card>
+        )}
 
         {/* Photo Grid grouped */}
         {sortedL1.map(k1 => (
