@@ -953,6 +953,17 @@ router.put('/routes/:id', async (req, res) => {
     const old = existing.rows[0];
     const scope = req.body._scope || 'single';
 
+    // Captura o conjunto de marcas ORIGINAL da rota antes do sync de brands
+    // (que faz DELETE+INSERT). Usado depois para separar as irmãs da mesma
+    // série de outras séries do mesmo promotor+PDV.
+    let originalBrandSig = null;
+    if (scope === 'future' && (await hasTable('route_brands'))) {
+      try {
+        const ob = await query(`SELECT brand_id FROM route_brands WHERE route_id=$1`, [req.params.id]);
+        originalBrandSig = ob.rows.map(r => r.brand_id).sort().join(',');
+      } catch (e) { logWarn('routes.update.original_brand_set', e); }
+    }
+
     // Block edits when the route is already being executed by the promoter.
     // We allow reassigning promoter/supervisor (does NOT wipe progress — fotos,
     // execuções e check-in ficam vinculados à rota, não ao promotor) e ajustes
@@ -979,6 +990,10 @@ router.put('/routes/:id', async (req, res) => {
 
     // Remove internal field
     delete req.body._scope;
+
+    // Checklists resolvidos por marca durante o sync (usado para replicar
+    // as marcas/checklists nas rotas irmãs quando o escopo é 'future')
+    const resolvedBrandChecklists = new Map();
 
     // Multi-brand sync (replace route_brands when brands array is provided)
     let brandsPayload = Array.isArray(req.body.brands) ? req.body.brands : null;
@@ -1017,6 +1032,8 @@ router.put('/routes/:id', async (req, res) => {
         const editDate = getDatePart(req.body.visit_date || old.visit_date);
         const editWeekday = editDate ? new Date(editDate + 'T12:00:00Z').getUTCDay() : null;
         let singleIds = [];
+        // Guarda os checklists resolvidos por marca para replicar nas rotas irmãs
+        resolvedBrandChecklists.clear();
         for (let i = 0; i < brandsPayload.length; i++) {
           const mb = brandsPayload[i];
           if (!mb?.brand_id) continue;
@@ -1031,6 +1048,7 @@ router.put('/routes/:id', async (req, res) => {
             } catch {}
           }
           if (brandsPayload.length === 1) singleIds = ids;
+          resolvedBrandChecklists.set(mb.brand_id, ids);
           const rbRes = await query(
             `INSERT INTO route_brands (route_id, brand_id, checklist_id, sort_order) VALUES ($1,$2,$3,$4)
              ON CONFLICT (route_id, brand_id) DO UPDATE SET checklist_id=EXCLUDED.checklist_id, sort_order=EXCLUDED.sort_order
@@ -1077,77 +1095,158 @@ router.put('/routes/:id', async (req, res) => {
       }
     }
 
-    if (!updates.length) {
+    // Uma edição só de marcas (sem nenhum campo escalar) também precisa
+    // propagar para as irmãs, então não encerramos aqui nesse caso.
+    const brandsChanged = Boolean(brandsPayload) && originalBrandSig !== null
+      && brandsPayload.map(b => b.brand_id).filter(Boolean).sort().join(',') !== originalBrandSig;
+
+    if (!updates.length && !(scope === 'future' && brandsChanged)) {
       // Still return route with refreshed brands list
       return res.json(old);
     }
-    updates.push(`updated_at=NOW()`);
+    if (updates.length) updates.push(`updated_at=NOW()`);
 
 
     // Apply to single or future sibling routes
     if (scope === 'future') {
-      // Build SET clause for siblings (exclude visit_date and status for bulk)
-      const bulkFields = ['promoter_id','supervisor_id','pdv_id','brand_id','checklist_id','scheduled_time',
-                          'window_start','window_end','estimated_duration_min','priority','visit_type','notes'];
-      const bulkUpdates = [];
-      const bulkParams = [];
-      let bIdx = 1;
-      for (const f of bulkFields) {
-        if (req.body[f] !== undefined && req.body[f] !== old[f]) {
-          bulkUpdates.push(`${f}=$${bIdx++}`);
-          bulkParams.push(req.body[f]);
-        }
-      }
-      if (bulkUpdates.length > 0) {
-        bulkUpdates.push(`updated_at=NOW()`);
-        bulkParams.push(orgId, old.promoter_id, old.pdv_id, old.brand_id, old.visit_date);
-        const whereStart = bIdx;
-        const bulkSql = `UPDATE merch_routes SET ${bulkUpdates.join(',')}
-          WHERE organization_id=$${whereStart} AND promoter_id=$${whereStart+1} AND pdv_id=$${whereStart+2}
-          AND brand_id=$${whereStart+3} AND visit_date >= $${whereStart+4}
-          AND status IN ('scheduled','confirmed')`;
-        await query(bulkSql, bulkParams);
-        logInfo('routes.bulk_updated', { base_route: req.params.id, scope: 'future' });
+      // 1) Resolve the sibling set ONCE, before any update. The old promoter
+      //    filter only matches while the siblings still carry the old
+      //    promoter_id, so it has to be captured up front.
+      //    IS NOT DISTINCT FROM (e não =) porque brand_id é NULL em rotas
+      //    multi-marca: com '=' nenhuma linha casaria e só a rota editada
+      //    seria salva.
+      const siblingRes = await query(
+        `SELECT id, visit_date FROM merch_routes
+          WHERE organization_id=$1
+            AND promoter_id IS NOT DISTINCT FROM $2
+            AND pdv_id IS NOT DISTINCT FROM $3
+            AND brand_id IS NOT DISTINCT FROM $4
+            AND visit_date >= $5::date
+            AND status IN ('scheduled','confirmed')
+            AND id <> $6`,
+        [orgId, old.promoter_id, old.pdv_id, old.brand_id, getDatePart(old.visit_date), req.params.id]
+      );
+
+      // Multi-marca: brand_id é NULL na tabela raiz, então o filtro acima não
+      // distingue séries diferentes do mesmo promotor+PDV. Garantimos que as
+      // irmãs tenham exatamente o mesmo conjunto de marcas da rota editada
+      // (comparado com o conjunto ORIGINAL, capturado antes do sync de brands).
+      let siblingIds = siblingRes.rows.map(r => r.id);
+      if (siblingIds.length > 0 && originalBrandSig) {
+        try {
+          const brandRows = await query(
+            `SELECT route_id, brand_id FROM route_brands WHERE route_id = ANY($1::uuid[])`,
+            [siblingIds]
+          );
+          const brandSets = {};
+          for (const br of brandRows.rows) {
+            (brandSets[br.route_id] = brandSets[br.route_id] || new Set()).add(br.brand_id);
+          }
+          const sig = (id) => [...(brandSets[id] || new Set())].sort().join(',');
+          siblingIds = siblingIds.filter(id => sig(id) === originalBrandSig);
+        } catch (e) { logWarn('routes.bulk_updated.brand_set', e); }
       }
 
-      // Shift future siblings' visit_date by the same delta when the recurring
-      // day of week changes (e.g. Tuesday → Monday shifts every future occurrence).
-      if (req.body.visit_date !== undefined && req.body.visit_date !== old.visit_date) {
-        const toYMD = (v) => {
-          if (!v) return null;
-          if (v instanceof Date) return v.toISOString().slice(0, 10);
-          const s = String(v);
-          return s.length >= 10 ? s.slice(0, 10) : s;
-        };
-        const oldYMD = toYMD(old.visit_date);
-        const newYMD = toYMD(req.body.visit_date);
-        if (oldYMD && newYMD && oldYMD !== newYMD) {
-          const dOld = new Date(oldYMD + 'T12:00:00Z');
-          const dNew = new Date(newYMD + 'T12:00:00Z');
-          const deltaDays = Math.round((dNew - dOld) / 86400000);
-          if (deltaDays !== 0) {
-            // Only shift future occurrences that share the SAME weekday as the
-            // edited route. This preserves other weekdays in multi-day recurrences
-            // (e.g. editing the Wednesday of a Wed+Thu series must not drag Thu).
-            await query(
-              `UPDATE merch_routes
-                 SET visit_date = (visit_date::date + ($1 || ' days')::interval)::date,
-                     updated_at = NOW()
-               WHERE organization_id=$2 AND promoter_id IS NOT DISTINCT FROM $3
-                 AND pdv_id IS NOT DISTINCT FROM $4 AND brand_id IS NOT DISTINCT FROM $5
-                 AND visit_date > $6 AND status IN ('scheduled','confirmed')
-                 AND id <> $7
-                 AND EXTRACT(DOW FROM visit_date) = EXTRACT(DOW FROM $6::date)`,
-              [String(deltaDays), orgId, old.promoter_id, old.pdv_id, old.brand_id, old.visit_date, req.params.id]
-            );
-            logInfo('routes.bulk_date_shifted', { base_route: req.params.id, delta_days: deltaDays });
+      if (siblingIds.length > 0) {
+        // 2) Build SET clause for siblings (exclude visit_date and status for bulk)
+        const bulkFields = ['promoter_id','supervisor_id','pdv_id','brand_id','checklist_id','scheduled_time',
+                            'window_start','window_end','estimated_duration_min','priority','visit_type','notes'];
+        const bulkUpdates = [];
+        const bulkParams = [];
+        let bIdx = 1;
+        for (const f of bulkFields) {
+          if (req.body[f] !== undefined && req.body[f] !== old[f]) {
+            bulkUpdates.push(`${f}=$${bIdx++}`);
+            bulkParams.push(req.body[f]);
+          }
+        }
+        if (bulkUpdates.length > 0) {
+          bulkUpdates.push(`updated_at=NOW()`);
+          bulkParams.push(siblingIds);
+          const bulkRes = await query(
+            `UPDATE merch_routes SET ${bulkUpdates.join(',')}
+              WHERE id = ANY($${bIdx}::uuid[])`,
+            bulkParams
+          );
+          logInfo('routes.bulk_updated', { base_route: req.params.id, scope: 'future', updated: bulkRes.rowCount });
+        }
+
+        // 3) Propaga marcas/checklists para as rotas irmãs quando a edição
+        //    mexeu no conjunto de marcas. Sem isso as irmãs ficariam com as
+        //    marcas antigas (e o filtro por conjunto de marcas as exclui).
+        if (brandsChanged && brandsPayload && brandsPayload.length > 0 && siblingIds.length > 0) {
+          try {
+            await query('DELETE FROM route_brands WHERE route_id = ANY($1::uuid[])', [siblingIds]);
+            const siblingPdv = req.body.pdv_id || old.pdv_id;
+            for (const siblingId of siblingIds) {
+              let siblingSingleIds = [];
+              for (let i = 0; i < brandsPayload.length; i++) {
+                const mb = brandsPayload[i];
+                if (!mb?.brand_id) continue;
+                const ids = resolvedBrandChecklists.get(mb.brand_id) || [];
+                if (brandsPayload.length === 1) siblingSingleIds = ids;
+                const rbRes = await query(
+                  `INSERT INTO route_brands (route_id, brand_id, checklist_id, sort_order) VALUES ($1,$2,$3,$4)
+                   ON CONFLICT (route_id, brand_id) DO UPDATE SET checklist_id=EXCLUDED.checklist_id, sort_order=EXCLUDED.sort_order
+                   RETURNING *`,
+                  [siblingId, mb.brand_id, ids[0] || null, i]
+                );
+                if (rbRes.rows[0]) {
+                  await persistMergedChecklist('route_brands', rbRes.rows[0].id, ids);
+                  if (siblingPdv) await hydrateRouteBrandProducts(siblingId, rbRes.rows[0].id, siblingPdv, mb.brand_id);
+                }
+              }
+              if (brandsPayload.length > 1) {
+                await query('UPDATE merch_routes SET brand_id=NULL, checklist_id=NULL WHERE id=$1', [siblingId]);
+                await persistMergedChecklist('merch_routes', siblingId, []);
+              } else if (brandsPayload.length === 1) {
+                await query('UPDATE merch_routes SET brand_id=$2, checklist_id=$3 WHERE id=$1',
+                  [siblingId, brandsPayload[0].brand_id, siblingSingleIds[0] ?? null]);
+                await persistMergedChecklist('merch_routes', siblingId, siblingSingleIds);
+              }
+            }
+            logInfo('routes.bulk_brands_synced', { base_route: req.params.id, count: siblingIds.length });
+          } catch (e) { logError('routes.bulk_brands_sync', e); }
+        }
+
+        // 4) Shift future siblings' visit_date by the same delta when the recurring
+        //    day of week changes (e.g. Tuesday → Monday shifts every future occurrence).
+        if (req.body.visit_date !== undefined && req.body.visit_date !== old.visit_date) {
+          const toYMD = (v) => {
+            if (!v) return null;
+            if (v instanceof Date) return v.toISOString().slice(0, 10);
+            const s = String(v);
+            return s.length >= 10 ? s.slice(0, 10) : s;
+          };
+          const oldYMD = toYMD(old.visit_date);
+          const newYMD = toYMD(req.body.visit_date);
+          if (oldYMD && newYMD && oldYMD !== newYMD) {
+            const dOld = new Date(oldYMD + 'T12:00:00Z');
+            const dNew = new Date(newYMD + 'T12:00:00Z');
+            const deltaDays = Math.round((dNew - dOld) / 86400000);
+            if (deltaDays !== 0) {
+              // Only shift future occurrences that share the SAME weekday as the
+              // edited route. This preserves other weekdays in multi-day recurrences
+              // (e.g. editing the Wednesday of a Wed+Thu series must not drag Thu).
+              const shiftRes = await query(
+                `UPDATE merch_routes
+                   SET visit_date = (visit_date::date + ($1 || ' days')::interval)::date,
+                       updated_at = NOW()
+                 WHERE id = ANY($2::uuid[])
+                   AND EXTRACT(DOW FROM visit_date) = EXTRACT(DOW FROM $3::date)`,
+                [String(deltaDays), siblingIds, oldYMD]
+              );
+              logInfo('routes.bulk_date_shifted', { base_route: req.params.id, delta_days: deltaDays, updated: shiftRes.rowCount });
+            }
           }
         }
       }
     }
 
     // Always update the current route with all changes
-    const result = await query(`UPDATE merch_routes SET ${updates.join(',')} WHERE id=$1 RETURNING *`, params);
+    const result = updates.length
+      ? await query(`UPDATE merch_routes SET ${updates.join(',')} WHERE id=$1 RETURNING *`, params)
+      : await query(`SELECT * FROM merch_routes WHERE id=$1`, [req.params.id]);
 
     // Re-hydrate products when pdv or brand changed
     const newPdv = req.body.pdv_id || old.pdv_id;
@@ -2237,11 +2336,23 @@ router.get('/photo-book', authenticate, async (req, res) => {
     if (promoter_id) applyList('promoter_id', promoter_id);
     if (category_id) applyList('category_id', category_id);
     if (supervisor_id) applyList('supervisor_id', supervisor_id);
-    if (rede_id) applyList('rede_id', rede_id);
+    if (rede_id) {
+      // rede_id nao e coluna — e subquery escalar no SELECT. Filtrar via tabela de vinculo.
+      const redeArr = String(rede_id).split(',').map(s => s.trim()).filter(Boolean);
+      if (redeArr.length === 1) {
+        sql += ` AND pdv_id IN (SELECT rp.pdv_id FROM merch_rede_pdvs rp WHERE rp.rede_id=$${idx++})`;
+        params.push(redeArr[0]);
+      } else if (redeArr.length > 1) {
+        sql += ` AND pdv_id IN (SELECT rp.pdv_id FROM merch_rede_pdvs rp WHERE rp.rede_id = ANY($${idx++}::uuid[]))`;
+        params.push(redeArr);
+      }
+    }
     if (photo_type) applyList('photo_type', photo_type, false);
     if (city) applyList('pdv_city', city, false);
-    if (date_from) { sql += ` AND captured_at >= $${idx++}`; params.push(date_from); }
-    if (date_to) { sql += ` AND captured_at <= $${idx++}`; params.push(date_to + ' 23:59:59'); }
+    // Comparar so a data (captured_at::date) evita que o fuso da sessao do Postgres
+    // corte o primeiro dia do intervalo (o app grava em horario de Brasilia).
+    if (date_from) { sql += ` AND captured_at::date >= $${idx++}::date`; params.push(date_from); }
+    if (date_to) { sql += ` AND captured_at::date <= $${idx++}::date`; params.push(date_to); }
     sql += ' ORDER BY captured_at DESC LIMIT 1000';
     const rows = (await query(sql, params)).rows;
     // Desduplica a mesma foto (mesma URL na mesma rota) que pode existir nas duas tabelas
