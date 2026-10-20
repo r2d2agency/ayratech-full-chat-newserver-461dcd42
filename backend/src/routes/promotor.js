@@ -9,6 +9,7 @@ import { setRequestContext } from '../request-context.js';
 import { validatePdvLocation, ensurePdvGeofenceColumn, recordGeofenceAttempt } from '../lib/geofence.js';
 import { parseWorkSchedule, resolveDaySchedule, normalizeDow } from '../lib/work-schedule.js';
 import { DEFAULT_ENTRY, DEFAULT_EXIT, formatHHMM } from '../lib/time-calc.js';
+import { routeSlotKey, describeRouteWindow, computeRouteWindow, instantToSaoPauloMinutes, normalizeTimeToHHMM, NO_SLOT } from '../lib/route-time-window.js';
 
 const hhmmOf = (minutes) => (minutes == null ? null : formatHHMM(minutes));
 
@@ -484,6 +485,19 @@ router.get('/home', authenticatePromotor, async (req, res) => {
       pdvVisits = visitRes.rows;
     } catch { /* table may not exist */ }
 
+    // ===== SLOT / JANELA DE HORÁRIO =====
+    // Um promotor pode ter duas rotas no MESMO PDV no mesmo dia (07:00 e
+    // 13:00). Cada horário é um "slot" com check-in e checkout próprios.
+    // Exponho o slot e a janela de cada rota para o app explicar antes de o
+    // usuário bater o ponto.
+    for (const r of todayRoutes) {
+      r.slot_key = routeSlotKey(r);
+      r.time_window = describeRouteWindow(r);
+    }
+    for (const v of pdvVisits) {
+      v.slot_key = normalizeTimeToHHMM(v.slot_time) || NO_SLOT;
+    }
+
     // Parse seguro de coluna JSONB que pode chegar como string.
     const safeParseObj = (raw) => {
       if (raw && typeof raw === 'object') return raw;
@@ -676,8 +690,26 @@ router.get('/home', authenticatePromotor, async (req, res) => {
     } catch (e) { if (e.code !== '42P01' && e.code !== '42703') throw e; }
 
     // Determine active/next route
+    //
+    // "Ativa" é a rota em andamento. A "próxima" é a rota pendente mais
+    // relevante para AGORA: entre as pendentes, a que já abriu a janela de
+    // check-in (a das 07:00 às 07:00), e não simplesmente a primeira da lista.
+    // Sem isso, a rota das 13:00 "somava" a das 07:00 e o promotor ficava
+    // sem saber qual fazer.
     const activeRoute = todayRoutes.find(r => r.status === 'in_progress');
-    const nextRoute = !activeRoute ? todayRoutes.find(r => r.status === 'scheduled' || r.status === 'confirmed') : null;
+    const pendingAll = todayRoutes.filter(r => r.status === 'scheduled' || r.status === 'confirmed');
+    let nextRoute = null;
+    if (!activeRoute && pendingAll.length) {
+      const nowMinutes = instantToSaoPauloMinutes();
+      const scored = pendingAll.map(r => {
+        const w = computeRouteWindow(r);
+        const opened = w.hasWindow ? nowMinutes >= w.opensAt : true;
+        const notClosed = w.hasWindow ? nowMinutes <= w.closesAt : true;
+        return { route: r, w, rank: opened && notClosed ? 0 : (opened ? 1 : 2), dist: w.hasWindow ? Math.abs(nowMinutes - w.opensAt) : 9999 };
+      });
+      scored.sort((a, b) => a.rank - b.rank || a.dist - b.dist || (a.route.scheduled_time || '').localeCompare(b.route.scheduled_time || ''));
+      nextRoute = scored[0].route;
+    }
     const completedRoutes = todayRoutes.filter(r => r.status === 'completed');
     const pendingRoutes = todayRoutes.filter(r => r.status === 'scheduled' || r.status === 'confirmed');
     const hasRoutesToday = todayRoutes.length > 0;
@@ -698,6 +730,9 @@ router.get('/home', authenticatePromotor, async (req, res) => {
       pending_routes_count: pendingRoutes.length,
       has_routes_today: hasRoutesToday,
       pdv_visits: pdvVisits,
+      // Slot em foco agora: o da rota ativa ou o da próxima. O app usa para
+      // filtrar check-in/checkout por horário.
+      current_slot_key: (activeRoute || nextRoute)?.slot_key || null,
       schedule_status: {
         work_schedule: `${scheduleStart}-${scheduleEnd}`,
         schedule_start: scheduleStart,

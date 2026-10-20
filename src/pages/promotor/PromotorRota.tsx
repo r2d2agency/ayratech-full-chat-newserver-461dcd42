@@ -35,6 +35,7 @@ import { logger } from "@/lib/logger";
 import { SyncStatusIndicator } from "@/components/promotor/SyncStatusIndicator";
 import { StockCountCard } from "@/components/promotor/StockCountCard";
 import { useRouteStockCount } from "@/hooks/use-stock-count";
+import { routeSlotKey, visitSlotKey, hasCheckinForSlot } from "@/lib/route-slot";
 
 // ===== Photo capture with Approve/Reject preview =====
 function PhotoApprovalCapture({
@@ -957,12 +958,13 @@ export default function PromotorRota() {
     }
     try {
       const home = (qc.getQueryData(['promotor-home']) as any) || null;
-      const homePdvId = home?.dailyAssignment?.pdv_id || home?.availablePdvs?.[0]?.id || null;
-      const alreadyCheckedInAtHome =
-        homePdvId &&
-        Array.isArray(home?.pdvVisits) &&
-        home.pdvVisits.some((v: any) => v && v.pdv_id === homePdvId && v.checkin_at);
-      if (alreadyCheckedInAtHome && homePdvId === route.pdv_id) {
+      // A chave do payload é `pdv_visits` (snake_case) — ler `pdvVisits` nunca
+      // encontrava nada e o gate de check-in ficava sempre falso.
+      const homeVisits = Array.isArray(home?.pdv_visits) ? home.pdv_visits : [];
+      // O check-in vale por SLOT: a visita das 07:00 não é a das 13:00, mesmo
+      // no mesmo PDV.
+      const alreadyCheckedInAtHome = hasCheckinForSlot(homeVisits, route);
+      if (alreadyCheckedInAtHome && route.pdv_id) {
         setCheckinSubmitted(true);
         return;
       }
@@ -1332,7 +1334,6 @@ export default function PromotorRota() {
         device: navigator.userAgent || 'Unknown Device',
         photo_url: effectivePhotoUrl || undefined,
         facial_verified: isFacialActiveCheckin || undefined,
-        all_routes_at_pdv: true,
       };
 
       if (isOnline) {
@@ -1376,6 +1377,19 @@ export default function PromotorRota() {
             toast.error(fullMsg, { duration: 10000 });
             toast.error(hintMsg, { duration: 10000 });
             return;
+          }
+          if (!response.ok && (errorCode === 'OUTSIDE_TIME_WINDOW' || result?.error === 'outside_time_window')) {
+            // Check-in feito cedo demais para o horário agendado da rota.
+            const win = details || {};
+            const fullMsg = result?.message || 'Check-in disponível apenas dentro da janela da rota.';
+            const withWindow = win.opens_at
+              ? `${fullMsg} (janela: ${String(win.opens_at).slice(0, 5)} — ${String(win.closes_at || '').slice(0, 5)})`
+              : fullMsg;
+            logger.warn('[handleCheckin] Check-in bloqueado por janela de horário', { routeId: id, details: win });
+            toast.error(withWindow, { duration: 10000 });
+            const explicit = new Error(withWindow);
+            (explicit as any)._geoHandled = true;
+            throw explicit;
           }
           if (!response.ok) {
             throw new Error(result?.error || result?.message || `Erro na requisição (${response.status})`);
@@ -1499,7 +1513,12 @@ export default function PromotorRota() {
         r.id === id ? { ...r, status: 'completed', checkout_at: nowIso, progress_pct: 100 } : r
       );
       const pdvVisits = [...(old.pdv_visits || [])];
-      const visitIdx = pdvVisits.findIndex((v: any) => v.pdv_id === route?.pdv_id && !v.checkout_at);
+      // Fecha a visita do MESMO slot — a das 13:00 continua aberta quando a
+      // rota das 07:00 termina.
+      const slotKey = routeSlotKey(route);
+      const visitIdx = pdvVisits.findIndex((v: any) =>
+        v.pdv_id === route?.pdv_id && !v.checkout_at && visitSlotKey(v) === slotKey
+      );
       if (visitIdx >= 0) {
         pdvVisits[visitIdx] = { ...pdvVisits[visitIdx], checkout_at: nowIso, status: 'completed' };
       }
@@ -1544,11 +1563,17 @@ export default function PromotorRota() {
 
       const authHeaders = { 'Authorization': `Bearer ${localStorage.getItem('promotor_token') || localStorage.getItem('auth_token')}` };
 
+      // O checkout encerra UM slot: com rotas das 07:00 e das 13:00 no mesmo
+      // PDV, cada horário fecha a sua própria visita.
+      const slotKey = routeSlotKey(route);
+
       queueApiCall({
         url: '/api/merch/promotor/pdv-checkout',
         method: 'POST',
         body: {
           pdv_id: route.pdv_id,
+          slot_time: slotKey,
+          route_id: route.id,
           latitude: pos?.coords.latitude,
           longitude: pos?.coords.longitude,
           photo_url: hasPendingPhoto ? undefined : (pdvCheckoutPhoto || undefined),
@@ -1561,7 +1586,7 @@ export default function PromotorRota() {
         queueApiCall({
           url: '/api/merch/promotor/pdv-checkout/photo',
           method: 'POST',
-          body: { pdv_id: route.pdv_id, photo_url: pdvCheckoutPhoto },
+          body: { pdv_id: route.pdv_id, slot_time: slotKey, photo_url: pdvCheckoutPhoto },
           headers: authHeaders,
           dependsOnUploadId: pdvCheckoutPhoto!.replace('local-file://', ''),
         });
@@ -1572,7 +1597,9 @@ export default function PromotorRota() {
       qc.setQueryData(['promotor-home'], (old: any) => {
         if (!old) return old;
         const pdvVisits = (old.pdv_visits || []).map((v: any) =>
-          v.pdv_id === route.pdv_id ? { ...v, checkout_at: nowIso, status: 'completed' } : v
+          (v.pdv_id === route.pdv_id && visitSlotKey(v) === slotKey)
+            ? { ...v, checkout_at: nowIso, status: 'completed' }
+            : v
         );
         return { ...old, pdv_visits: pdvVisits };
       });
@@ -1625,10 +1652,10 @@ export default function PromotorRota() {
     if (checkinSubmitted) return false;
     try {
       const home = (qc.getQueryData(['promotor-home']) as any) || null;
-      if (Array.isArray(home?.pdvVisits)) {
-        const hasVisit = home.pdvVisits.some((v: any) => v && v.pdv_id === route.pdv_id && v.checkin_at);
-        if (hasVisit) return false;
-      }
+      // `pdv_visits` (snake_case) é a chave real do payload; `pdvVisits` nunca
+      // existiu. E a visita precisa ser do MESMO SLOT da rota.
+      const homeVisits = Array.isArray(home?.pdv_visits) ? home.pdv_visits : [];
+      if (hasCheckinForSlot(homeVisits, route)) return false;
     } catch {}
     return true;
   }, [route, checkinSubmitted, qc]);

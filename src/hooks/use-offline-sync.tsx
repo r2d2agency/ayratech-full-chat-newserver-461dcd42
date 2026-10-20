@@ -591,6 +591,29 @@ function useOfflineSyncState() {
             err.message.includes('outside_geofence')
           ));
 
+        const isTimeWindowError =
+          response?.error === 'outside_time_window' ||
+          errorCode === 'OUTSIDE_TIME_WINDOW' ||
+          (typeof err?.message === 'string' && err.message.includes('OUTSIDE_TIME_WINDOW'));
+
+        if (isTimeWindowError && (call.url.includes('/promotor/routes/') && call.url.endsWith('/checkin'))) {
+          // Check-in gravado offline FORA da janela da rota. A chamada morre
+          // aqui de propósito (4xx é terminal): o promotor precisa refazer o
+          // check-in dentro do horário. As demais chamadas da fila seguem.
+          const fullMsg = response?.message || 'Check-in disponível apenas dentro da janela da rota.';
+          try {
+            const { toast } = await import('sonner');
+            toast.error('⏰ Fora do horário da rota', { description: fullMsg, richColors: true, duration: 10000 });
+          } catch {}
+          await db.pending_api_calls.update(call.id!, {
+            status: 'failed',
+            attempts: (call.attempts || 0) + 1,
+            error: `${fullMsg} (não será reenviado automaticamente)`,
+          });
+          setSyncProgress(p => ({ ...p, failed: p.failed + 1 }));
+          continue;
+        }
+
         if (isGeoError && (call.url.includes('/promotor/routes/') && call.url.endsWith('/checkin'))) {
           const placeType = details.place_type === 'sede' ? 'Sede' : (details.place_name || 'PDV');
           const modeLabel = details.mode === 'polygon'

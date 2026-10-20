@@ -5,6 +5,10 @@ import { idempotency } from '../middleware/idempotency.js';
 import { logInfo, logError, logWarn } from '../logger.js';
 import { sendStockCountSummaryForRoute } from './stock-count.js';
 import { validatePdvLocation, ensurePdvGeofenceColumn } from '../lib/geofence.js';
+import {
+  routeSlotKey, evaluateCheckinTime, describeRouteWindow, instantToSaoPauloMinutes,
+  normalizeTimeToHHMM, minutesToHHMM, NO_SLOT,
+} from '../lib/route-time-window.js';
 
 
 const router = express.Router();
@@ -2811,7 +2815,16 @@ router.get('/return-requests', authenticate, async (req, res) => {
 // ===== PROMOTOR APP ENDPOINTS =====
 
 // Auto-create PDV visit tables
+// Visita por SLOT: um promotor pode ter duas rotas no mesmo PDV no mesmo
+// dia (07:00 e 13:00) e cada uma tem check-in/check-out próprios. A chave
+// única passa a incluir o horário do slot.
+//
+// slot_time é NOT NULL DEFAULT '00:00' de propósito: em Postgres NULL num
+// índice único não conflita, e voltariam a existir visitas duplicadas.
+let pdvVisitTablesReady = null;
 async function ensurePdvVisitTables() {
+  if (pdvVisitTablesReady) return pdvVisitTablesReady;
+  pdvVisitTablesReady = (async () => {
   try {
     await query(`CREATE TABLE IF NOT EXISTS pdv_visits (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -2819,14 +2832,45 @@ async function ensurePdvVisitTables() {
       promoter_id UUID NOT NULL,
       pdv_id UUID NOT NULL,
       visit_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      slot_time TIME NOT NULL DEFAULT '00:00',
       checkin_at TIMESTAMPTZ, checkin_latitude DOUBLE PRECISION, checkin_longitude DOUBLE PRECISION,
       checkin_photo_url TEXT, checkin_device TEXT,
       checkout_at TIMESTAMPTZ, checkout_latitude DOUBLE PRECISION, checkout_longitude DOUBLE PRECISION,
       checkout_photo_url TEXT,
       status VARCHAR(20) DEFAULT 'active', notes TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE(promoter_id, pdv_id, visit_date)
+      UNIQUE(promoter_id, pdv_id, visit_date, slot_time)
     )`);
+    await query(`ALTER TABLE pdv_visits ADD COLUMN IF NOT EXISTS slot_time TIME NOT NULL DEFAULT '00:00'`);
+    // A constraint antiga (promoter_id, pdv_id, visit_date) impediria a segunda
+    // visita do dia. Descobre o nome real em vez de presumir.
+    await query(`DO $$
+      DECLARE c record;
+      BEGIN
+        FOR c IN
+          SELECT conname FROM pg_constraint
+          WHERE conrelid = 'pdv_visits'::regclass AND contype = 'u'
+            AND pg_get_constraintdef(oid) ILIKE '%promoter_id%'
+            AND pg_get_constraintdef(oid) ILIKE '%pdv_id%'
+            AND pg_get_constraintdef(oid) ILIKE '%visit_date%'
+            AND pg_get_constraintdef(oid) NOT ILIKE '%slot_time%'
+        LOOP
+          EXECUTE format('ALTER TABLE pdv_visits DROP CONSTRAINT %I', c.conname);
+        END LOOP;
+      END $$`);
+    // Backfill: slot da visita = menor horário entre as rotas ligadas.
+    await query(`UPDATE pdv_visits v
+      SET slot_time = COALESCE((
+            SELECT MIN(r.scheduled_time)
+            FROM pdv_visit_routes pvr
+            JOIN merch_routes r ON r.id = pvr.route_id
+            WHERE pvr.visit_id = v.id AND r.scheduled_time IS NOT NULL
+          ), '00:00'::time)
+      WHERE v.slot_time IS NULL OR v.slot_time = '00:00'::time`);
+    await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pdv_visits_promoter_pdv_date_slot
+      ON pdv_visits (promoter_id, pdv_id, visit_date, slot_time)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_pdv_visits_promoter_date_slot
+      ON pdv_visits (promoter_id, visit_date, slot_time)`);
     await query(`CREATE TABLE IF NOT EXISTS pdv_visit_routes (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       visit_id UUID NOT NULL, route_id UUID NOT NULL,
@@ -2841,6 +2885,8 @@ async function ensurePdvVisitTables() {
       performed_by UUID, created_at TIMESTAMPTZ DEFAULT NOW()
     )`);
   } catch (e) { /* ignore if already exists */ }
+  })();
+  return pdvVisitTablesReady;
 }
 
 let execCategoryTablesReady = null;
@@ -3814,6 +3860,26 @@ router.post('/promotor/routes/:id/checkin', promotorAuth, async (req, res) => {
     const nowBR = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
     const todayStr = `${nowBR.getFullYear()}-${String(nowBR.getMonth()+1).padStart(2,'0')}-${String(nowBR.getDate()).padStart(2,'0')}`;
 
+    // Janela de horário: o check-in só abre a partir do horário da rota (com
+    // tolerância). Atraso é apenas aviso — bloquear atraso quebraria a fila
+    // offline do app (4xx é terminal lá).
+    const slotKey = routeSlotKey(route.rows[0]);
+    const timeEval = evaluateCheckinTime(route.rows[0], instantToSaoPauloMinutes());
+    if (!timeEval.allowed) {
+      return res.status(409).json({
+        error: 'outside_time_window',
+        error_code: 'OUTSIDE_TIME_WINDOW',
+        message: timeEval.message,
+        details: {
+          scheduled_time: normalizeTimeToHHMM(route.rows[0].scheduled_time),
+          opens_at: minutesToHHMM(timeEval.opensAt),
+          closes_at: minutesToHHMM(timeEval.closesAt),
+          tolerance_minutes: timeEval.toleranceMin,
+          slot_key: slotKey,
+        },
+      });
+    }
+
     // Block check-in when there are past open routes still awaiting justification
     try {
       await ensureNotDoneColumns();
@@ -3831,13 +3897,16 @@ router.post('/promotor/routes/:id/checkin', promotorAuth, async (req, res) => {
     const pdvId = route.rows[0].pdv_id;
     let effectivePhotoUrl = photo_url || null;
 
-    // Create or find PDV visit for this PDV + date
+    // Create or find PDV visit for this PDV + date + SLOT (horário da rota).
+    // Cada slot do dia tem sua própria visita: 07:00 e 13:00 no mesmo PDV são
+    // visitas distintas, com check-in e check-out próprios.
     let visitId = null;
     let isFirstRouteAtPdv = false;
     try {
       const existingVisit = await query(
-        `SELECT id, checkin_photo_url FROM pdv_visits WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3`,
-        [req.employeeId, pdvId, todayStr]
+        `SELECT id, checkin_photo_url FROM pdv_visits
+         WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3 AND slot_time=$4`,
+        [req.employeeId, pdvId, todayStr, slotKey]
       );
       if (existingVisit.rows.length) {
         visitId = existingVisit.rows[0].id;
@@ -3848,12 +3917,26 @@ router.post('/promotor/routes/:id/checkin', promotorAuth, async (req, res) => {
           return res.status(400).json({ error: 'Esta rota exige foto obrigatória no check-in' });
         }
         isFirstRouteAtPdv = true;
-        const visitRes = await query(
-          `INSERT INTO pdv_visits (organization_id, promoter_id, pdv_id, visit_date, checkin_at, checkin_latitude, checkin_longitude, checkin_photo_url, checkin_device, status)
-            VALUES ($1,$2,$3,$4,NOW(),$5,$6,$7,$8,'active') RETURNING id`,
-          [req.orgId, req.employeeId, pdvId, todayStr, latitude, longitude, effectivePhotoUrl, device]
-        );
-        visitId = visitRes.rows[0].id;
+        let visitRes;
+        try {
+          visitRes = await query(
+            `INSERT INTO pdv_visits (organization_id, promoter_id, pdv_id, visit_date, slot_time, checkin_at, checkin_latitude, checkin_longitude, checkin_photo_url, checkin_device, status)
+              VALUES ($1,$2,$3,$4,$5,NOW(),$6,$7,$8,$9,'active') RETURNING id`,
+            [req.orgId, req.employeeId, pdvId, todayStr, slotKey, latitude, longitude, effectivePhotoUrl, device]
+          );
+        } catch (insErr) {
+          // Banco ainda no schema antigo (única chave sem slot): cai no INSERT
+          // sem slot e recupera a visita existente.
+          if (insErr.code !== '23505' && insErr.code !== '42703') throw insErr;
+          const legacy = await query(
+            `SELECT id FROM pdv_visits WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3
+             ORDER BY created_at DESC LIMIT 1`,
+            [req.employeeId, pdvId, todayStr]
+          );
+          if (!legacy.rows.length) throw insErr;
+          visitId = legacy.rows[0].id;
+        }
+        if (!visitId) visitId = visitRes.rows[0].id;
 
         // Timeline: PDV check-in
         await query(
@@ -3892,11 +3975,16 @@ router.post('/promotor/routes/:id/checkin', promotorAuth, async (req, res) => {
     );
 
     if (all_routes_at_pdv) {
+      // A cascata só vale para as rotas do MESMO slot (mesmo horário agendado).
+      // Antes ela atingia todas as rotas do PDV do dia, o que fazia o check-in
+      // das 07:00 validar também a rota das 13:00.
       await query(
         `UPDATE merch_routes SET status='in_progress', checkin_at=COALESCE(checkin_at, NOW()), checkin_latitude=$1,
          checkin_longitude=$2, checkin_device=$3, checkin_photo_url=COALESCE(checkin_photo_url, $4), updated_at=NOW()
-         WHERE promoter_id=$5 AND pdv_id=$6 AND visit_date=$7 AND status IN ('scheduled','confirmed')`,
-        [latitude, longitude, device, effectivePhotoUrl, req.employeeId, pdvId, route.rows[0].visit_date]
+         WHERE promoter_id=$5 AND pdv_id=$6 AND visit_date=$7 AND status IN ('scheduled','confirmed')
+           AND COALESCE(window_start, scheduled_time, '00:00'::time) = $8::time
+           AND id <> $9`,
+        [latitude, longitude, device, effectivePhotoUrl, req.employeeId, pdvId, route.rows[0].visit_date, slotKey, req.params.id]
       );
     }
 
@@ -3916,10 +4004,18 @@ router.post('/promotor/routes/:id/checkin', promotorAuth, async (req, res) => {
     await query(
       `INSERT INTO route_execution_logs (route_id, action, details, performed_by, source)
        VALUES ($1,'checkin',$2,$3,'app')`,
-      [req.params.id, JSON.stringify({ latitude, longitude, has_photo: !!effectivePhotoUrl, is_first_at_pdv: isFirstRouteAtPdv, visit_id: visitId }), req.employeeId]
+      [req.params.id, JSON.stringify({ latitude, longitude, has_photo: !!effectivePhotoUrl, is_first_at_pdv: isFirstRouteAtPdv, visit_id: visitId, slot_key: slotKey, late: timeEval.late }), req.employeeId]
     );
 
-    res.json({ ...result.rows[0], visit_id: visitId, is_first_at_pdv: isFirstRouteAtPdv });
+    res.json({
+      ...result.rows[0],
+      visit_id: visitId,
+      is_first_at_pdv: isFirstRouteAtPdv,
+      slot_key: slotKey,
+      late: timeEval.late,
+      late_message: timeEval.late ? timeEval.message : null,
+      time_window: describeRouteWindow(route.rows[0]),
+    });
   } catch (err) { logError('promotor.checkin', err); res.status(500).json({ error: 'Erro' }); }
 });
 
@@ -4531,9 +4627,17 @@ router.post('/promotor/routes/:id/checkout', promotorAuth, async (req, res) => {
     // Fechá-las aqui gravaria check-out sem o promotor ter saido dessas lojas.
 
     // Timeline: route completed
+    const slotKey = routeSlotKey(route);
     try {
+      // Uma rota pode estar ligada a mais de uma visita (histórico + slot
+      // atual): prefere a visita do mesmo slot.
       const visitRes = await query(
-        `SELECT visit_id FROM pdv_visit_routes WHERE route_id=$1`, [req.params.id]
+        `SELECT pvr.visit_id FROM pdv_visit_routes pvr
+         JOIN pdv_visits v ON v.id = pvr.visit_id
+         WHERE pvr.route_id=$1
+         ORDER BY (v.slot_time = $2::time) DESC, pvr.started_at DESC
+         LIMIT 1`,
+        [req.params.id, slotKey]
       );
       if (visitRes.rows.length) {
         const visitId = visitRes.rows[0].visit_id;
@@ -4548,14 +4652,17 @@ router.post('/promotor/routes/:id/checkout', promotorAuth, async (req, res) => {
       }
     } catch (e) { if (e.code !== '42P01') logError('promotor.checkout.timeline', e); }
 
-    // Check if there are remaining routes at same PDV today
+    // Rotas pendentes do MESMO slot (mesmo horário). As rotas de outro horário
+    // no mesmo PDV não bloqueiam o checkout: são outra visita, com check-in e
+    // check-out próprios.
     let remainingRoutesAtPdv = 0;
     let canCheckoutPdv = false;
     try {
       const remaining = await query(
         `SELECT COUNT(*) as cnt FROM merch_routes
-         WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3 AND status IN ('scheduled','confirmed','in_progress') AND id != $4`,
-        [req.employeeId, route.pdv_id, todayStr, req.params.id]
+         WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3 AND status IN ('scheduled','confirmed','in_progress') AND id != $4
+           AND COALESCE(window_start, scheduled_time, '00:00'::time) = $5::time`,
+        [req.employeeId, route.pdv_id, todayStr, req.params.id, slotKey]
       );
       remainingRoutesAtPdv = parseInt(remaining.rows[0].cnt);
       canCheckoutPdv = remainingRoutesAtPdv === 0;
@@ -4579,33 +4686,78 @@ router.post('/promotor/routes/:id/checkout', promotorAuth, async (req, res) => {
 
     res.json({
       ...result.rows[0],
+      slot_key: slotKey,
       remaining_routes_at_pdv: remainingRoutesAtPdv,
       can_checkout_pdv: canCheckoutPdv,
       pdv_checkout_message: canCheckoutPdv
-        ? 'Esta era a última rota neste PDV. Você pode fazer o checkout da loja.'
-        : `Ainda existem ${remainingRoutesAtPdv} rota(s) neste PDV para hoje. O checkout da loja será liberado após a última rota.`,
+        ? 'Esta era a última rota neste horário. Você pode fazer o checkout da loja.'
+        : `Ainda existem ${remainingRoutesAtPdv} rota(s) neste horário neste PDV para hoje. O checkout da loja será liberado após a última rota.`,
     });
   } catch (err) { logError('promotor.checkout', err); res.status(500).json({ error: 'Erro' }); }
 });
 
 
 // Promotor: PDV Checkout (physical exit from store)
+//
+// O checkout fecha UM SLOT: a visita do horário que o promotor está encerrando.
+// Um promotor com rotas das 07:00 e das 13:00 no mesmo PDV faz o checkout da
+// visita das 07:00 e, depois, o da 13:00 — cada um com foto e hora próprios.
 router.post('/promotor/pdv-checkout', promotorAuth, async (req, res) => {
   try {
-    const { pdv_id, latitude, longitude, photo_url, notes } = req.body;
+    const { pdv_id, latitude, longitude, photo_url, notes, slot_time, route_id } = req.body;
     const nowBR = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
     const todayStr = `${nowBR.getFullYear()}-${String(nowBR.getMonth()+1).padStart(2,'0')}-${String(nowBR.getDate()).padStart(2,'0')}`;
 
-    // Check if there are still pending routes at this PDV
+    // Resolve o slot do checkout:
+    //   1. slot_time explícito no corpo;
+    //   2. route_id -> horário da rota;
+    //   3. visita aberta única no PDV (compatibilidade com app antigo);
+    //   4. horário da última rota concluída no PDV.
+    let slotKey = normalizeTimeToHHMM(slot_time);
+    if (!slotKey && route_id) {
+      const rr = await query(`SELECT * FROM merch_routes WHERE id=$1 AND promoter_id=$2`, [route_id, req.employeeId]);
+      if (rr.rows.length) slotKey = routeSlotKey(rr.rows[0]);
+    }
+    if (!slotKey) {
+      const openVisits = await query(
+        `SELECT id, slot_time FROM pdv_visits
+         WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3 AND checkout_at IS NULL
+         ORDER BY slot_time`,
+        [req.employeeId, pdv_id, todayStr]
+      );
+      if (openVisits.rows.length === 1) {
+        slotKey = normalizeTimeToHHMM(openVisits.rows[0].slot_time) || NO_SLOT;
+      } else if (openVisits.rows.length > 1) {
+        return res.status(400).json({
+          error: 'slot_required',
+          error_code: 'SLOT_REQUIRED',
+          message: 'Informe o horário (slot) da visita que está sendo encerrada.',
+          details: { slots: openVisits.rows.map(v => normalizeTimeToHHMM(v.slot_time) || NO_SLOT) },
+        });
+      } else {
+        const lastRoute = await query(
+          `SELECT * FROM merch_routes WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3
+           ORDER BY checkout_at DESC NULLS LAST LIMIT 1`,
+          [req.employeeId, pdv_id, todayStr]
+        );
+        if (lastRoute.rows.length) slotKey = routeSlotKey(lastRoute.rows[0]);
+      }
+    }
+    slotKey = slotKey || NO_SLOT;
+
+    // Rotas pendentes do MESMO slot. As rotas de outro horário no mesmo PDV não
+    // bloqueiam: são outra visita, com check-in e check-out próprios.
     const pendingRoutes = await query(
       `SELECT COUNT(*) as cnt FROM merch_routes
-       WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3 AND status IN ('scheduled','confirmed','in_progress')`,
-      [req.employeeId, pdv_id, todayStr]
+       WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3 AND status IN ('scheduled','confirmed','in_progress')
+         AND COALESCE(window_start, scheduled_time, '00:00'::time) = $4::time`,
+      [req.employeeId, pdv_id, todayStr, slotKey]
     );
     if (parseInt(pendingRoutes.rows[0].cnt) > 0) {
       return res.status(400).json({
-        error: 'Ainda existem rotas pendentes neste PDV para hoje. Conclua todas as rotas antes de fazer o checkout.',
+        error: 'Ainda existem rotas pendentes neste horário neste PDV para hoje. Conclua todas as rotas antes de fazer o checkout.',
         remaining: parseInt(pendingRoutes.rows[0].cnt),
+        slot_key: slotKey,
       });
     }
 
@@ -4614,8 +4766,8 @@ router.post('/promotor/pdv-checkout', promotorAuth, async (req, res) => {
       const result = await query(
         `UPDATE pdv_visits SET checkout_at=NOW(), checkout_latitude=$3, checkout_longitude=$4,
          checkout_photo_url=$5, status='completed', notes=$6, updated_at=NOW()
-         WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$7 RETURNING *`,
-        [req.employeeId, pdv_id, latitude, longitude, photo_url, notes, todayStr]
+         WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$7 AND slot_time=$8::time RETURNING *`,
+        [req.employeeId, pdv_id, latitude, longitude, photo_url, notes, todayStr, slotKey]
       );
 
       if (result.rows.length) {
@@ -4623,15 +4775,16 @@ router.post('/promotor/pdv-checkout', promotorAuth, async (req, res) => {
         await query(
           `INSERT INTO pdv_visit_timeline (visit_id, event_type, event_data, performed_by)
            VALUES ($1,'pdv_checkout',$2,$3)`,
-          [result.rows[0].id, JSON.stringify({ latitude, longitude, has_photo: !!photo_url }), req.employeeId]
+          [result.rows[0].id, JSON.stringify({ latitude, longitude, has_photo: !!photo_url, slot_key: slotKey }), req.employeeId]
         );
 
         if (photo_url) {
-          // Save checkout photo linked to last route at PDV
+          // Save checkout photo linked to last route at PDV (mesmo slot)
           const lastRoute = await query(
             `SELECT id FROM merch_routes WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3
+               AND COALESCE(window_start, scheduled_time, '00:00'::time) = $4::time
              ORDER BY checkout_at DESC NULLS LAST LIMIT 1`,
-            [req.employeeId, pdv_id, todayStr]
+            [req.employeeId, pdv_id, todayStr, slotKey]
           );
           if (lastRoute.rows.length) {
             await query(
@@ -4642,13 +4795,13 @@ router.post('/promotor/pdv-checkout', promotorAuth, async (req, res) => {
           }
         }
 
-        res.json(result.rows[0]);
+        res.json({ ...result.rows[0], slot_key: slotKey });
       } else {
-        res.json({ ok: true, message: 'PDV visit not found but checkout registered' });
+        res.json({ ok: true, slot_key: slotKey, message: 'PDV visit not found but checkout registered' });
       }
     } catch (e) {
       if (e.code === '42P01') {
-        res.json({ ok: true, message: 'PDV visits table not created yet' });
+        res.json({ ok: true, slot_key: slotKey, message: 'PDV visits table not created yet' });
       } else throw e;
     }
   } catch (err) { logError('promotor.pdv_checkout', err); res.status(500).json({ error: 'Erro' }); }
@@ -4660,25 +4813,36 @@ router.post('/promotor/pdv-checkout', promotorAuth, async (req, res) => {
 // rota só é chamada pela fila offline assim que o upload da foto terminar.
 router.post('/promotor/pdv-checkout/photo', promotorAuth, async (req, res) => {
   try {
-    const { pdv_id, photo_url } = req.body;
+    const { pdv_id, photo_url, slot_time } = req.body;
     if (!pdv_id || !photo_url) return res.status(400).json({ error: 'pdv_id e photo_url obrigatórios' });
 
     const nowBR = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
     const todayStr = `${nowBR.getFullYear()}-${String(nowBR.getMonth()+1).padStart(2,'0')}-${String(nowBR.getDate()).padStart(2,'0')}`;
 
+    // Sem slot explícito, anexa à visita mais recente do PDV (a última
+    // encerrada). Nunca a todas: a foto de saída pertence a um slot só.
     const result = await query(
       `UPDATE pdv_visits SET checkout_photo_url=$4, updated_at=NOW()
-       WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3 RETURNING id`,
-      [req.employeeId, pdv_id, todayStr, photo_url]
+       WHERE id = (
+         SELECT id FROM pdv_visits
+         WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3
+           AND ($5::time IS NULL OR slot_time = $5::time)
+         ORDER BY checkout_at DESC NULLS LAST, created_at DESC LIMIT 1
+       )
+       RETURNING id`,
+      [req.employeeId, pdv_id, todayStr, photo_url, normalizeTimeToHHMM(slot_time)]
     );
     if (!result.rows.length) {
       return res.json({ ok: true, message: 'Checkout do PDV não encontrado para hoje — foto não anexada' });
     }
 
+    // A foto de saída pertence a UM slot. Com slot explícito, a rota é a do
+    // próprio slot; sem ele, a mais recente do PDV.
     const lastRoute = await query(
       `SELECT id FROM merch_routes WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3
+         AND ($4::text IS NULL OR COALESCE(window_start, scheduled_time, '00:00'::time) = $4::time)
        ORDER BY checkout_at DESC NULLS LAST LIMIT 1`,
-      [req.employeeId, pdv_id, todayStr]
+      [req.employeeId, pdv_id, todayStr, normalizeTimeToHHMM(slot_time)]
     );
     if (lastRoute.rows.length) {
       await query(
@@ -4695,15 +4859,18 @@ router.post('/promotor/pdv-checkout/photo', promotorAuth, async (req, res) => {
 // Promotor: Check remaining routes at PDV
 router.get('/promotor/pdv-status', promotorAuth, async (req, res) => {
   try {
-    const { pdv_id } = req.query;
+    const { pdv_id, slot_time } = req.query;
     if (!pdv_id) return res.status(400).json({ error: 'pdv_id obrigatório' });
     const nowBR = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
     const todayStr = `${nowBR.getFullYear()}-${String(nowBR.getMonth()+1).padStart(2,'0')}-${String(nowBR.getDate()).padStart(2,'0')}`;
+    const slotKey = normalizeTimeToHHMM(slot_time);
 
     const routes = await query(
       `SELECT id, brand_id, status, scheduled_time FROM merch_routes
-       WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3 ORDER BY scheduled_time`,
-      [req.employeeId, pdv_id, todayStr]
+       WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3
+         AND ($4::text IS NULL OR COALESCE(window_start, scheduled_time, '00:00'::time) = $4::time)
+       ORDER BY scheduled_time`,
+      [req.employeeId, pdv_id, todayStr, slotKey]
     );
 
     const total = routes.rows.length;
@@ -4714,28 +4881,38 @@ router.get('/promotor/pdv-status', promotorAuth, async (req, res) => {
     let visit = null;
     try {
       const v = await query(
-        `SELECT * FROM pdv_visits WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3`,
+        `SELECT * FROM pdv_visits WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3
+         ORDER BY slot_time`,
         [req.employeeId, pdv_id, todayStr]
       );
-      visit = v.rows[0] || null;
+      visit = slotKey
+        ? (v.rows.find(r => (normalizeTimeToHHMM(r.slot_time) || NO_SLOT) === slotKey) || null)
+        : (v.rows[0] || null);
     } catch { /* table may not exist */ }
 
-    res.json({ routes: routes.rows, total, completed, pending, can_checkout: canCheckout, visit });
+    res.json({ routes: routes.rows, total, completed, pending, can_checkout: canCheckout, visit, slot_key: slotKey });
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
 });
 
 // Promotor: PDV visit timeline
 router.get('/promotor/pdv-timeline', promotorAuth, async (req, res) => {
   try {
-    const { pdv_id, visit_date } = req.query;
+    const { pdv_id, visit_date, slot_time } = req.query;
     const nowBR = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
     const dateStr = visit_date || `${nowBR.getFullYear()}-${String(nowBR.getMonth()+1).padStart(2,'0')}-${String(nowBR.getDate()).padStart(2,'0')}`;
+    const slotKey = normalizeTimeToHHMM(slot_time);
 
     const visit = await query(
-      `SELECT id FROM pdv_visits WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3`,
+      `SELECT id FROM pdv_visits WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3
+       ORDER BY slot_time`,
       [req.employeeId, pdv_id, dateStr]
     );
     if (!visit.rows.length) return res.json([]);
+
+    const selected = slotKey
+      ? visit.rows.find(r => (normalizeTimeToHHMM(r.slot_time) || NO_SLOT) === slotKey)
+      : visit.rows[0];
+    if (!selected) return res.json([]);
 
     const timeline = await query(
       `SELECT t.*, r.brand_id, b.name as brand_name
@@ -4743,7 +4920,7 @@ router.get('/promotor/pdv-timeline', promotorAuth, async (req, res) => {
        LEFT JOIN merch_routes r ON r.id = t.route_id
        LEFT JOIN merch_brands b ON b.id = r.brand_id
        WHERE t.visit_id=$1 ORDER BY t.created_at`,
-      [visit.rows[0].id]
+      [selected.id]
     );
     res.json(timeline.rows);
   } catch (err) {

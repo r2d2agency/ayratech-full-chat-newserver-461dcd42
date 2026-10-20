@@ -28,6 +28,20 @@ import { logger } from "@/lib/logger";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { SyncStatusIndicator } from "@/components/promotor/SyncStatusIndicator";
+import { routeSlotKey, hasCheckinForSlot, hasCheckoutForSlot, visitSlotKey, hhmmToMinutes } from "@/lib/route-slot";
+
+/** Minutos desde a meia-noite em São Paulo. */
+function currentSaoPauloMinutes(date: Date = new Date()): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+  return (hour === 24 ? 0 : hour) * 60 + minute;
+}
 
 const STATUS_COLORS: Record<string, string> = {
   scheduled: 'bg-blue-500/20 text-blue-700',
@@ -147,7 +161,7 @@ export default function PromotorHome() {
   const [showPdvCheckin, setShowPdvCheckin] = useState(false);
   const [pdvCheckinPhoto, setPdvCheckinPhoto] = useState('');
   const [pdvCheckinLoading, setPdvCheckinLoading] = useState(false);
-  const [actionPdv, setActionPdv] = useState<{ pdv_id: string; pdv_name: string } | null>(null);
+  const [actionPdv, setActionPdv] = useState<{ pdv_id: string; pdv_name: string; route_id?: string; slot_key?: string } | null>(null);
   const [showFaceVerify, setShowFaceVerify] = useState(false);
   const [showQrScanner, setShowQrScanner] = useState(false);
   const [qrLoading, setQrLoading] = useState(false);
@@ -215,19 +229,26 @@ export default function PromotorHome() {
     }
   }, [isOnline, todayRoutes.length, queryClient]);
 
-  // Detect PDVs where all routes are completed but no checkout was done
+  // PDVs (por SLOT) onde todas as rotas daquele horário foram concluídas mas o
+  // checkout da visita ainda não foi feito.
+  //
+  // Agrupa por PDV **e** horário: com rotas das 07:00 e das 13:00 no mesmo
+  // PDV, cada horário é uma visita separada e cada uma tem seu próprio
+  // checkout pendente.
   const pdvsNeedingCheckout = useMemo(() => {
     if (!todayRoutes.length) return [];
-    const pdvMap: Record<string, { pdv_id: string; pdv_name: string; routes: any[] }> = {};
+    const pdvMap: Record<string, { pdv_id: string; pdv_name: string; slot_key: string; route_id?: string; routes: any[] }> = {};
     todayRoutes.forEach((r: any) => {
-      if (!pdvMap[r.pdv_id]) pdvMap[r.pdv_id] = { pdv_id: r.pdv_id, pdv_name: r.pdv_name, routes: [] };
-      pdvMap[r.pdv_id].routes.push(r);
+      const slot = routeSlotKey(r);
+      const key = `${r.pdv_id}::${slot}`;
+      if (!pdvMap[key]) pdvMap[key] = { pdv_id: r.pdv_id, pdv_name: r.pdv_name, slot_key: slot, routes: [] };
+      pdvMap[key].routes.push(r);
     });
     return Object.values(pdvMap).filter(p => {
       const allCompleted = p.routes.length > 0 && p.routes.every((r: any) => r.status === 'completed');
-      const hasCheckout = pdvVisits.some((v: any) => v.pdv_id === p.pdv_id && v.checkout_at);
+      const hasCheckout = pdvVisits.some((v: any) => v.checkout_at && visitSlotKey(v) === p.slot_key && v.pdv_id === p.pdv_id);
       return allCompleted && !hasCheckout;
-    });
+    }).map(p => ({ ...p, route_id: p.routes[0]?.id }));
   }, [todayRoutes, pdvVisits]);
 
   // Fire-and-forget: the promoter is already being refused, so a failure here
@@ -376,32 +397,46 @@ export default function PromotorHome() {
       const baseUrl = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
       
       // Buscamos a rota do PDV para usar o id correto.
-      // Não filtramos por status aqui: se a rota do dia do PDV não aceitar
-      // check-in, quem responde com o motivo real é o servidor. Filtrar antes
-      // da chamada produzia um erro falso de "nenhuma rota ativa" quando a
-      // rota existia e estava visível na tela (ex.: cache desatualizado).
+      //
+      // O PDV pode ter MAIS DE UMA rota hoje (07:00 e 13:00). Cada horário é
+      // um slot com check-in próprio, então escolhemos a rota do slot
+      // "agora" — a que já abriu a janela e ainda não foi concluída. Se
+      // nenhuma estiver na janela, usamos a primeira pendente do PDV e deixamos
+      // o servidor explicar o motivo (resposta 409 outside_time_window).
       const routesForPdv = todayRoutes.filter((r: any) => r.pdv_id === pdvId);
-      const activeRouteForPdv = routesForPdv.find((r: any) => r.status !== 'completed')
+      const pendingForPdv = routesForPdv.filter((r: any) => r.status !== 'completed');
+      const nowMinutes = currentSaoPauloMinutes();
+      const routeForPdv =
+        pendingForPdv.find((r: any) => {
+          const w = r.time_window;
+          const opensAt = hhmmToMinutes(w?.opens_at);
+          const closesAt = hhmmToMinutes(w?.closes_at);
+          if (opensAt === null || closesAt === null) return true;
+          return nowMinutes >= opensAt && nowMinutes <= closesAt;
+        })
+        || pendingForPdv[0]
         || routesForPdv[routesForPdv.length - 1];
-      if (!activeRouteForPdv?.id) {
+      if (!routeForPdv?.id) {
         logger.warn('[handlePdvCheckin] Nenhuma rota encontrada para este PDV', { pdvId, routesForPdv });
         throw new Error('Nenhuma rota encontrada para este PDV. Fale com o supervisor para liberar sua rota.');
       }
-      
-      const url = `${baseUrl}/api/merch/promotor/routes/${activeRouteForPdv.id}/checkin`;
-      
-      logger.info('[handlePdvCheckin] Chamando API', { url, pdvId, routeId: activeRouteForPdv.id });
+
+      const url = `${baseUrl}/api/merch/promotor/routes/${routeForPdv.id}/checkin`;
+
+      logger.info('[handlePdvCheckin] Chamando API', { url, pdvId, routeId: routeForPdv.id });
 
       const body = {
         latitude: pos.coords.latitude,
         longitude: pos.coords.longitude,
         photo_url: effectivePhoto,
-        all_routes_at_pdv: true
       };
 
+      // Otimista: marca APENAS as rotas do mesmo slot do check-in. Rotas de
+      // outro horário no mesmo PDV (07:00 x 13:00) continuam pendentes.
+      const slot = routeSlotKey(routeForPdv);
       const markPdvRoutesCheckedIn = () => {
         todayRoutes
-          .filter((r: any) => r.pdv_id === pdvId && r.status !== 'completed')
+          .filter((r: any) => r.pdv_id === pdvId && r.status !== 'completed' && routeSlotKey(r) === slot)
           .forEach((r: any) => {
             queryClient.setQueryData(['promotor-route', r.id], (old: any) => old ? {
               ...old,
@@ -416,7 +451,7 @@ export default function PromotorHome() {
 
       if (!isOnline) {
         await queueApiCall({
-          url: `/api/merch/promotor/routes/${activeRouteForPdv.id}/checkin`,
+          url: `/api/merch/promotor/routes/${routeForPdv.id}/checkin`,
           method: 'POST',
           body,
           headers: {
@@ -432,11 +467,11 @@ export default function PromotorHome() {
 
         // Mesmo em offline limpamos caches para não reapresentar tela de check-in
         // ao navegar. O UI otimista + queueApiCall + sync vai atualizar depois.
-        queryClient.removeQueries({ queryKey: ['promotor-route', activeRouteForPdv.id] });
+        queryClient.removeQueries({ queryKey: ['promotor-route', routeForPdv.id] });
         queryClient.removeQueries({ queryKey: ['promotor-agenda'] });
         queryClient.removeQueries({ queryKey: ['promotor-home'] });
 
-        setTimeout(() => navigate(`/promotor/rota/${activeRouteForPdv.id}`, { replace: true }), 150);
+        setTimeout(() => navigate(`/promotor/rota/${routeForPdv.id}`, { replace: true }), 150);
         return;
       }
 
@@ -493,10 +528,27 @@ export default function PromotorHome() {
           (explicit as any)._geoHandled = true;
           throw explicit;
         }
+        if (errorCode === 'OUTSIDE_TIME_WINDOW' || result?.error === 'outside_time_window') {
+          // Check-in feito cedo demais para o horário da rota.
+          const msg = result?.message || 'Check-in disponível apenas dentro da janela da rota.';
+          const win = result?.details || {};
+          const fullMsg = win.opens_at
+            ? `${msg} (janela: ${String(win.opens_at).slice(0, 5)} — ${String(win.closes_at || '').slice(0, 5)})`
+            : msg;
+          const explicit = new Error(fullMsg);
+          (explicit as any)._geoHandled = true;
+          toast({
+            title: '⏰ Fora do horário da rota',
+            description: fullMsg,
+            variant: 'destructive',
+            duration: 9000,
+          });
+          throw explicit;
+        }
         throw new Error(result?.error || result?.message || 'Erro ao realizar check-in');
       }
 
-      logger.info('[handlePdvCheckin] Check-in realizado com sucesso', { pdvId, routeId: activeRouteForPdv.id });
+      logger.info('[handlePdvCheckin] Check-in realizado com sucesso', { pdvId, routeId: routeForPdv.id });
       toast({ title: 'Check-in da loja realizado!' });
       
       // Limpa estados e navega
@@ -507,8 +559,8 @@ export default function PromotorHome() {
       // Garante que o React Query vai pegar a rota ATUALIZADA do servidor
       // (status=in_progress, checkin_at preenchido) quando a tela do detalhe da rota
       // abrir — evita o bug de "baixa a rota e volta pra tela de check-in".
-      queryClient.removeQueries({ queryKey: ['promotor-route', activeRouteForPdv.id] });
-      queryClient.refetchQueries({ queryKey: ['promotor-route', activeRouteForPdv.id] }).catch(() => {});
+      queryClient.removeQueries({ queryKey: ['promotor-route', routeForPdv.id] });
+      queryClient.refetchQueries({ queryKey: ['promotor-route', routeForPdv.id] }).catch(() => {});
       queryClient.removeQueries({ queryKey: ['promotor-agenda'] });
       queryClient.refetchQueries({ queryKey: ['promotor-agenda'] }).catch(() => {});
       queryClient.removeQueries({ queryKey: ['promotor-home'] });
@@ -517,7 +569,7 @@ export default function PromotorHome() {
       // Delay curto para o backend gravar + invalidar cache antes da navegação
       const delayMs = 350;
       setTimeout(() => {
-        navigate(`/promotor/rota/${activeRouteForPdv.id}`, { replace: true });
+        navigate(`/promotor/rota/${routeForPdv.id}`, { replace: true });
       }, delayMs);
       
     } catch (err: any) {
@@ -535,14 +587,14 @@ export default function PromotorHome() {
     }
   }, [pdvCheckinPhoto, todayRoutes, navigate, toast, isOnline, queueApiCall, queryClient, setPdvCheckinGeoError]);
 
-  const handlePdvCheckout = useCallback(async (pdvId: string) => {
+  const handlePdvCheckout = useCallback(async (pdvId: string, slotKey?: string, routeId?: string) => {
     setPdvCheckoutLoading(true);
     try {
       const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
         navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 })
       );
       const token = localStorage.getItem('promotor_token') || localStorage.getItem('auth_token') || '';
-      const headers: Record<string, string> = { 
+      const headers: Record<string, string> = {
         'Content-Type': 'application/json'
       };
       if (token) {
@@ -551,6 +603,10 @@ export default function PromotorHome() {
       const url = `${(import.meta.env.VITE_API_URL || '').replace(/\/$/, '')}/api/merch/promotor/pdv-checkout`;
       const body = {
         pdv_id: pdvId,
+        // O checkout encerra UM slot: com rotas das 07:00 e das 13:00 no mesmo
+        // PDV, cada horário fecha a sua própria visita.
+        slot_time: slotKey || undefined,
+        route_id: routeId || undefined,
         latitude: pos.coords.latitude,
         longitude: pos.coords.longitude,
         photo_url: pdvCheckoutPhoto || undefined,
@@ -1105,7 +1161,7 @@ export default function PromotorHome() {
             {!activeRoute && nextRoute && (
               <Card className="border-primary/30 bg-primary/5 cursor-pointer active:scale-[0.98]"
                 onClick={async () => {
-                  const hasCheckin = pdvVisits.some((v: any) => v.pdv_id === nextRoute.pdv_id && v.checkin_at);
+                  const hasCheckin = hasCheckinForSlot(pdvVisits, nextRoute);
                   if (!hasCheckin) {
                     try {
                       await preValidateGeoForPdv(nextRoute.pdv_id, nextRoute.pdv_name, 'pdv_checkin');
@@ -1149,7 +1205,7 @@ export default function PromotorHome() {
                     <span className="flex items-center gap-1"><Package className="h-3 w-3" />{nextRoute.product_count || 0} itens</span>
                   </div>
                   <Button className="w-full mt-3" size="sm" variant="outline">
-                    {pdvVisits.some((v: any) => v.pdv_id === nextRoute.pdv_id && v.checkin_at) ? (
+                    {hasCheckinForSlot(pdvVisits, nextRoute) ? (
                       <><PlayCircle className="h-4 w-4 mr-2" /> Iniciar Rota</>
                     ) : (
                       <><MapPin className="h-4 w-4 mr-2" /> Fazer Check-in na Loja</>
@@ -1164,8 +1220,9 @@ export default function PromotorHome() {
               <h3 className="text-sm font-semibold mb-2">Rotas do Dia</h3>
               <div className="space-y-2">
                 {todayRoutes.map((r: any) => {
-                  // Determine if the route should show as "Awaiting Checkout"
-                  const isAwaitingCheckout = r.status === 'completed' && pdvVisits && !pdvVisits.some((v: any) => v.pdv_id === r.pdv_id && v.checkout_at);
+                  // "Aguardando checkout" é por SLOT: a visita das 07:00 não
+                  // encerra a das 13:00, mesmo no mesmo PDV.
+                  const isAwaitingCheckout = r.status === 'completed' && !hasCheckoutForSlot(pdvVisits, r);
                   const displayStatus = isAwaitingCheckout ? 'awaiting_checkout' : r.status;
                   
                   return (
@@ -1177,7 +1234,7 @@ export default function PromotorHome() {
                       onClick={async () => {
                         if (r.status === 'cancelled' || r.status === 'not_done') return;
                         
-                        const hasCheckin = pdvVisits.some((v: any) => v.pdv_id === r.pdv_id && v.checkin_at);
+                        const hasCheckin = hasCheckinForSlot(pdvVisits, r);
                         if (!hasCheckin) {
                           try {
                             await preValidateGeoForPdv(r.pdv_id, r.pdv_name, 'pdv_checkin');
@@ -1196,7 +1253,7 @@ export default function PromotorHome() {
                             toast({ title: 'Aviso de localização', description: e?.message || 'Não foi possível validar sua área permitida.', variant: 'destructive' });
                             return;
                           }
-                          setActionPdv({ pdv_id: r.pdv_id, pdv_name: r.pdv_name });
+                          setActionPdv({ pdv_id: r.pdv_id, pdv_name: r.pdv_name, route_id: r.id, slot_key: routeSlotKey(r) });
                           if (isFacialActive && facialConfig?.descriptor) {
                             setShowFaceVerify(true);
                           } else {
@@ -1396,14 +1453,14 @@ export default function PromotorHome() {
         {pdvsNeedingCheckout.length > 0 && (
           <div className="space-y-2">
             {pdvsNeedingCheckout.map(pdv => (
-              <Card key={pdv.pdv_id} className="border-primary/40 bg-primary/5">
+              <Card key={`${pdv.pdv_id}::${pdv.slot_key}`} className="border-primary/40 bg-primary/5">
                 <CardContent className="p-3 flex items-center gap-3">
                   <Store className="h-6 w-6 text-primary flex-shrink-0" />
                   <div className="flex-1">
                     <p className="text-sm font-medium">{pdv.pdv_name}</p>
-                    <p className="text-[10px] text-muted-foreground">Todas as rotas concluídas — checkout pendente</p>
+                    <p className="text-[10px] text-muted-foreground">Todas as rotas concluídas — checkout pendente ({pdv.slot_key})</p>
                   </div>
-                  <Button size="sm" onClick={() => { setShowPdvCheckout(true); setActionPdv(pdv); }}>
+                  <Button size="sm" onClick={() => { setShowPdvCheckout(true); setActionPdv({ pdv_id: pdv.pdv_id, pdv_name: pdv.pdv_name, slot_key: pdv.slot_key, route_id: pdv.route_id }); }}>
                     Checkout
                   </Button>
                 </CardContent>
@@ -1758,11 +1815,11 @@ export default function PromotorHome() {
           </div>
           <DialogFooter className="flex gap-2">
             <Button variant="outline" onClick={() => {
-              if (actionPdv) handlePdvCheckout(actionPdv.pdv_id);
+              if (actionPdv) handlePdvCheckout(actionPdv.pdv_id, actionPdv.slot_key, actionPdv.route_id);
             }} disabled={pdvCheckoutLoading}>
               Pular Foto
             </Button>
-            <Button onClick={() => actionPdv && handlePdvCheckout(actionPdv.pdv_id)} disabled={pdvCheckoutLoading || !pdvCheckoutPhoto}>
+            <Button onClick={() => actionPdv && handlePdvCheckout(actionPdv.pdv_id, actionPdv.slot_key, actionPdv.route_id)} disabled={pdvCheckoutLoading || !pdvCheckoutPhoto}>
               {pdvCheckoutLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
               Finalizar Checkout
             </Button>

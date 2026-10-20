@@ -1,10 +1,16 @@
--- PDV Visits: permanence tracking (check-in once, checkout once per PDV per day)
+-- PDV Visits: permanence tracking (check-in once, checkout once per PDV per
+-- day PER SLOT).
+--
+-- Um promotor pode ter duas rotas no MESMO PDV no mesmo dia (07:00 e 13:00).
+-- Cada horário é um "slot" com check-in e checkout próprios, então a
+-- unicidade passa a ser (promoter, pdv, date, slot_time).
 CREATE TABLE IF NOT EXISTS pdv_visits (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   promoter_id UUID NOT NULL REFERENCES employees(id),
   pdv_id UUID NOT NULL REFERENCES pdvs(id),
   visit_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  slot_time TIME NOT NULL DEFAULT '00:00',
   checkin_at TIMESTAMPTZ,
   checkin_latitude DOUBLE PRECISION,
   checkin_longitude DOUBLE PRECISION,
@@ -18,7 +24,7 @@ CREATE TABLE IF NOT EXISTS pdv_visits (
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(promoter_id, pdv_id, visit_date)
+  UNIQUE(promoter_id, pdv_id, visit_date, slot_time)
 );
 
 -- Link routes to PDV visits
