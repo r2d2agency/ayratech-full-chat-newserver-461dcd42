@@ -1487,13 +1487,64 @@ export default function PromotorRota() {
     }
     setFaceVerifyAction(null);
 
-    // Prioritize background queue for all checkouts to ensure they work offline
-    await queueApiCall({
+    // O checkout responde se o checkout DA LOJA já está liberado neste horário
+    // (can_checkout_pdv / remaining_routes_at_pdv / pdv_checkout_message).
+    // Offline a chamada vai para a fila e não há resposta para ler — aí o
+    // promotor só descobre o estado ao voltar para a Home.
+    let slotCheckout: { canCheckout: boolean; remaining: number; message?: string } | null = null;
+    let checkoutRejected: string | null = null;
+
+    const queueCheckout = () => queueApiCall({
       url: `/api/merch/promotor/routes/${id}/checkout`,
       method: 'POST',
       body: { notes: actionForm.notes },
       headers: { 'Authorization': `Bearer ${localStorage.getItem('promotor_token') || localStorage.getItem('auth_token')}` }
     });
+
+    if (isOnline) {
+      try {
+        const token = localStorage.getItem('promotor_token') || localStorage.getItem('auth_token') || '';
+        const baseUrl = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+        const response = await fetch(`${baseUrl}/api/merch/promotor/routes/${id}/checkout`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ notes: actionForm.notes }),
+        });
+        let result: any = {};
+        try { result = await response.json(); } catch {}
+        if (!response.ok) {
+          // A chamada direta não passa pela fila: se o servidor recusou, o
+          // checkout NÃO aconteceu (ex.: contagem de estoque pendente) e o
+          // promotor precisa saber — antes a fila marcava a operação como
+          // falha sem ninguém ver.
+          checkoutRejected = result?.message || result?.error || `Erro na requisição (${response.status})`;
+          logger.warn('[handleCompleteRoute] Checkout recusado pelo servidor', { routeId: id, status: response.status, result });
+        } else if (typeof result?.can_checkout_pdv === 'boolean') {
+          slotCheckout = {
+            canCheckout: !!result.can_checkout_pdv,
+            remaining: Number(result.remaining_routes_at_pdv || 0),
+            message: result.pdv_checkout_message,
+          };
+        }
+      } catch (e: any) {
+        // Rede caiu no meio da chamada: não dá para saber se passou — mantém o
+        // comportamento antigo de mandar para a fila (que mostra a falha).
+        logger.warn('[handleCompleteRoute] Checkout síncrono falhou, caindo para a fila', { error: e?.message });
+        await queueCheckout();
+      }
+    } else {
+      await queueCheckout();
+    }
+
+    if (checkoutRejected) {
+      // Recusa do servidor: nada foi concluído, então não marca otimista nem
+      // navega — o promotor corrige o pendente e tenta de novo.
+      toast.error(checkoutRejected, { duration: 10000 });
+      return;
+    }
 
     // Otimista offline: marcar rota como concluída no cache para refletir na Home
     const nowIso = new Date().toISOString();
@@ -1537,7 +1588,20 @@ export default function PromotorRota() {
     setShowCompleteRoute(false);
     navigate('/promotor/home');
 
-  }, [id, actionForm.notes, navigate, isFacialActiveCheckin, faceVerifyAction, queueApiCall, qc, route?.pdv_id]);
+    // Avisa o promotor se ainda faltam rotas NESTE horário neste PDV — o
+    // checkout da loja fica travado até a última rota do slot ser concluída.
+    if (slotCheckout) {
+      if (slotCheckout.canCheckout) {
+        toast.success('Rota concluída. Checkout da loja liberado para este horário.', { duration: 6000 });
+      } else {
+        toast.error(
+          slotCheckout.message ||
+            `Ainda existem ${slotCheckout.remaining} rota(s) neste horário neste PDV. O checkout da loja será liberado após a última.`,
+          { duration: 9000 }
+        );
+      }
+    }
+  }, [id, actionForm.notes, navigate, isFacialActiveCheckin, faceVerifyAction, isOnline, queueApiCall, qc, route?.pdv_id]);
 
   const handlePdvCheckout = useCallback(async () => {
     if (!route?.pdv_id) return;
