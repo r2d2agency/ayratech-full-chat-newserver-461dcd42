@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -171,6 +171,7 @@ export default function Organizacoes() {
   const [templateDescription, setTemplateDescription] = useState('');
   const [templateColor, setTemplateColor] = useState('#6366f1');
   const [templatePermissions, setTemplatePermissions] = useState<Record<string, boolean>>(createEmptyPermissions());
+  const [templateSearch, setTemplateSearch] = useState('');
   const [savingTemplate, setSavingTemplate] = useState(false);
 
   // Edit member template
@@ -644,11 +645,21 @@ export default function Organizacoes() {
 
   // Permissões visíveis no editor de template (RH só aparece para quem pode atribuí-lo)
   const visiblePagePermissions = PAGE_PERMISSIONS.filter(p => canAssignRh || !isRestrictedKey(p.key));
-  const visibleSections = [...new Set(visiblePagePermissions.map(p => p.section))];
 
   // Um template "inclui RH" quando alguma das páginas restritas está habilitada
   const templateHasRh = (tpl: PermissionTemplate) =>
     Object.entries(tpl.permissions || {}).some(([key, value]) => isRestrictedKey(key) && value === true);
+
+  // Contadores da seção RH dentro do editor
+  const rhPages = visiblePagePermissions.filter(p => p.section === 'RH');
+  const rhTotalCount = rhPages.length;
+  const rhEnabledCount = rhPages.filter(p => templatePermissions[p.key]).length;
+
+  // Seções visíveis no editor. RH vem primeiro para ficar sempre à vista.
+  const visibleSections = useMemo(() => {
+    const sections = [...new Set(visiblePagePermissions.map(p => p.section))];
+    return sections.sort((a, b) => (a === 'RH' ? -1 : b === 'RH' ? 1 : 0));
+  }, [visiblePagePermissions]);
 
   return (
     <MainLayout>
@@ -1986,8 +1997,36 @@ export default function Organizacoes() {
                     As páginas de RH não estão disponíveis para o seu perfil. Apenas administradores e usuários do RH podem atribuí-las.
                   </p>
                 )}
+                {canAssignRh && (
+                  <div className="flex items-center justify-between rounded-lg border border-amber-500/40 bg-amber-500/5 px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm">RH</span>
+                      <Badge variant="outline" className="text-[10px] px-1.5 h-5 border-amber-500/50 text-amber-600">
+                        restrito a admin/RH
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {rhEnabledCount}/{rhTotalCount} páginas
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" onClick={() => toggleSectionPermissions('RH', true)}>Marcar RH</Button>
+                      <Button variant="outline" size="sm" onClick={() => toggleSectionPermissions('RH', false)}>Desmarcar RH</Button>
+                    </div>
+                  </div>
+                )}
+                <Input
+                  placeholder="Buscar página por nome..."
+                  value={templateSearch}
+                  onChange={(e) => setTemplateSearch(e.target.value)}
+                />
                 {visibleSections.map(section => {
-                  const sectionPages = visiblePagePermissions.filter(p => p.section === section);
+                  const sectionPages = visiblePagePermissions.filter(p =>
+                    p.section === section &&
+                    (!templateSearch.trim() ||
+              p.label.toLowerCase().includes(templateSearch.trim().toLowerCase()) ||
+              section.toLowerCase().includes(templateSearch.trim().toLowerCase()))
+                  );
+                  if (sectionPages.length === 0) return null;
                   const enabledInSection = sectionPages.filter(p => templatePermissions[p.key]).length;
                   const allEnabled = enabledInSection === sectionPages.length;
                   return (
