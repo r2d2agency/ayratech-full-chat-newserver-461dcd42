@@ -1094,6 +1094,61 @@ router.put('/work-schedule', async (req, res) => {
 // Permission Templates
 // ========================================
 
+// Páginas de RH: só admins (owner/admin/superadmin) e usuários do RH
+// podem atribuí-las em um template de acesso.
+const RH_PERMISSION_KEYS = [
+  'rh_dashboard', 'rh_indicadores', 'rh_colaboradores', 'rh_admissao', 'rh_cargos',
+  'rh_esocial', 'rh_escalas', 'rh_afd', 'rh_ponto', 'rh_ponto_monitor', 'rh_holerite',
+  'rh_documentos', 'rh_exames', 'rh_epis', 'rh_advertencias', 'rh_treinamentos',
+  'rh_feriados', 'rh_mapa', 'rh_acessos', 'rh_biometria', 'rh_rastreamento',
+  'rh_ajuda', 'rh_configuracoes', 'rh_logs', 'rh_changelog', 'rh_pdvs',
+];
+
+// Retorna as chaves de RH presentes e habilitadas no objeto de permissões
+function extractRhPermissionKeys(permissions) {
+  if (!permissions || typeof permissions !== 'object') return [];
+  return Object.keys(permissions).filter(
+    (key) => RH_PERMISSION_KEYS.includes(key) && permissions[key] === true
+  );
+}
+
+// Verifica se o usuário pertence ao RH da organização
+// (usuário vinculado a um colaborador com perfil administrativo do RH)
+async function isUserInRh(orgId, userId) {
+  const result = await query(
+    `SELECT 1 FROM employees
+      WHERE organization_id = $1
+        AND user_id = $2
+        AND worker_profile = 'administrativo'
+        AND COALESCE(status, 'ativo') = 'ativo'
+      LIMIT 1`,
+    [orgId, userId]
+  );
+  return result.rows.length > 0;
+}
+
+// Garante que apenas admins e usuários do RH salvem permissões de RH
+async function ensureCanAssignRh(orgId, userId, permissions) {
+  const rhKeys = extractRhPermissionKeys(permissions);
+  if (rhKeys.length === 0) return null;
+
+  const superadminCheck = await query(
+    `SELECT is_superadmin FROM users WHERE id = $1`,
+    [userId]
+  );
+  if (superadminCheck.rows[0]?.is_superadmin) return null;
+
+  const memberCheck = await query(
+    `SELECT role FROM organization_members WHERE organization_id = $1 AND user_id = $2 AND role IN ('owner', 'admin')`,
+    [orgId, userId]
+  );
+  if (memberCheck.rows.length > 0) return null;
+
+  if (await isUserInRh(orgId, userId)) return null;
+
+  return 'Você não tem permissão para incluir RH neste template';
+}
+
 // List permission templates for org
 router.get('/:id([0-9a-fA-F-]{36})/permission-templates', async (req, res) => {
   try {
@@ -1133,6 +1188,9 @@ router.post('/:id([0-9a-fA-F-]{36})/permission-templates', async (req, res) => {
 
     if (!name) return res.status(400).json({ error: 'Nome é obrigatório' });
 
+    const rhError = await ensureCanAssignRh(id, req.userId, permissions);
+    if (rhError) return res.status(403).json({ error: rhError });
+
     const result = await query(
       `INSERT INTO permission_templates (organization_id, name, description, color, permissions) 
        VALUES ($1, $2, $3, $4, $5) RETURNING *`,
@@ -1156,6 +1214,11 @@ router.put('/:id([0-9a-fA-F-]{36})/permission-templates/:templateId', async (req
       [id, req.userId]
     );
     if (memberCheck.rows.length === 0) return res.status(403).json({ error: 'Apenas admins podem editar templates' });
+
+    if (permissions) {
+      const rhError = await ensureCanAssignRh(id, req.userId, permissions);
+      if (rhError) return res.status(403).json({ error: rhError });
+    }
 
     const result = await query(
       `UPDATE permission_templates 

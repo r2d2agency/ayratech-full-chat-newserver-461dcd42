@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { Building2, Plus, Users, Trash2, UserPlus, Crown, Shield, User, Briefcase, Loader2, Pencil, Link2, Settings, KeyRound, Megaphone, Receipt, UsersRound, CalendarClock, Bot, Layers, MessagesSquare, Upload, Image, BarChart3, Lock, Copy, Fingerprint } from 'lucide-react';
 import { useUpload } from '@/hooks/use-upload';
-import { PAGE_PERMISSIONS, PAGE_SECTIONS, createFullPermissions, createEmptyPermissions } from '@/lib/page-permissions';
+import { PAGE_PERMISSIONS, PAGE_SECTIONS, createFullPermissions, createEmptyPermissions, isRestrictedKey } from '@/lib/page-permissions';
 
 interface Organization {
   id: string;
@@ -91,7 +91,7 @@ const roleLabels = {
 };
 
 export default function Organizacoes() {
-  const { refreshUser } = useAuth();
+  const { refreshUser, user } = useAuth();
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
   const [members, setMembers] = useState<OrganizationMember[]>([]);
@@ -368,6 +368,7 @@ export default function Organizacoes() {
     setTemplateName(`${template.name} (cópia)`);
     setTemplateDescription(template.description || '');
     setTemplateColor(template.color);
+    // Mantém as chaves de RH existentes: o bloqueio de salvamento é feito no backend
     setTemplatePermissions({ ...template.permissions });
     setTemplateDialogOpen(true);
   };
@@ -388,7 +389,9 @@ export default function Organizacoes() {
   };
 
   const toggleSectionPermissions = (section: string, value: boolean) => {
-    const sectionKeys = PAGE_PERMISSIONS.filter(p => p.section === section).map(p => p.key);
+    const sectionKeys = PAGE_PERMISSIONS
+      .filter(p => p.section === section && (canAssignRh || !isRestrictedKey(p.key)))
+      .map(p => p.key);
     setTemplatePermissions(prev => {
       const updated = { ...prev };
       sectionKeys.forEach(key => { updated[key] = value; });
@@ -635,6 +638,13 @@ export default function Organizacoes() {
   };
 
   const canManageOrg = selectedOrg?.role === 'owner' || selectedOrg?.role === 'admin';
+
+  // Somente admins e usuários do RH podem atribuir permissões de RH nos templates
+  const canAssignRh = canManageOrg || isSuperadmin || (user as any)?.is_rh_user === true;
+
+  // Permissões visíveis no editor de template (RH só aparece para quem pode atribuí-lo)
+  const visiblePagePermissions = PAGE_PERMISSIONS.filter(p => canAssignRh || !isRestrictedKey(p.key));
+  const visibleSections = [...new Set(visiblePagePermissions.map(p => p.section))];
 
   return (
     <MainLayout>
@@ -1953,12 +1963,17 @@ export default function Organizacoes() {
                 <div className="flex items-center justify-between">
                   <Label className="text-base font-semibold">Páginas Habilitadas</Label>
                   <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setTemplatePermissions(createFullPermissions())}>Marcar Todas</Button>
+                    <Button variant="outline" size="sm" onClick={() => setTemplatePermissions(createFullPermissions(canAssignRh))}>Marcar Todas</Button>
                     <Button variant="outline" size="sm" onClick={() => setTemplatePermissions(createEmptyPermissions())}>Desmarcar Todas</Button>
                   </div>
                 </div>
-                {PAGE_SECTIONS.map(section => {
-                  const sectionPages = PAGE_PERMISSIONS.filter(p => p.section === section);
+                {!canAssignRh && (
+                  <p className="text-xs text-muted-foreground">
+                    As páginas de RH não estão disponíveis para o seu perfil. Apenas administradores e usuários do RH podem atribuí-las.
+                  </p>
+                )}
+                {visibleSections.map(section => {
+                  const sectionPages = visiblePagePermissions.filter(p => p.section === section);
                   const enabledInSection = sectionPages.filter(p => templatePermissions[p.key]).length;
                   const allEnabled = enabledInSection === sectionPages.length;
                   return (

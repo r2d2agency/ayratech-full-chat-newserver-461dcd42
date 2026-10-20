@@ -438,6 +438,25 @@ router.get('/me', async (req, res) => {
       hasConnections = true;
     }
 
+    // Usuário do RH: vinculado a um colaborador com perfil administrativo do RH
+    let isRhUser = false;
+    if (organizationId) {
+      try {
+        const rhResult = await query(
+          `SELECT 1 FROM employees
+            WHERE organization_id = $1
+              AND user_id = $2
+              AND worker_profile = 'administrativo'
+              AND COALESCE(status, 'ativo') = 'ativo'
+            LIMIT 1`,
+          [organizationId, decoded.userId]
+        );
+        isRhUser = rhResult.rows.length > 0;
+      } catch (e) {
+        isRhUser = false;
+      }
+    }
+
     res.json({ 
       user: { 
         id: user.id,
@@ -451,6 +470,7 @@ router.get('/me', async (req, res) => {
         modules_enabled: modulesEnabled,
 
         has_connections: hasConnections,
+        is_rh_user: isRhUser,
         page_permissions: pagePermissions,
       } 
     });

@@ -33,6 +33,7 @@ interface User {
   modules_enabled?: ModulesEnabled;
   organization_footer?: string | null;
   has_connections?: boolean;
+  is_rh_user?: boolean;
 
   page_permissions?: PagePermissions;
 }
