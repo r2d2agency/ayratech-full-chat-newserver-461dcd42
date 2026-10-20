@@ -646,6 +646,10 @@ export default function Organizacoes() {
   const visiblePagePermissions = PAGE_PERMISSIONS.filter(p => canAssignRh || !isRestrictedKey(p.key));
   const visibleSections = [...new Set(visiblePagePermissions.map(p => p.section))];
 
+  // Um template "inclui RH" quando alguma das páginas restritas está habilitada
+  const templateHasRh = (tpl: PermissionTemplate) =>
+    Object.entries(tpl.permissions || {}).some(([key, value]) => isRestrictedKey(key) && value === true);
+
   return (
     <MainLayout>
       <div className="space-y-6 overflow-hidden">
@@ -1231,11 +1235,18 @@ export default function Organizacoes() {
                                     <div className="flex items-center gap-2">
                                       <div className="w-3 h-3 rounded-full" style={{ backgroundColor: tpl.color }} />
                                       <span className="font-medium">{tpl.name}</span>
+                                      {templateHasRh(tpl) && (
+                                        <Badge variant="outline" className="text-[10px] px-1.5 h-5 border-amber-500/50 text-amber-600">
+                                          inclui RH
+                                        </Badge>
+                                      )}
                                     </div>
                                     <div className="flex gap-1">
-                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDuplicateTemplate(tpl)} title="Duplicar">
-                                        <Copy className="h-3.5 w-3.5" />
-                                      </Button>
+                                      {canAssignRh && (
+                                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDuplicateTemplate(tpl)} title="Duplicar">
+                                          <Copy className="h-3.5 w-3.5" />
+                                        </Button>
+                                      )}
                                       {canManageOrg && (
                                         <>
                                           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openTemplateDialog(tpl)} title="Editar">
@@ -1791,6 +1802,9 @@ export default function Organizacoes() {
                         <div className="flex items-center gap-2">
                           <div className="w-2 h-2 rounded-full" style={{ backgroundColor: tpl.color }} />
                           {tpl.name}
+                          {templateHasRh(tpl) && (
+                            <span className="text-[10px] text-amber-600">inclui RH</span>
+                          )}
                         </div>
                       </SelectItem>
                     ))}
@@ -1981,6 +1995,11 @@ export default function Organizacoes() {
                       <div className="flex items-center gap-2">
                         <Checkbox checked={allEnabled} onCheckedChange={(checked) => toggleSectionPermissions(section, !!checked)} />
                         <span className="font-medium text-sm">{section}</span>
+                        {section === 'RH' && (
+                          <Badge variant="outline" className="text-[10px] px-1.5 h-5 border-amber-500/50 text-amber-600">
+                            restrito a admin/RH
+                          </Badge>
+                        )}
                         <Badge variant="secondary" className="text-xs">{enabledInSection}/{sectionPages.length}</Badge>
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pl-6">
