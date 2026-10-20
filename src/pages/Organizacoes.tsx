@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { Building2, Plus, Users, Trash2, UserPlus, Crown, Shield, User, Briefcase, Loader2, Pencil, Link2, Settings, KeyRound, Megaphone, Receipt, UsersRound, CalendarClock, Bot, Layers, MessagesSquare, Upload, Image, BarChart3, Lock, Copy, Fingerprint } from 'lucide-react';
 import { useUpload } from '@/hooks/use-upload';
-import { PAGE_PERMISSIONS, PAGE_SECTIONS, createFullPermissions, createEmptyPermissions, isRestrictedKey } from '@/lib/page-permissions';
+import { PAGE_PERMISSIONS, PAGE_SECTIONS, createFullPermissions, createEmptyPermissions, isRestrictedKey, normalizePermissions } from '@/lib/page-permissions';
 
 interface Organization {
   id: string;
@@ -319,7 +319,7 @@ export default function Organizacoes() {
       setTemplateName(template.name);
       setTemplateDescription(template.description || '');
       setTemplateColor(template.color);
-      setTemplatePermissions(template.permissions || createEmptyPermissions());
+      setTemplatePermissions(normalizePermissions(template.permissions));
     } else {
       setEditingTemplate(null);
       setTemplateName('');
@@ -370,7 +370,7 @@ export default function Organizacoes() {
     setTemplateDescription(template.description || '');
     setTemplateColor(template.color);
     // Mantém as chaves de RH existentes: o bloqueio de salvamento é feito no backend
-    setTemplatePermissions({ ...template.permissions });
+    setTemplatePermissions(normalizePermissions(template.permissions));
     setTemplateDialogOpen(true);
   };
 
@@ -381,7 +381,9 @@ export default function Organizacoes() {
         method: 'PATCH',
         body: { permission_template_id: templateId },
       });
-      toast.success('Permissões atualizadas!');
+      toast.success('Permissões atualizadas!', {
+        description: 'O usuário precisa atualizar a página ou entrar novamente para o novo template valer.',
+      });
       loadMembers(selectedOrg.id);
       refreshUser();
     } catch (error: any) {

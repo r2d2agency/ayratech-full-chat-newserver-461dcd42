@@ -22,6 +22,7 @@ import Campanhas from "./pages/Campanhas";
 import Chat from "./pages/Chat";
 import Cobranca from "./pages/Cobranca";
 import Organizacoes from "./pages/Organizacoes";
+import SemAcesso from "./pages/SemAcesso";
 import Admin from "./pages/Admin";
 import Configuracoes from "./pages/Configuracoes";
 import Agendamentos from "./pages/Agendamentos";
@@ -254,6 +255,7 @@ const App = () => (
             <Route path="/" element={<SmartRedirect />} />
             <Route path="/landing" element={<LandingPage />} />
             <Route path="/supermercado" element={<SupermarketLandingPage />} />
+            <Route path="/sem-acesso" element={<ProtectedRoute><SemAcesso /></ProtectedRoute>} />
             <Route path="/dashboard" element={<ProtectedRoute><Index /></ProtectedRoute>} />
             <Route path="/merch/dashboard" element={<ProtectedRoute><MerchDashboard /></ProtectedRoute>} />
             <Route path="/conexao" element={<ProtectedRoute><Conexao /></ProtectedRoute>} />

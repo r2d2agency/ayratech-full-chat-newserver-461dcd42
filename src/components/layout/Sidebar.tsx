@@ -192,7 +192,7 @@ export const getNavSections = (hasConnections: boolean): NavSection[] => [
     adminOnly: true,
     items: [
       { name: "Painel Acesso", href: "/controle-acesso", icon: ShieldCheck, pageKey: 'controle_acesso', adminOnly: true },
-      { name: "Modelos de Contrato", href: "/modelo-contrato", icon: FileText, adminOnly: true },
+      { name: "Modelos de Contrato", href: "/modelo-contrato", icon: FileText, pageKey: 'modelo_contrato', adminOnly: true },
     ],
   },
   {
@@ -289,11 +289,10 @@ function SidebarContentComponent({ isExpanded, isSuperadmin, onNavigate }: Sideb
         // Check superadmin-only item (always requires superadmin)
         if (item.superadminOnly && !isSuperadmin) return false;
         
-        // If user has a permission template, use it instead of role-based checks
+        // If user has a permission template, use it instead of role-based checks.
+        // Deny-by-default: a page key absent from the template is NOT granted.
         if (hasTemplate && item.pageKey) {
-          if (item.pageKey in (pagePermissions || {})) {
-            return pagePermissions[item.pageKey] === true;
-          }
+          return pagePermissions?.[item.pageKey] === true;
         }
         
         // Fallback to role-based checks when no template

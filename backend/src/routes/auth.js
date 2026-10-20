@@ -2,8 +2,27 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { query } from '../db.js';
+import { normalizePermissions } from '../lib/page-permission-keys.js';
 
 const router = Router();
+
+// Carrega as permissões de página do template atribuído ao usuário.
+// O JSON é normalizado contra o catálogo completo: toda chave conhecida fica
+// presente com booleano explícito, para que "desmarcar tudo" negue tudo.
+async function loadPagePermissions(templateId) {
+  if (!templateId) return null;
+  try {
+    const tplResult = await query(
+      `SELECT permissions FROM permission_templates WHERE id = $1`,
+      [templateId]
+    );
+    if (tplResult.rows.length === 0) return null;
+    return normalizePermissions(tplResult.rows[0].permissions);
+  } catch (e) {
+    // table might not exist yet
+    return null;
+  }
+}
 
 // Get visible plans for signup (public endpoint)
 router.get('/plans', async (req, res) => {
@@ -215,7 +234,7 @@ router.post('/login', async (req, res) => {
 
     // Get role and organization info
     const orgResult = await query(
-      `SELECT om.role, om.brand_id, o.id as organization_id, o.modules_enabled, o.footer_text as organization_footer
+      `SELECT om.role, om.brand_id, o.id as organization_id, o.modules_enabled, o.footer_text as organization_footer, om.permission_template_id
 
        FROM organization_members om
        JOIN organizations o ON o.id = om.organization_id
@@ -296,10 +315,34 @@ router.post('/login', async (req, res) => {
       hasConnections = true;
     }
 
+    // Permissões de página do template atribuído (mesma fonte do /me)
+    const pagePermissions = await loadPagePermissions(
+      orgResult.rows[0]?.permission_template_id
+    );
+
+    // Usuário do RH: vinculado a um colaborador com perfil administrativo do RH
+    let isRhUser = false;
+    if (organizationId) {
+      try {
+        const rhResult = await query(
+          `SELECT 1 FROM employees
+            WHERE organization_id = $1
+              AND user_id = $2
+              AND worker_profile = 'administrativo'
+              AND COALESCE(status, 'ativo') = 'ativo'
+            LIMIT 1`,
+          [organizationId, user.id]
+        );
+        isRhUser = rhResult.rows.length > 0;
+      } catch (e) {
+        isRhUser = false;
+      }
+    }
+
     res.json({
-      user: { 
-        id: user.id, 
-        email: user.email, 
+      user: {
+        id: user.id,
+        email: user.email,
         name: user.name,
         is_superadmin: isSuperadmin,
         role,
@@ -309,6 +352,8 @@ router.post('/login', async (req, res) => {
         modules_enabled: modulesEnabled,
 
         has_connections: hasConnections,
+        is_rh_user: isRhUser,
+        page_permissions: pagePermissions,
       },
       token
     });
@@ -361,21 +406,9 @@ router.get('/me', async (req, res) => {
     );
 
     // Get page permissions from template if assigned
-    let pagePermissions = null;
-    const templateId = orgResult.rows[0]?.permission_template_id;
-    if (templateId) {
-      try {
-        const tplResult = await query(
-          `SELECT permissions FROM permission_templates WHERE id = $1`,
-          [templateId]
-        );
-        if (tplResult.rows.length > 0) {
-          pagePermissions = tplResult.rows[0].permissions;
-        }
-      } catch (e) {
-        // table might not exist yet
-      }
-    }
+    const pagePermissions = await loadPagePermissions(
+      orgResult.rows[0]?.permission_template_id
+    );
 
     const role = orgResult.rows[0]?.role || null;
     const organizationId = orgResult.rows[0]?.organization_id || null;

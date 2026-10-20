@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { query } from '../db.js';
+import { RH_PERMISSION_KEYS, normalizePermissions } from '../lib/page-permission-keys.js';
 import { authenticate } from '../middleware/auth.js';
 
 const router = Router();
@@ -1096,13 +1097,6 @@ router.put('/work-schedule', async (req, res) => {
 
 // Páginas de RH: só admins (owner/admin/superadmin) e usuários do RH
 // podem atribuí-las em um template de acesso.
-const RH_PERMISSION_KEYS = [
-  'rh_dashboard', 'rh_indicadores', 'rh_colaboradores', 'rh_admissao', 'rh_cargos',
-  'rh_esocial', 'rh_escalas', 'rh_afd', 'rh_ponto', 'rh_ponto_monitor', 'rh_holerite',
-  'rh_documentos', 'rh_exames', 'rh_epis', 'rh_advertencias', 'rh_treinamentos',
-  'rh_feriados', 'rh_mapa', 'rh_acessos', 'rh_biometria', 'rh_rastreamento',
-  'rh_ajuda', 'rh_configuracoes', 'rh_logs', 'rh_changelog', 'rh_pdvs',
-];
 
 // Retorna as chaves de RH presentes e habilitadas no objeto de permissões
 function extractRhPermissionKeys(permissions) {
@@ -1162,12 +1156,17 @@ router.get('/:id([0-9a-fA-F-]{36})/permission-templates', async (req, res) => {
     const result = await query(
       `SELECT pt.*, 
         (SELECT COUNT(*) FROM organization_members om WHERE om.permission_template_id = pt.id)::int as member_count
-       FROM permission_templates pt 
-       WHERE pt.organization_id = $1 
+       FROM permission_templates pt
+       WHERE pt.organization_id = $1
        ORDER BY pt.created_at`,
       [id]
     );
-    res.json(result.rows);
+    // Normaliza na leitura: templates antigos/slots parciais passam a ter
+    // todas as chaves do catálogo com booleano explícito.
+    res.json(result.rows.map(row => ({
+      ...row,
+      permissions: normalizePermissions(row.permissions),
+    })));
   } catch (error) {
     console.error('List permission templates error:', error);
     res.status(500).json({ error: 'Erro ao listar templates de permissão' });
@@ -1188,13 +1187,15 @@ router.post('/:id([0-9a-fA-F-]{36})/permission-templates', async (req, res) => {
 
     if (!name) return res.status(400).json({ error: 'Nome é obrigatório' });
 
-    const rhError = await ensureCanAssignRh(id, req.userId, permissions);
+    const normalized = normalizePermissions(permissions);
+
+    const rhError = await ensureCanAssignRh(id, req.userId, normalized);
     if (rhError) return res.status(403).json({ error: rhError });
 
     const result = await query(
       `INSERT INTO permission_templates (organization_id, name, description, color, permissions) 
        VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [id, name, description || null, color || '#6366f1', JSON.stringify(permissions || {})]
+      [id, name, description || null, color || '#6366f1', JSON.stringify(normalized)]
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -1215,8 +1216,9 @@ router.put('/:id([0-9a-fA-F-]{36})/permission-templates/:templateId', async (req
     );
     if (memberCheck.rows.length === 0) return res.status(403).json({ error: 'Apenas admins podem editar templates' });
 
-    if (permissions) {
-      const rhError = await ensureCanAssignRh(id, req.userId, permissions);
+    const normalized = permissions ? normalizePermissions(permissions) : null;
+    if (normalized) {
+      const rhError = await ensureCanAssignRh(id, req.userId, normalized);
       if (rhError) return res.status(403).json({ error: rhError });
     }
 
@@ -1228,7 +1230,7 @@ router.put('/:id([0-9a-fA-F-]{36})/permission-templates/:templateId', async (req
            permissions = COALESCE($4, permissions),
            updated_at = NOW()
        WHERE id = $5 AND organization_id = $6 RETURNING *`,
-      [name, description, color, permissions ? JSON.stringify(permissions) : null, templateId, id]
+      [name, description, color, normalized ? JSON.stringify(normalized) : null, templateId, id]
     );
 
     if (result.rows.length === 0) return res.status(404).json({ error: 'Template não encontrado' });
@@ -1272,6 +1274,17 @@ router.patch('/:id([0-9a-fA-F-]{36})/members/:userId([0-9a-fA-F-]{36})/template'
       [id, req.userId]
     );
     if (memberCheck.rows.length === 0) return res.status(403).json({ error: 'Apenas admins podem atribuir templates' });
+
+    if (permission_template_id) {
+      // O template precisa pertencer à mesma organização
+      const tplCheck = await query(
+        `SELECT 1 FROM permission_templates WHERE id = $1 AND organization_id = $2`,
+        [permission_template_id, id]
+      );
+      if (tplCheck.rows.length === 0) {
+        return res.status(400).json({ error: 'Template não encontrado nesta organização' });
+      }
+    }
 
     await query(
       `UPDATE organization_members SET permission_template_id = $1 WHERE organization_id = $2 AND user_id = $3`,
