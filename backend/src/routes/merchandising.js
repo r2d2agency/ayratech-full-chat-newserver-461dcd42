@@ -175,6 +175,10 @@ async function ensureMerchandisingInfra() {
     `DO $$ BEGIN ALTER TABLE merch_brands ADD COLUMN IF NOT EXISTS show_stock BOOLEAN DEFAULT true; EXCEPTION WHEN others THEN NULL; END $$`,
     `DO $$ BEGIN ALTER TABLE merch_brands ADD COLUMN IF NOT EXISTS show_damages BOOLEAN DEFAULT true; EXCEPTION WHEN others THEN NULL; END $$`,
     `DO $$ BEGIN ALTER TABLE merch_brands ADD COLUMN IF NOT EXISTS show_stockouts BOOLEAN DEFAULT true; EXCEPTION WHEN others THEN NULL; END $$`,
+    // Marcas antigas podem ter ficado com `status` NULL (o PUT aceitava
+    // `status` vazio e gravava NULL). O gate de criação de rotas exige
+    // `status = 'active'`, então um NULL derrubava a criação da rota.
+    `UPDATE merch_brands SET status = 'active' WHERE status IS NULL OR TRIM(status) = ''`,
     `ALTER TABLE merch_products ALTER COLUMN category_id DROP NOT NULL`,
     `ALTER TABLE merch_products ALTER COLUMN subcategory_id DROP NOT NULL`,
     // Backfill: gera código interno automático para marcas sem código
@@ -296,7 +300,7 @@ router.put('/brands/:id', async (req, res) => {
     }
 
     const r = await query(
-      `UPDATE merch_brands SET name=$1, internal_code=COALESCE(NULLIF($2,''), internal_code), razao_social=$3, cnpj=$4, logo_url=$5, description=$6, segment=$7, responsible=$8, phone=$9, email=$10, status=$11, notes=$12, street=$13, number=$14, neighborhood=$15, city=$16, zip=$17, show_routes=$18, show_photos=$19, show_stock=$20, show_damages=$21, show_stockouts=$22, updated_at=NOW() WHERE id=$23 AND organization_id=$24 RETURNING *`,
+      `UPDATE merch_brands SET name=$1, internal_code=COALESCE(NULLIF($2,''), internal_code), razao_social=$3, cnpj=$4, logo_url=$5, description=$6, segment=$7, responsible=$8, phone=$9, email=$10, status=COALESCE(NULLIF($11,''), status), notes=$12, street=$13, number=$14, neighborhood=$15, city=$16, zip=$17, show_routes=$18, show_photos=$19, show_stock=$20, show_damages=$21, show_stockouts=$22, updated_at=NOW() WHERE id=$23 AND organization_id=$24 RETURNING *`,
       [name, internal_code || '', razao_social, cnpj, logo_url, description, segment, responsible, phone, email, status, notes, street, number, neighborhood, city, zip, show_routes ?? true, show_photos ?? true, show_stock ?? true, show_damages ?? true, show_stockouts ?? true, req.params.id, req.orgId]
     );
     res.json(r.rows[0]);

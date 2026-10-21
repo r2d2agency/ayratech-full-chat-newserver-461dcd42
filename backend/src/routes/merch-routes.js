@@ -941,7 +941,13 @@ router.post('/routes', async (req, res) => {
 
     logInfo('routes.created', { count: created.length, first_id: created[0]?.id, checklist_id: effectiveChecklistId });
     res.json(created.length === 1 ? created[0] : { routes: created, count: created.length });
-  } catch (err) { logError('routes.create', err); res.status(500).json({ error: 'Erro ao criar rota' }); }
+  } catch (err) {
+    logError('routes.create', err);
+    // Devolve o motivo real (constraint, coluna inválida, etc.) para o front
+    // poder mostrar o toast — antes o usuário só via "Erro ao criar rota".
+    const detail = err?.detail || err?.message || null;
+    res.status(500).json({ error: 'Erro ao criar rota', ...(detail ? { detail } : {}) });
+  }
 });
 
 // Update route (supports scope: 'single' | 'future')
@@ -1529,7 +1535,11 @@ router.post('/routes/transfer-promoter', async (req, res) => {
     }
 
     const { sql: whereSql, params: whereParams } = buildTransferFilter({
-      fromPromoterId: from_promoter_id, orgId, from_date, to_date, includeCompleted
+      fromPromoterId: from_promoter_id,
+      orgId,
+      fromDate: from_date,
+      toDate: to_date,
+      includeCompleted: include_completed,
     });
 
     // Resumo por status (para preview e para o retorno da execucao)
@@ -3004,6 +3014,21 @@ async function ensureRouteBrandsTables() {
     await query(`ALTER TABLE route_product_executions ADD COLUMN IF NOT EXISTS route_brand_id UUID`);
     await query(`ALTER TABLE route_photos ADD COLUMN IF NOT EXISTS route_brand_id UUID`);
     await query(`ALTER TABLE merch_routes ALTER COLUMN brand_id DROP NOT NULL`);
+    // O `schema-routes-phase4.sql` cria `merch_routes.brand_id` com FK para
+    // `brands(id)` (tabela do schema antigo), mas o app usa `merch_brands(id)`.
+    // Com essa FK ativa, todo INSERT de rota com uma marca real falha com
+    // 23503 e a rota nunca é criada. Removemos a constraint divergente
+    // (idempotente — não faz nada se ela não existir).
+    await query(
+      `DO $$ DECLARE c RECORD; BEGIN
+         FOR c IN SELECT conname FROM pg_constraint
+                   WHERE conrelid = 'merch_routes'::regclass AND contype = 'f'
+                     AND conkey = ARRAY[(SELECT attnum FROM pg_attribute
+                                        WHERE attrelid = 'merch_routes'::regclass AND attname = 'brand_id')]::smallint[]
+                   LOOP
+             EXECUTE format('ALTER TABLE merch_routes DROP CONSTRAINT %I', c.conname);
+           END LOOP; END $$;`
+    ).catch((e) => { logWarn('ensureRouteBrandsTables.drop_brand_fk.failed', { error: e?.message }); });
     try { await query(`ALTER TABLE merch_execution_categories ADD COLUMN IF NOT EXISTS route_brand_id UUID`); } catch {}
     await query(`CREATE INDEX IF NOT EXISTS idx_route_brands_route ON route_brands(route_id)`);
     await query(`CREATE INDEX IF NOT EXISTS idx_route_brands_brand ON route_brands(brand_id)`);

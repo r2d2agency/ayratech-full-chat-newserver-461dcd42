@@ -76,19 +76,21 @@ const ENDPOINT_RESILIENCE: Record<string, EndpointResilienceConfig> = {
   },
 };
 
-const getResilienceConfig = (endpoint: string) => {
+// As regras abaixo são de LEITURA: degradar uma listagem para `[]` é
+// aceitável, mas degradar uma escrita faria o front achar que gravou
+// (o `onSuccess` dispara) quando nada foi salvo. Por isso as regras por path
+// só valem para GET — mutações no mesmo path (ex.: POST /api/merch/routes)
+// precisam propagar o erro de verdade.
+const getResilienceConfig = (endpoint: string, method: string = 'GET') => {
+  if (method !== 'GET') return undefined;
   if (ENDPOINT_RESILIENCE[endpoint]) return ENDPOINT_RESILIENCE[endpoint];
   const path = endpoint.split('?')[0];
-  if (path === MERCH_ROUTES_LIST_ENDPOINT || path === BRAND_CHECKLISTS_ENDPOINT || path === '/api/connections') {
-    return {
-      cooldownMs: GENERAL_ENDPOINT_COOLDOWN_MS,
-      fallbackToOtherBases: false,
-      fallbackValue: () => [],
-      maxRetries: 0,
-      silent: true,
-    };
-  }
-  if (path === MERCH_ROUTES_LIST_ENDPOINT || path === BRAND_CHECKLISTS_ENDPOINT || path === '/api/connections' || path === '/api/network-portal/access-requests') {
+  if (
+    path === MERCH_ROUTES_LIST_ENDPOINT ||
+    path === BRAND_CHECKLISTS_ENDPOINT ||
+    path === '/api/connections' ||
+    path === '/api/network-portal/access-requests'
+  ) {
     return {
       cooldownMs: GENERAL_ENDPOINT_COOLDOWN_MS,
       fallbackToOtherBases: false,
@@ -252,7 +254,7 @@ export const api = async <T>(endpoint: string, options: ApiOptions = {}): Promis
   const { method = 'GET', body, auth = true, headers: customHeaders, silent = false, fallbackToOtherBases = true } = options;
 
   const normalizedEndpoint = normalizeEndpoint(endpoint);
-  const endpointResilience = getResilienceConfig(normalizedEndpoint);
+  const endpointResilience = getResilienceConfig(normalizedEndpoint, method);
   const effectiveSilent = silent || endpointResilience?.silent === true;
   const effectiveFallbackToOtherBases = endpointResilience?.fallbackToOtherBases ?? fallbackToOtherBases;
 

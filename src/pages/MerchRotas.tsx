@@ -154,6 +154,24 @@ export default function MerchRotas() {
     return rec?.type && rec.type !== 'none';
   };
 
+  // Extrai a mensagem real do servidor para o toast. O `api.ts` já anexa
+  // `error`/`message`/`detail` do body na mensagem do Error, mas o body
+  // também vem em `err.response` — usamos os dois.
+  const describeMutationError = (err: any, fallback: string) => {
+    const fromResponse = err?.response;
+    const msg =
+      (typeof fromResponse?.error === 'string' && fromResponse.error) ||
+      (typeof fromResponse?.message === 'string' && fromResponse.message) ||
+      (typeof fromResponse?.detail === 'string' && fromResponse.detail) ||
+      (typeof err?.message === 'string' && err.message) ||
+      '';
+    // A mensagem do api.ts vem como "Erro ao criar rota: detalhe" — a parte
+    // que importa é o detalhe, que o catch do backend devolvia apenas no log.
+    const detail = fromResponse?.detail || fromResponse?.details;
+    if (detail) return `${msg.split(':')[0] || fallback}: ${detail}`;
+    return msg || fallback;
+  };
+
   const handleSaveIntent = (data: any) => {
     // Suporte a criação em lote: promotor(es) x PDV(s)
     if (Array.isArray(data) && !selectedRoute?.id) {
@@ -161,15 +179,21 @@ export default function MerchRotas() {
       let ok = 0, fail = 0;
       let done = 0;
       const total = payloads.length;
+      const firstError = { message: '' };
       payloads.forEach((p) => {
         createRoute.mutate(p, {
           onSuccess: () => { ok++; },
-          onError: () => { fail++; },
+          onError: (err: any) => {
+            fail++;
+            if (!firstError.message) {
+              firstError.message = describeMutationError(err, 'Erro ao criar rota');
+            }
+          },
           onSettled: () => {
             done++;
             if (done === total) {
               if (fail === 0) toast.success(`${ok} rota(s) criada(s)`);
-              else toast.warning(`${ok} criada(s), ${fail} com erro`);
+              else toast.error(`${ok} criada(s), ${fail} com erro — ${firstError.message || 'Erro ao criar rota'}`, { duration: 10000 });
               setShowCreate(false);
               setSelectedRoute(null);
             }
@@ -184,26 +208,32 @@ export default function MerchRotas() {
       ...data,
       brands: data.brands || []
     };
-    
-    console.log("Saving route data:", finalData);
-    
+
     if (selectedRoute?.id && hasFutureSiblings(selectedRoute)) {
       setScopeDialog({ action: 'edit', data: finalData });
     } else if (selectedRoute?.id) {
-      updateRoute.mutate({ id: selectedRoute.id, ...finalData }, { 
-        onSuccess: () => { 
-          toast.success('Rota atualizada'); 
-          setSelectedRoute(null); 
+      updateRoute.mutate({ id: selectedRoute.id, ...finalData }, {
+        onSuccess: () => {
+          toast.success('Rota atualizada');
+          setSelectedRoute(null);
           setShowCreate(false);
-        } 
+        },
+        onError: (err: any) => {
+          toast.error(describeMutationError(err, 'Erro ao atualizar rota'), { duration: 10000 });
+        }
       });
     } else {
-      createRoute.mutate(finalData, { 
-        onSuccess: () => { 
-          toast.success('Rota criada'); 
-          setShowCreate(false); 
+      createRoute.mutate(finalData, {
+        onSuccess: () => {
+          toast.success('Rota criada');
+          setShowCreate(false);
           setSelectedRoute(null);
-        } 
+        },
+        onError: (err: any) => {
+          // Sem isto, a mutação rejeita em silêncio: o dialog fica aberto e
+          // o usuário não recebe nenhuma informação do motivo da recusa.
+          toast.error(describeMutationError(err, 'Erro ao criar rota'), { duration: 10000 });
+        }
       });
     }
   };
@@ -1368,8 +1398,10 @@ function RouteFormDialog({ open, route, onClose, pdvs, employees, onSave, onDele
   const availableBrands = (brands || []).filter((b: any) => {
     if (!b?.id) return false;
     
-    // Regra: Marcas inativas não devem aparecer para seleção em roteiros
-    if (b.status === 'inactive') return false;
+    // Regra: só marcas ativas podem ser usadas em roteiros. O backend exige
+    // `status = 'active'` (ver POST /merch/routes), então qualquer outro valor
+    // deixaria a marca selecionável e a criação seria recusada depois.
+    if (b.status !== 'active') return false;
     
     // Filtro de marca por PDV
     if (selectedPdvIds.length > 0) {
