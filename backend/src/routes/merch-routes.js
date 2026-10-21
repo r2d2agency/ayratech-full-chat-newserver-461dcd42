@@ -9,12 +9,15 @@ import {
   routeSlotKey, evaluateCheckinTime, describeRouteWindow, instantToSaoPauloMinutes,
   normalizeTimeToHHMM, minutesToHHMM, NO_SLOT,
 } from '../lib/route-time-window.js';
+import {
+  CHECKIN_WINDOW_SETTING_KEY, CHECKIN_WINDOW_DEFAULTS, readCheckinWindowConfig,
+} from '../lib/checkin-window-config.js';
 
 
 const router = express.Router();
 router.use((req, res, next) => {
   // Public/tolerant endpoints (handle their own auth)
-  if (req.method === 'GET' && req.path === '/photo-quality-config') return next();
+  if (req.method === 'GET' && (req.path === '/photo-quality-config' || req.path === '/checkin-window-config')) return next();
   return authenticate(req, res, (error) => {
     if (error) return next(error);
     return idempotency(req, res, next);
@@ -61,6 +64,10 @@ function parseDateAtNoon(value) {
 function formatLocalDate(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
+
+// A configuração da janela de check-in (ligar/desligar + tolerância) mora em
+// backend/src/lib/checkin-window-config.js — compartilhada com o app do
+// promotor externo (routes/promotor.js).
 
 function computeStockPeriodWindow(date, frequency = 'weekly', interval = 1, customDays = null) {
   const d = parseDateAtNoon(date);
@@ -3726,6 +3733,13 @@ router.get('/promotor/routes/:id', promotorAuth, async (req, res) => {
       logWarn('promotor.route_detail.progress_refresh_failed', { routeId: req.params.id, error: e?.message });
     }
 
+    // Janela de horário da rota — o app usa isso para avisar ANTES de o
+    // promotor bater a foto, em vez de só descobrir o bloqueio depois.
+    const routeWindowConfig = await readCheckinWindowConfig(route.organization_id);
+    const routeWindow = describeRouteWindow(route, { toleranceMin: routeWindowConfig.tolerance_minutes });
+    routeWindow.enforced = routeWindowConfig.enabled && routeWindow.has_window;
+    routeWindow.tolerance_minutes = routeWindowConfig.tolerance_minutes;
+
     res.json({
       ...route,
       executions: executions.rows,
@@ -3734,6 +3748,8 @@ router.get('/promotor/routes/:id', promotorAuth, async (req, res) => {
       category_statuses: categoryStatuses,
       route_brands: routeBrands,
       is_multi_brand: routeBrands.length > 0,
+      time_window: routeWindow,
+      checkin_window_config: { enabled: routeWindowConfig.enabled },
     });
   } catch (err) { logError('promotor.route_detail', err); res.status(500).json({ error: 'Erro ao carregar rota' }); }
 });
@@ -3888,8 +3904,15 @@ router.post('/promotor/routes/:id/checkin', promotorAuth, async (req, res) => {
     // Janela de horário: o check-in só abre a partir do horário da rota (com
     // tolerância). Atraso é apenas aviso — bloquear atraso quebraria a fila
     // offline do app (4xx é terminal lá).
+    //
+    // A regra é configurável por organização (Configurações > Merchandising):
+    // com a opção desligada, o check-in é liberado em qualquer horário.
     const slotKey = routeSlotKey(route.rows[0]);
-    const timeEval = evaluateCheckinTime(route.rows[0], instantToSaoPauloMinutes());
+    const windowConfig = await readCheckinWindowConfig(route.rows[0].organization_id);
+    const timeEval = evaluateCheckinTime(route.rows[0], instantToSaoPauloMinutes(), {
+      toleranceMin: windowConfig.tolerance_minutes,
+      enabled: windowConfig.enabled,
+    });
     if (!timeEval.allowed) {
       return res.status(409).json({
         error: 'outside_time_window',
@@ -5532,6 +5555,74 @@ router.put('/photo-quality-config', authenticate, async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     logError('merch.photo-quality-config.put', err);
+    res.status(500).json({ error: 'Erro ao salvar configuração' });
+  }
+});
+
+// ===== CHECK-IN WINDOW CONFIG (janela de horário do check-in) =====
+
+// Leitura tolerante: aceita o token do admin ou do promotor (o app do
+// promotor precisa saber se a regra está ativa para avisar antes da foto).
+router.get('/checkin-window-config', async (req, res) => {
+  try {
+    let orgId = null;
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
+        if (decoded.organizationId || decoded.organization_id) {
+          orgId = decoded.organizationId || decoded.organization_id;
+        } else if (decoded.userId) {
+          const orgRes = await query('SELECT organization_id FROM organization_members WHERE user_id=$1 LIMIT 1', [decoded.userId]);
+          orgId = orgRes.rows[0]?.organization_id || null;
+        } else if (decoded.employeeId || decoded.employee_id) {
+          const empId = decoded.employeeId || decoded.employee_id;
+          const orgRes = await query('SELECT organization_id FROM employees WHERE id=$1 LIMIT 1', [empId]);
+          orgId = orgRes.rows[0]?.organization_id || null;
+        }
+      } catch { /* sem org => defaults */ }
+    }
+    const config = await readCheckinWindowConfig(orgId);
+    res.json({ config });
+  } catch (err) {
+    logError('merch.checkin-window-config.get', err);
+    res.json({ config: { ...CHECKIN_WINDOW_DEFAULTS } });
+  }
+});
+
+router.put('/checkin-window-config', authenticate, async (req, res) => {
+  try {
+    const orgRes = await query('SELECT organization_id FROM organization_members WHERE user_id=$1 LIMIT 1', [req.userId]);
+    if (!orgRes.rows.length) return res.status(403).json({ error: 'Sem organização' });
+    const orgId = orgRes.rows[0].organization_id;
+
+    await query(`CREATE TABLE IF NOT EXISTS organization_settings (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID NOT NULL,
+      setting_key TEXT NOT NULL,
+      config JSONB DEFAULT '{}',
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(organization_id, setting_key)
+    )`);
+
+    const enabled = req.body?.enabled !== false;
+    const tolerance = Number(req.body?.tolerance_minutes);
+    const config = {
+      enabled,
+      tolerance_minutes: Number.isFinite(tolerance) && tolerance >= 0
+        ? Math.min(240, Math.round(tolerance))
+        : CHECKIN_WINDOW_DEFAULTS.tolerance_minutes,
+    };
+
+    await query(
+      `INSERT INTO organization_settings (organization_id, setting_key, config, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (organization_id, setting_key) DO UPDATE SET config = $3, updated_at = NOW()`,
+      [orgId, CHECKIN_WINDOW_SETTING_KEY, JSON.stringify(config)]
+    );
+    res.json({ success: true, config });
+  } catch (err) {
+    logError('merch.checkin-window-config.put', err);
     res.status(500).json({ error: 'Erro ao salvar configuração' });
   }
 });

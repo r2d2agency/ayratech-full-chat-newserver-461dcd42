@@ -600,7 +600,7 @@ function useOfflineSyncState() {
           // Check-in gravado offline FORA da janela da rota. A chamada morre
           // aqui de propósito (4xx é terminal): o promotor precisa refazer o
           // check-in dentro do horário. As demais chamadas da fila seguem.
-          const fullMsg = response?.message || 'Check-in disponível apenas dentro da janela da rota.';
+          const fullMsg = response?.message || 'Fora do horário da rota. O check-in fica disponível a partir do horário agendado.';
           try {
             const { toast } = await import('sonner');
             toast.error('⏰ Fora do horário da rota', { description: fullMsg, richColors: true, duration: 10000 });

@@ -26,6 +26,7 @@ import { ThemeCustomizer } from "@/components/admin/ThemeCustomizer";
 import { GoogleCalendarPanel } from "@/components/crm/GoogleCalendarPanel";
 import { api as apiCall } from "@/lib/api";
 import { PhotoQualityConfigPanel } from "@/components/admin/PhotoQualityConfigPanel";
+import { CheckinWindowConfigPanel } from "@/components/admin/CheckinWindowConfigPanel";
 import { applyThemeColors } from "@/hooks/use-branding";
 
 const Configuracoes = () => {
@@ -236,6 +237,12 @@ const Configuracoes = () => {
               {isAdminOrOwner && (
                 <div className="lg:col-span-2">
                   <PhotoQualityConfigPanel />
+                </div>
+              )}
+              {/* Janela de horário do check-in (liga/desliga a regra de horário) */}
+              {isAdminOrOwner && (
+                <div className="lg:col-span-2">
+                  <CheckinWindowConfigPanel />
                 </div>
               )}
               {/* Profile Settings */}

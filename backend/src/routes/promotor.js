@@ -10,6 +10,7 @@ import { validatePdvLocation, ensurePdvGeofenceColumn, recordGeofenceAttempt } f
 import { parseWorkSchedule, resolveDaySchedule, normalizeDow } from '../lib/work-schedule.js';
 import { DEFAULT_ENTRY, DEFAULT_EXIT, formatHHMM } from '../lib/time-calc.js';
 import { routeSlotKey, describeRouteWindow, computeRouteWindow, instantToSaoPauloMinutes, normalizeTimeToHHMM, NO_SLOT } from '../lib/route-time-window.js';
+import { readCheckinWindowConfig } from '../lib/checkin-window-config.js';
 
 const hhmmOf = (minutes) => (minutes == null ? null : formatHHMM(minutes));
 
@@ -490,9 +491,18 @@ router.get('/home', authenticatePromotor, async (req, res) => {
     // 13:00). Cada horário é um "slot" com check-in e checkout próprios.
     // Exponho o slot e a janela de cada rota para o app explicar antes de o
     // usuário bater o ponto.
+    //
+    // A organização pode desligar a regra de janela (toggle em
+    // Configurações > Merchandising): com a regra desligada o app não avisa
+    // nada ao promotor.
+    const orgRow = await safeQuery('SELECT organization_id FROM employees WHERE id = $1 LIMIT 1', [empId]);
+    const checkinWindowConfig = await readCheckinWindowConfig(orgRow.rows[0]?.organization_id || null);
     for (const r of todayRoutes) {
       r.slot_key = routeSlotKey(r);
-      r.time_window = describeRouteWindow(r);
+      r.time_window = describeRouteWindow(r, { toleranceMin: checkinWindowConfig.tolerance_minutes });
+      // `enforced` diz ao app se a organização está aplicando a regra — com a
+      // opção desligada o app não deve avisar nada ao promotor.
+      r.time_window.enforced = checkinWindowConfig.enabled && r.time_window.has_window;
     }
     for (const v of pdvVisits) {
       v.slot_key = normalizeTimeToHHMM(v.slot_time) || NO_SLOT;

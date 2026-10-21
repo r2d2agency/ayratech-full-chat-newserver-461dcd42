@@ -110,6 +110,13 @@ export function computeRouteWindow(route, options = {}) {
   if (startMin === null) {
     return { hasWindow: false, toleranceMin, opensAt: null, closesAt: null, slotKey: routeSlotKey(route) };
   }
+  // '00:00' é o marcador de "rota sem horário" que as importações antigas e
+  // alguns formulários gravam no lugar de NULL. Uma rota assim NÃO tem
+  // janela: tratar 00:00 como horário trancava o promotor de rotas que não
+  // têm horário definido (o caso de quem tem muitas rotas sem hora).
+  if (startMin === 0) {
+    return { hasWindow: false, toleranceMin, opensAt: null, closesAt: null, slotKey: routeSlotKey(route) };
+  }
 
   let endMin = windowEndMin;
   if (endMin === null) {
@@ -153,6 +160,15 @@ export function evaluateCheckinTime(route, nowMinutes, options = {}) {
   const toleranceMin = options.toleranceMin ?? DEFAULT_CHECKIN_TOLERANCE_MIN;
   const window = computeRouteWindow(route, { toleranceMin });
 
+  // A organização pode desligar a regra de janela por completo (toggle em
+  // Configurações > Merchandising).
+  if (options.enabled === false) {
+    return {
+      allowed: true, tooEarly: false, late: false, hasWindow: false,
+      toleranceMin, opensAt: null, closesAt: null, slotKey: window.slotKey, message: null,
+    };
+  }
+
   if (!window.hasWindow) {
     return {
       allowed: true, tooEarly: false, late: false, hasWindow: false,
@@ -168,7 +184,7 @@ export function evaluateCheckinTime(route, nowMinutes, options = {}) {
     return {
       allowed: false, tooEarly: true, late: false, hasWindow: true,
       toleranceMin, opensAt, closesAt, slotKey: window.slotKey,
-      message: `Check-in disponível a partir de ${minutesToHHMM(opensAt)}.`,
+      message: `Fora do horário da rota. O check-in fica disponível a partir de ${minutesToHHMM(opensAt)}.`,
     };
   }
 
@@ -176,7 +192,7 @@ export function evaluateCheckinTime(route, nowMinutes, options = {}) {
     return {
       allowed: true, tooEarly: false, late: true, hasWindow: true,
       toleranceMin, opensAt, closesAt, slotKey: window.slotKey,
-      message: `Check-in registrado ${minutesToHHMM(now)} (após o horário da rota).`,
+      message: `Check-in registrado às ${minutesToHHMM(now)}, após o horário da rota.`,
     };
   }
 

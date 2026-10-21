@@ -97,3 +97,70 @@ export function isWithinCheckinWindow(route: any, nowMinutes: number): { allowed
   }
   return { allowed: true };
 }
+
+/** Minutos desde a meia-noite em São Paulo (mesmo fuso do backend). */
+export function currentSaoPauloMinutes(date: Date = new Date()): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+  return (hour === 24 ? 0 : hour) * 60 + minute;
+}
+
+/**
+ * Avalia a janela de check-in de uma rota respeitando o toggle da
+ * organização (`time_window.enforced`).
+ *
+ * Devolve `allowed: false` apenas quando o promotor chegou CEDO demais — o
+ * atraso é só aviso (bloquear atraso quebraria a fila offline do app).
+ * A mensagem já vem em português.
+ */
+export function evaluateCheckinWindow(route: any, nowMinutes: number): {
+  allowed: boolean;
+  tooEarly: boolean;
+  late: boolean;
+  enforced: boolean;
+  opensAt: number | null;
+  closesAt: number | null;
+  message: string | null;
+} {
+  const w = route?.time_window;
+  const enforced = w?.enforced === true;
+  const opensAt = hhmmToMinutes(w?.opens_at);
+  const closesAt = hhmmToMinutes(w?.closes_at);
+  const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+
+  if (!enforced || opensAt === null || closesAt === null) {
+    return { allowed: true, tooEarly: false, late: false, enforced, opensAt, closesAt, message: null };
+  }
+
+  if (nowMinutes < opensAt) {
+    return {
+      allowed: false,
+      tooEarly: true,
+      late: false,
+      enforced,
+      opensAt,
+      closesAt,
+      message: `Fora do horário da rota. O check-in fica disponível a partir de ${hhmm(opensAt)}.`,
+    };
+  }
+
+  if (nowMinutes > closesAt) {
+    return {
+      allowed: true,
+      tooEarly: false,
+      late: true,
+      enforced,
+      opensAt,
+      closesAt,
+      message: `Check-in registrado às ${hhmm(nowMinutes)}, após o horário da rota (${hhmm(opensAt)} — ${hhmm(closesAt)}).`,
+    };
+  }
+
+  return { allowed: true, tooEarly: false, late: false, enforced, opensAt, closesAt, message: null };
+}

@@ -35,7 +35,7 @@ import { logger } from "@/lib/logger";
 import { SyncStatusIndicator } from "@/components/promotor/SyncStatusIndicator";
 import { StockCountCard } from "@/components/promotor/StockCountCard";
 import { useRouteStockCount } from "@/hooks/use-stock-count";
-import { routeSlotKey, visitSlotKey, hasCheckinForSlot } from "@/lib/route-slot";
+import { routeSlotKey, visitSlotKey, hasCheckinForSlot, evaluateCheckinWindow, currentSaoPauloMinutes } from "@/lib/route-slot";
 
 // ===== Photo capture with Approve/Reject preview =====
 function PhotoApprovalCapture({
@@ -1233,6 +1233,16 @@ export default function PromotorRota() {
       return;
     }
 
+    // Barreira de horário ANTES de qualquer foto/envio: se o promotor chegou
+    // cedo demais, avisamos em português e não gastamos a foto.
+    const windowEval = evaluateCheckinWindow(route, currentSaoPauloMinutes());
+    if (windowEval.tooEarly && windowEval.message) {
+      (handleCheckin as any)._running = false;
+      logger.warn('[handleCheckin] Check-in bloqueado por janela de horário', { routeId: id });
+      toast.error(windowEval.message, { duration: 10000 });
+      return;
+    }
+
     setCheckinGeoError(null);
 
     // 1) OBTÉM GPS E VALIDA GEODEFENCE ANTES MESMO DE PEDIR FACIAL —
@@ -1381,7 +1391,7 @@ export default function PromotorRota() {
           if (!response.ok && (errorCode === 'OUTSIDE_TIME_WINDOW' || result?.error === 'outside_time_window')) {
             // Check-in feito cedo demais para o horário agendado da rota.
             const win = details || {};
-            const fullMsg = result?.message || 'Check-in disponível apenas dentro da janela da rota.';
+            const fullMsg = result?.message || 'Fora do horário da rota. O check-in fica disponível a partir do horário agendado.';
             const withWindow = win.opens_at
               ? `${fullMsg} (janela: ${String(win.opens_at).slice(0, 5)} — ${String(win.closes_at || '').slice(0, 5)})`
               : fullMsg;
@@ -1723,6 +1733,14 @@ export default function PromotorRota() {
     } catch {}
     return true;
   }, [route, checkinSubmitted, qc]);
+
+  // Janela de horário da rota — usada para BLOQUEAR o check-in (e esconder a
+  // foto) antes que o promotor gaste a foto à toa.
+  const checkinWindowEval = useMemo(
+    () => (route ? evaluateCheckinWindow(route, currentSaoPauloMinutes()) : null),
+    [route]
+  );
+  const checkinBlockedByTime = !!checkinWindowEval?.tooEarly;
 
   // O progresso do backend permanece em 0% enquanto a foto e a chamada da
   // categoria aguardam a internet. O hook precisa ficar antes dos retornos
@@ -2594,7 +2612,24 @@ export default function PromotorRota() {
         )}
 
         {/* Check-in photo requirement */}
-        {needsCheckin && requireCheckinPhoto && !checkinPhotoUrl && (
+        {needsCheckin && checkinBlockedByTime && (
+          <Card className="border-amber-300 bg-amber-50">
+            <CardContent className="p-4 space-y-2">
+              <div className="flex items-center gap-2 text-sm font-medium text-amber-800">
+                <Clock className="h-4 w-4" />
+                Fora do horário da rota
+              </div>
+              <p className="text-sm text-amber-900">
+                {checkinWindowEval?.message}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                O check-in e a foto ficam disponíveis a partir do horário da rota.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {needsCheckin && !checkinBlockedByTime && requireCheckinPhoto && !checkinPhotoUrl && (
           <Card className="border-primary/30">
             <CardContent className="p-4 space-y-3">
               <div className="flex items-center gap-2 text-sm font-medium">
@@ -2617,7 +2652,7 @@ export default function PromotorRota() {
           </Card>
         )}
 
-        {needsCheckin && requireCheckinPhoto && checkinPhotoUrl && (
+        {needsCheckin && !checkinBlockedByTime && requireCheckinPhoto && checkinPhotoUrl && (
           <Card className="border-primary/30">
             <CardContent className="p-4 space-y-2">
               <LocalImage src={checkinPhotoUrl} alt="Check-in" className="w-full rounded-lg border max-h-64 object-cover" />
@@ -2636,7 +2671,7 @@ export default function PromotorRota() {
         )}
 
         {/* Botão de check-in padrão (sem foto obrigatória) */}
-        {needsCheckin && !requireCheckinPhoto && (
+        {needsCheckin && !checkinBlockedByTime && !requireCheckinPhoto && (
           <Button className="w-full h-14 text-lg" onClick={() => handleCheckin()} disabled={checkin.isPending}>
             {isFacialActiveCheckin ? <ScanFace className="h-5 w-5 mr-2" /> : <MapPin className="h-5 w-5 mr-2" />}
             {checkin.isPending ? 'Realizando check-in...' : 'Fazer Check-in'}

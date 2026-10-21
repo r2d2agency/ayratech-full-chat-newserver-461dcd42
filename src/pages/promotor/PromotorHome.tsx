@@ -28,20 +28,8 @@ import { logger } from "@/lib/logger";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { SyncStatusIndicator } from "@/components/promotor/SyncStatusIndicator";
-import { routeSlotKey, hasCheckinForSlot, hasCheckoutForSlot, visitSlotKey, hhmmToMinutes } from "@/lib/route-slot";
+import { routeSlotKey, hasCheckinForSlot, hasCheckoutForSlot, visitSlotKey, hhmmToMinutes, evaluateCheckinWindow, currentSaoPauloMinutes } from "@/lib/route-slot";
 
-/** Minutos desde a meia-noite em São Paulo. */
-function currentSaoPauloMinutes(date: Date = new Date()): number {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Sao_Paulo',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).formatToParts(date);
-  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
-  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
-  return (hour === 24 ? 0 : hour) * 60 + minute;
-}
 
 const STATUS_COLORS: Record<string, string> = {
   scheduled: 'bg-blue-500/20 text-blue-700',
@@ -213,6 +201,30 @@ export default function PromotorHome() {
   const completedRoutesCount = data?.completed_routes_count || 0;
   const pendingRoutesCount = data?.pending_routes_count || 0;
   const pdvVisits = data?.pdv_visits || [];
+
+  // Bloqueio de horário ANTES da foto: o promotor não deve bater a foto e só
+  // depois receber o aviso. Devolve `true` quando o check-in está bloqueado.
+  const checkWindowBeforeCheckin = useCallback((route: any): boolean => {
+    if (!route) return false;
+    const evalResult = evaluateCheckinWindow(route, currentSaoPauloMinutes());
+    if (evalResult.tooEarly && evalResult.message) {
+      toast({
+        title: '⏰ Fora do horário da rota',
+        description: evalResult.message,
+        variant: 'destructive',
+        duration: 9000,
+      });
+      return true;
+    }
+    if (evalResult.late && evalResult.message) {
+      toast({
+        title: '⏰ Check-in fora do horário da rota',
+        description: evalResult.message,
+        duration: 9000,
+      });
+    }
+    return false;
+  }, [toast]);
 
   // Auto-preload data whenever we have routes and are online
   useEffect(() => {
@@ -421,6 +433,21 @@ export default function PromotorHome() {
         throw new Error('Nenhuma rota encontrada para este PDV. Fale com o supervisor para liberar sua rota.');
       }
 
+      // Segunda barreira: se a rota escolhida estiver fora da janela, não
+      // tentamos o check-in (o servidor devolveria 409). A mensagem é em
+      // português.
+      const windowEval = evaluateCheckinWindow(routeForPdv, nowMinutes);
+      if (windowEval.tooEarly && windowEval.message) {
+        logger.warn('[handlePdvCheckin] Check-in bloqueado por janela de horário', { pdvId, routeId: routeForPdv.id });
+        toast({
+          title: '⏰ Fora do horário da rota',
+          description: windowEval.message,
+          variant: 'destructive',
+          duration: 9000,
+        });
+        throw new Error(windowEval.message);
+      }
+
       const url = `${baseUrl}/api/merch/promotor/routes/${routeForPdv.id}/checkin`;
 
       logger.info('[handlePdvCheckin] Chamando API', { url, pdvId, routeId: routeForPdv.id });
@@ -530,7 +557,7 @@ export default function PromotorHome() {
         }
         if (errorCode === 'OUTSIDE_TIME_WINDOW' || result?.error === 'outside_time_window') {
           // Check-in feito cedo demais para o horário da rota.
-          const msg = result?.message || 'Check-in disponível apenas dentro da janela da rota.';
+          const msg = result?.message || 'Fora do horário da rota. O check-in fica disponível a partir do horário agendado.';
           const win = result?.details || {};
           const fullMsg = win.opens_at
             ? `${msg} (janela: ${String(win.opens_at).slice(0, 5)} — ${String(win.closes_at || '').slice(0, 5)})`
@@ -1163,6 +1190,7 @@ export default function PromotorHome() {
                 onClick={async () => {
                   const hasCheckin = hasCheckinForSlot(pdvVisits, nextRoute);
                   if (!hasCheckin) {
+                    if (checkWindowBeforeCheckin(nextRoute)) return;
                     try {
                       await preValidateGeoForPdv(nextRoute.pdv_id, nextRoute.pdv_name, 'pdv_checkin');
                     } catch (e: any) {
@@ -1236,6 +1264,7 @@ export default function PromotorHome() {
                         
                         const hasCheckin = hasCheckinForSlot(pdvVisits, r);
                         if (!hasCheckin) {
+                          if (checkWindowBeforeCheckin(r)) return;
                           try {
                             await preValidateGeoForPdv(r.pdv_id, r.pdv_name, 'pdv_checkin');
                           } catch (e: any) {
