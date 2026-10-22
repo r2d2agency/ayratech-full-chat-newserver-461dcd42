@@ -3234,6 +3234,77 @@ async function refreshRouteProgress(routeId, routeBrandId = null, refreshAllBran
   return { route: routeProgress, routeBrands };
 }
 
+// Guarda: a rota só pode ser executada depois do check-in NA SUA VISITA.
+//
+// Sem essa guarda, uma rota cujo check-in foi pulado (o app liberava a rota
+// errada) podia ser executada de longe: os endpoints de produto/foto não
+// verificavam nem geolocalização nem presença do check-in.
+//
+// A visita é identificada por PDV + slot (horário). O slot entra na conta
+// porque a mesma loja pode ter duas rotas no dia (07:00 e 13:00) e cada
+// horário tem check-in próprio.
+//
+// O check-in é por PDV, não por rota: a visita é do promotor no PDV. Por isso
+// o que vale é "este promotor fez check-in neste PDV, neste horário" — e não
+// "esta rota tem checkin_at".
+async function requireRouteCheckin(req, res, routeId) {
+  const routeRes = await query(
+    `SELECT r.id, r.pdv_id, r.promoter_id, r.status, r.checkin_at, r.visit_date,
+            COALESCE(r.window_start, r.scheduled_time, '00:00'::time) AS slot_time
+       FROM merch_routes r WHERE r.id=$1`,
+    [routeId]
+  );
+  if (!routeRes.rows.length) {
+    res.status(404).json({ error: 'Rota não encontrada' });
+    return null;
+  }
+  const route = routeRes.rows[0];
+  // Já check-inada: nada a exigir.
+  if (route.checkin_at || route.status === 'in_progress' || route.status === 'completed') {
+    return route;
+  }
+  // Promotor de APOIO (route_person_assignments) não tem check-in próprio: a
+  // visita do PDV é a do titular. A guarda não se aplica a ele — do jeito que
+  // está, exigir check-in de apoio trancaria o fluxo de suporte.
+  if (route.promoter_id !== req.employeeId) {
+    const isSupport = await query(
+      `SELECT 1 FROM route_person_assignments rpa
+        WHERE rpa.route_id=$1 AND rpa.employee_id=$2 AND COALESCE(rpa.active, true)=true
+        LIMIT 1`,
+      [routeId, req.employeeId]
+    );
+    if (isSupport.rows.length) return route;
+    res.status(404).json({ error: 'Rota não encontrada' });
+    return null;
+  }
+  // Rota SEM horário (slot '00:00'): não há slot para casar — basta ter
+  // check-in no PDV. Rota COM horário: a visita precisa ser do MESMO slot, senão
+  // a visita das 07:00 abriria a rota das 13:00 na mesma loja.
+  const hasSlot = normalizeTimeToHHMM(route.slot_time) !== NO_SLOT;
+  const visitRes = await query(
+    hasSlot
+      ? `SELECT id FROM pdv_visits
+          WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3 AND slot_time=$4::time
+            AND checkin_at IS NOT NULL
+          LIMIT 1`
+      : `SELECT id FROM pdv_visits
+          WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3 AND checkin_at IS NOT NULL
+          LIMIT 1`,
+    hasSlot
+      ? [req.employeeId, route.pdv_id, route.visit_date, route.slot_time]
+      : [req.employeeId, route.pdv_id, route.visit_date]
+  );
+  if (!visitRes.rows.length) {
+    res.status(409).json({
+      error: 'checkin_required',
+      error_code: 'CHECKIN_REQUIRED',
+      message: 'Faça o check-in no PDV antes de executar esta rota.',
+    });
+    return null;
+  }
+  return route;
+}
+
 // Promotor auth middleware
 function promotorAuth(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -3816,75 +3887,104 @@ router.post('/promotor/routes/:id/justify', promotorAuth, async (req, res) => {
 // Promotor: Check-in (also handles PDV visit creation)
 router.post('/promotor/routes/:id/checkin', promotorAuth, async (req, res) => {
   try {
-    const { latitude, longitude, device, photo_url, all_routes_at_pdv, geo_justification } = req.body;
+    const { latitude, longitude, device, photo_url, all_routes_at_pdv } = req.body;
     // Geofence validation (polygon-first, radius fallback)
+    //
+    // A regra é fail-closed: se o PDV tem área cadastrada, o check-in só passa
+    // com coordenadas válidas dentro da área. Antes, uma requisição sem
+    // lat/lng (ou um erro na consulta) passava direto, e o `geo_justification`
+    // permitia burlar a barreira sem nenhum registro da justificativa.
     try {
-      
       await ensurePdvGeofenceColumn(query);
       const routeInfo = await query(`SELECT pdv_id FROM merch_routes WHERE id=$1 AND promoter_id=$2`, [req.params.id, req.employeeId]);
       const pdvId0 = routeInfo.rows[0]?.pdv_id;
-      if (pdvId0 && latitude != null && longitude != null) {
+      if (pdvId0) {
         const pdvGeo = await query(`SELECT p.id, p.name, p.type, p.latitude, p.longitude, p.radius_meters, p.geofence_polygon
                                     FROM pdvs p WHERE p.id=$1`, [pdvId0]);
         if (pdvGeo.rows[0]) {
           const pdv = pdvGeo.rows[0];
-          const v = validatePdvLocation({
-            userLat: latitude, userLng: longitude,
-            pdvLat: pdv.latitude, pdvLng: pdv.longitude,
-            radiusMeters: pdv.radius_meters,
-            polygon: pdv.geofence_polygon,
-          });
-          if (v.status === 'outside' && !geo_justification) {
-            const placeLabel = pdv.type === 'sede' ? 'Sede' : `PDV ${pdv.name ? '— ' + pdv.name : ''}`;
-            const dist = v.distance != null ? Math.round(v.distance) : null;
-            let distStr = '';
-            if (dist != null) {
-              if (dist >= 1000) {
-                const km = (dist / 1000).toFixed(1).replace('.', ',');
-                distStr = ` (você está a ~${km} km do local)`;
-              } else {
-                distStr = ` (você está a ~${dist} m do local)`;
-              }
+          const hasPdvArea =
+            Array.isArray(pdv.geofence_polygon) && pdv.geofence_polygon.length >= 3 ||
+            pdv.latitude != null && pdv.longitude != null;
+          // Sem área cadastrada não há o que validar: o check-in é liberado.
+          if (hasPdvArea) {
+            if (latitude == null || longitude == null) {
+              return res.status(400).json({
+                error: 'location_required',
+                error_code: 'LOCATION_REQUIRED',
+                message: `Não foi possível validar sua localização para o check-in. Ative o GPS e tente novamente.`,
+                details: {
+                  place_type: pdv.type === 'sede' ? 'sede' : 'pdv',
+                  place_name: pdv.name || null,
+                },
+              });
             }
-            const hint = distStr;
-            const modeHint = v.mode === 'polygon'
-              ? 'Você está fora do perímetro (polígono geográfico) cadastrado para este local.'
-              : 'Você está fora do raio de alcance (em metros) cadastrado para este local.';
-            const hasOrgHeadquarters = await query(
-              `SELECT 1 FROM pdvs WHERE organization_id=$1 AND type='sede' AND (latitude IS NOT NULL OR geofence_polygon IS NOT NULL) LIMIT 1`,
-              [req.orgId]
-            ).catch(() => ({ rows: [] }));
-            const hasLinkedSede = await query(
-              `SELECT 1 FROM employees e
-               JOIN pdvs p ON p.id = e.branch_id OR p.id = e.pdv_id
-               WHERE e.id=$1 AND p.type='sede' AND (p.latitude IS NOT NULL OR p.geofence_polygon IS NOT NULL) LIMIT 1`,
-              [req.employeeId]
-            ).catch(() => ({ rows: [] }));
-            const locationOptions = [
-              pdv.type === 'sede' ? 'na Sede cadastrada' : `no PDV de destino da rota${pdv.name ? ` (${pdv.name})` : ''}`,
-            ];
-            if (pdv.type !== 'sede' && (hasOrgHeadquarters.rows.length > 0 || hasLinkedSede.rows.length > 0)) {
-              locationOptions.push('ou na Sede da empresa');
-            }
-            return res.status(400).json({
-              error: 'outside_geofence',
-              error_code: 'GEO_OUT_OF_RANGE',
-              message: `Você precisa estar ${locationOptions.join(' ')} dentro da área permitida para fazer o check-in.${hint}`,
-              details: {
-                place_type: pdv.type === 'sede' ? 'sede' : 'pdv',
-                place_name: pdv.name || null,
-                mode: v.mode === 'polygon' ? 'polygon' : 'radius',
-                mode_hint: modeHint,
-                distance_meters: dist,
-                radius_meters: pdv.radius_meters != null ? Number(pdv.radius_meters) : null,
-                user_coords: { latitude, longitude },
-                accept_justification: true,
-              },
+            const v = validatePdvLocation({
+              userLat: latitude, userLng: longitude,
+              pdvLat: pdv.latitude, pdvLng: pdv.longitude,
+              radiusMeters: pdv.radius_meters,
+              polygon: pdv.geofence_polygon,
             });
+            if (v.status === 'outside') {
+              const dist = v.distance != null ? Math.round(v.distance) : null;
+              let distStr = '';
+              if (dist != null) {
+                if (dist >= 1000) {
+                  const km = (dist / 1000).toFixed(1).replace('.', ',');
+                  distStr = ` (você está a ~${km} km do local)`;
+                } else {
+                  distStr = ` (você está a ~${dist} m do local)`;
+                }
+              }
+              const hint = distStr;
+              const modeHint = v.mode === 'polygon'
+                ? 'Você está fora do perímetro (polígono geográfico) cadastrado para este local.'
+                : 'Você está fora do raio de alcance (em metros) cadastrado para este local.';
+              const hasOrgHeadquarters = await query(
+                `SELECT 1 FROM pdvs WHERE organization_id=$1 AND type='sede' AND (latitude IS NOT NULL OR geofence_polygon IS NOT NULL) LIMIT 1`,
+                [req.orgId]
+              ).catch(() => ({ rows: [] }));
+              const hasLinkedSede = await query(
+                `SELECT 1 FROM employees e
+                 JOIN pdvs p ON p.id = e.branch_id OR p.id = e.pdv_id
+                 WHERE e.id=$1 AND p.type='sede' AND (p.latitude IS NOT NULL OR p.geofence_polygon IS NOT NULL) LIMIT 1`,
+                [req.employeeId]
+              ).catch(() => ({ rows: [] }));
+              const locationOptions = [
+                pdv.type === 'sede' ? 'na Sede cadastrada' : `no PDV de destino da rota${pdv.name ? ` (${pdv.name})` : ''}`,
+              ];
+              if (pdv.type !== 'sede' && (hasOrgHeadquarters.rows.length > 0 || hasLinkedSede.rows.length > 0)) {
+                locationOptions.push('ou na Sede da empresa');
+              }
+              return res.status(400).json({
+                error: 'outside_geofence',
+                error_code: 'GEO_OUT_OF_RANGE',
+                message: `Você precisa estar ${locationOptions.join(' ')} dentro da área permitida para fazer o check-in.${hint}`,
+                details: {
+                  place_type: pdv.type === 'sede' ? 'sede' : 'pdv',
+                  place_name: pdv.name || null,
+                  mode: v.mode === 'polygon' ? 'polygon' : 'radius',
+                  mode_hint: modeHint,
+                  distance_meters: dist,
+                  radius_meters: pdv.radius_meters != null ? Number(pdv.radius_meters) : null,
+                  user_coords: { latitude, longitude },
+                  accept_justification: true,
+                },
+              });
+            }
           }
         }
       }
-    } catch (e) { logError('promotor.checkin.geofence', e); }
+    } catch (e) {
+      // Falha ao consultar a área do PDV NÃO pode liberar o check-in: sem
+      // geolocalização não há como garantir que o promotor está no local.
+      logError('promotor.checkin.geofence', e);
+      return res.status(500).json({
+        error: 'geofence_unavailable',
+        error_code: 'GEO_VALIDATION_FAILED',
+        message: 'Não foi possível validar sua localização agora. Tente novamente em instantes.',
+      });
+    }
 
 
     const route = await query(
@@ -4076,6 +4176,9 @@ router.put('/promotor/executions/:id', promotorAuth, async (req, res) => {
     if (!currentExec.rows.length) {
       return res.status(404).json({ error: 'Execução não encontrada' });
     }
+    // Sem check-in no PDV não há execução: a rota precisa ter sido aberta
+    // presencialmente (geolocalização validada no check-in).
+    if (!(await requireRouteCheckin(req, res, currentExec.rows[0].route_id))) return;
     const newStore = qty_store !== undefined ? qty_store : (currentExec.rows[0]?.qty_store || 0);
     const newStock = qty_stock !== undefined ? qty_stock : (currentExec.rows[0]?.qty_stock || 0);
     const result = await query(
@@ -4092,7 +4195,7 @@ router.put('/promotor/executions/:id', promotorAuth, async (req, res) => {
       const exec = result.rows[0];
       const routeId = exec.route_id;
       const brandIdInRoute = exec.route_brand_id;
-      
+
       try {
         await refreshRouteProgress(routeId, brandIdInRoute);
       } catch (progressErr) {
@@ -4112,6 +4215,7 @@ router.post('/promotor/executions/:id/validity', promotorAuth, async (req, res) 
   try {
     const exec = await query('SELECT * FROM route_product_executions WHERE id=$1', [req.params.id]);
     if (!exec.rows.length) return res.status(404).json({ error: 'Execução não encontrada' });
+    if (!(await requireRouteCheckin(req, res, exec.rows[0].route_id))) return;
     const { expiry_date, qty_store, qty_stock, replace } = req.body;
     if (!expiry_date) return res.status(400).json({ error: 'expiry_date é obrigatório' });
     // Ensure qty columns exist on legacy databases
@@ -4209,6 +4313,7 @@ router.post('/promotor/executions/:id/discard', promotorAuth, async (req, res) =
 router.post('/promotor/routes/:routeId/categories/:catId/point-type', promotorAuth, async (req, res) => {
   try {
     await ensureExecutionCategoryTables();
+    if (!(await requireRouteCheckin(req, res, req.params.routeId))) return;
 
     const rawPointType = req.body?.point_type ?? req.body?.pointType;
     const normalizedPointType = String(rawPointType || '').trim().toLowerCase();
@@ -4289,6 +4394,7 @@ router.post('/promotor/routes/:routeId/categories/:catId/photo', promotorAuth, a
     const { photo_url, photos, latitude, longitude, route_brand_id } = req.body;
     const photoList = Array.isArray(photos) && photos.length ? photos : (photo_url ? [photo_url] : []);
     if (!photoList.length) return res.status(400).json({ error: 'Foto obrigatória' });
+    if (!(await requireRouteCheckin(req, res, req.params.routeId))) return;
 
     const catId = req.params.catId === 'null' ? null : req.params.catId;
 
@@ -4425,6 +4531,7 @@ router.post('/promotor/routes/:routeId/categories/:catId/after-photo', promotorA
     const { photo_url, photos, latitude, longitude, route_brand_id } = req.body;
     const photoList = Array.isArray(photos) && photos.length ? photos : (photo_url ? [photo_url] : []);
     if (!photoList.length) return res.status(400).json({ error: 'Foto obrigatória' });
+    if (!(await requireRouteCheckin(req, res, req.params.routeId))) return;
 
     const catId = req.params.catId === 'null' ? null : req.params.catId;
 
@@ -4578,6 +4685,7 @@ router.post('/promotor/routes/:id/photos', promotorAuth, async (req, res) => {
     const { photo_type, category_id, product_id, exposure_point, photo_url, latitude, longitude,
             route_brand_id,
             original_size_bytes, compressed_size_bytes, quality_score, quality_passed } = req.body;
+    if (!(await requireRouteCheckin(req, res, req.params.id))) return;
     const hasRouteBrandColumn = await hasColumn('route_photos', 'route_brand_id');
     const insertSql = hasRouteBrandColumn
       ? `INSERT INTO route_photos (route_id, photo_type, category_id, product_id, exposure_point, photo_url,
@@ -4617,6 +4725,10 @@ router.post('/promotor/routes/:id/checkout', promotorAuth, async (req, res) => {
     const routeRes = await query('SELECT * FROM merch_routes WHERE id=$1 AND promoter_id=$2', [req.params.id, req.employeeId]);
     if (!routeRes.rows.length) return res.status(404).json({ error: 'Rota não encontrada' });
     const route = routeRes.rows[0];
+
+    // Não dá para concluir uma rota que nunca teve check-in: a conclusão
+    // pressupõe que o promotor esteve no PDV.
+    if (!(await requireRouteCheckin(req, res, req.params.id))) return;
 
     // Fallback: materialize executions for rules that didn't exist when route was scheduled
     await ensureStockCountExecutionsForRoute(route);
@@ -5081,6 +5193,7 @@ router.post('/promotor/routes/:routeId/categories/:catId/extra-point', promotorA
     // Verify route belongs to promoter
     const route = await query('SELECT * FROM merch_routes WHERE id=$1 AND promoter_id=$2', [routeId, req.employeeId]);
     if (!route.rows.length) return res.status(404).json({ error: 'Rota não encontrada' });
+    if (!(await requireRouteCheckin(req, res, routeId))) return;
 
     // Insert duplicate executions for extra point
     const created = [];

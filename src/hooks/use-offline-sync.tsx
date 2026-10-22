@@ -596,6 +596,30 @@ function useOfflineSyncState() {
           errorCode === 'OUTSIDE_TIME_WINDOW' ||
           (typeof err?.message === 'string' && err.message.includes('OUTSIDE_TIME_WINDOW'));
 
+        const isLocationError =
+          response?.error === 'location_required' ||
+          errorCode === 'LOCATION_REQUIRED' ||
+          response?.error === 'geofence_unavailable' ||
+          errorCode === 'GEO_VALIDATION_FAILED';
+
+        if (isLocationError && (call.url.includes('/promotor/routes/') && call.url.endsWith('/checkin'))) {
+          // Sem coordenadas (ou com a área do PDV indisponível) não dá para
+          // confirmar a presença no local. A chamada morre: o promotor precisa
+          // refazer o check-in com o GPS ligado.
+          const fullMsg = response?.message || 'Não foi possível validar sua localização para o check-in. Ative o GPS e tente novamente.';
+          try {
+            const { toast } = await import('sonner');
+            toast.error('📍 Localização indisponível', { description: fullMsg, richColors: true, duration: 10000 });
+          } catch {}
+          await db.pending_api_calls.update(call.id!, {
+            status: 'failed',
+            attempts: (call.attempts || 0) + 1,
+            error: `${fullMsg} (não será reenviado automaticamente)`,
+          });
+          setSyncProgress(p => ({ ...p, failed: p.failed + 1 }));
+          continue;
+        }
+
         if (isTimeWindowError && (call.url.includes('/promotor/routes/') && call.url.endsWith('/checkin'))) {
           // Check-in gravado offline FORA da janela da rota. A chamada morre
           // aqui de propósito (4xx é terminal): o promotor precisa refazer o

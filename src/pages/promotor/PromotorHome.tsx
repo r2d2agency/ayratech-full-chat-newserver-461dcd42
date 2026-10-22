@@ -526,6 +526,26 @@ export default function PromotorHome() {
         logger.warn('[handlePdvCheckin] API retornou erro', { result, pdvId, status: response.status });
         const errorCode = result?.error_code || result?.error || '';
         const details = result?.details || {};
+        if (result?.error === 'location_required' || errorCode === 'LOCATION_REQUIRED') {
+          // Sem coordenadas não dá para confirmar a presença no PDV.
+          const msg = result?.message || 'Não foi possível validar sua localização para o check-in. Ative o GPS e tente novamente.';
+          setPdvCheckinGeoError({
+            title: '📍 Localização indisponível',
+            message: msg,
+            details: { ...details, hint: 'Ative a localização do navegador e tente novamente.' },
+          });
+          toast({ title: '📍 Localização indisponível', description: msg, variant: 'destructive', duration: 9000 });
+          const explicit = new Error(msg);
+          (explicit as any)._geoHandled = true;
+          throw explicit;
+        }
+        if (result?.error === 'geofence_unavailable' || errorCode === 'GEO_VALIDATION_FAILED') {
+          const msg = result?.message || 'Não foi possível validar sua localização agora. Tente novamente em instantes.';
+          toast({ title: '📍 Localização indisponível', description: msg, variant: 'destructive', duration: 9000 });
+          const explicit = new Error(msg);
+          (explicit as any)._geoHandled = true;
+          throw explicit;
+        }
         if (result?.error === 'outside_geofence' || errorCode === 'GEO_OUT_OF_RANGE') {
           const placeType = details.place_type === 'sede' ? 'Sede' : (details.place_name || 'PDV');
           const modeLabel = details.mode === 'polygon' ? 'polígono geográfico (perímetro)' : `raio de ${details.radius_meters != null ? `${Number(details.radius_meters)} m` : 'alcance'}`;

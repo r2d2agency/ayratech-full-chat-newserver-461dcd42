@@ -1262,6 +1262,12 @@ export default function PromotorRota() {
       if (err.code === 1) throw new Error('Permissão de GPS negada. Por favor, autorize o acesso à localização.');
       if (err.code === 2) throw new Error('Posição indisponível. Verifique se o GPS está ativado.');
       if (err.code === 3) throw new Error('Tempo limite do GPS esgotado. Tente novamente em um local mais aberto.');
+      // Offline o check-in fica na fila e o servidor valida a geolocalização
+      // quando a chamada for reprocessada. Online, sem GPS não há como
+      // confirmar a presença no PDV: o check-in é recusado aqui.
+      if (navigator.onLine) {
+        throw new Error('Não foi possível obter sua localização. Verifique se o GPS está ativado e tente novamente.');
+      }
       return null;
     });
 
@@ -1367,6 +1373,26 @@ export default function PromotorRota() {
             result?.error === 'outside_geofence' ||
             errorCode === 'GEO_OUT_OF_RANGE' ||
             (typeof result?.error === 'string' && result.error.includes('área permitida'));
+
+          // Falha de validação de localização: sem GPS (ou com a área do PDV
+          // indisponível) não dá para confirmar a presença no local.
+          if (!response.ok && (result?.error === 'location_required' || errorCode === 'LOCATION_REQUIRED')) {
+            const msg = result?.message || 'Não foi possível validar sua localização para o check-in. Ative o GPS e tente novamente.';
+            setCheckinGeoError({
+              title: '📍 Localização indisponível',
+              message: msg,
+              details: { ...details, hint: 'Ative a localização do navegador e tente novamente.' },
+            });
+            toast.error(msg, { duration: 10000 });
+            (handleCheckin as any)._running = false;
+            return;
+          }
+          if (!response.ok && (result?.error === 'geofence_unavailable' || errorCode === 'GEO_VALIDATION_FAILED')) {
+            const msg = result?.message || 'Não foi possível validar sua localização agora. Tente novamente em instantes.';
+            toast.error(msg, { duration: 10000 });
+            (handleCheckin as any)._running = false;
+            return;
+          }
 
           if (!response.ok && isGeoError) {
             const placeType = details.place_type === 'sede' ? 'Sede' : (details.place_name || 'PDV');

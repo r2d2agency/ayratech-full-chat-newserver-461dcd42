@@ -46,31 +46,38 @@ export function visitSlotKey(visit: any): string {
   return normalizeTimeToHHMM(visit.slot_time) || NO_SLOT;
 }
 
-/** A visita pertence ao slot da rota? */
+/**
+ * A visita pertence ao slot da rota?
+ *
+ * O slot é o HORÁRIO, não a loja: duas rotas em lojas diferentes podem ter
+ * o mesmo horário (e rotas sem horário caem todas no slot '00:00'). Por isso
+ * o casamento precisa ser por PDV **e** por slot — casar só pelo horário
+ * fazia o check-in de uma loja liberar as demais, pulando a geolocalização.
+ */
 export function isVisitOfSlot(visit: any, route: any): boolean {
   if (!visit || !route) return false;
-  return visitSlotKey(visit) === routeSlotKey(route);
+  if (visitSlotKey(visit) !== routeSlotKey(route)) return false;
+  // Sem PDV na rota não há como discriminar: mantém o casamento por slot.
+  if (!route.pdv_id || !visit.pdv_id) return true;
+  return String(visit.pdv_id) === String(route.pdv_id);
 }
 
-/** Existe visita COM check-in para o slot da rota? */
+/** Existe visita COM check-in para o PDV e o slot da rota? */
 export function hasCheckinForSlot(visits: any[] | undefined, route: any): boolean {
   if (!visits?.length) return false;
-  const slot = routeSlotKey(route);
-  return visits.some((v) => v.checkin_at && visitSlotKey(v) === slot);
+  return visits.some((v) => v.checkin_at && isVisitOfSlot(v, route));
 }
 
-/** Existe visita ABERTA (sem checkout) para o slot da rota? */
+/** Existe visita ABERTA (sem checkout) para o PDV e o slot da rota? */
 export function hasOpenVisitForSlot(visits: any[] | undefined, route: any): boolean {
   if (!visits?.length) return false;
-  const slot = routeSlotKey(route);
-  return visits.some((v) => v.checkin_at && !v.checkout_at && visitSlotKey(v) === slot);
+  return visits.some((v) => v.checkin_at && !v.checkout_at && isVisitOfSlot(v, route));
 }
 
 /** A rota já foi encerrada no PDV (visita do slot com checkout)? */
 export function hasCheckoutForSlot(visits: any[] | undefined, route: any): boolean {
   if (!visits?.length) return false;
-  const slot = routeSlotKey(route);
-  return visits.some((v) => v.checkout_at && visitSlotKey(v) === slot);
+  return visits.some((v) => v.checkout_at && isVisitOfSlot(v, route));
 }
 
 /** 'HH:MM' -> minutos desde a meia-noite. */
