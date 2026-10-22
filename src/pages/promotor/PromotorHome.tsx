@@ -592,7 +592,23 @@ export default function PromotorHome() {
           });
           throw explicit;
         }
-        throw new Error(result?.error || result?.message || 'Erro ao realizar check-in');
+        // Qualquer outra recusa do servidor (rota em status inválido,
+        // justificativa pendente, etc.): mostra a mensagem dele e NÃO navega
+        // para a rota — a Home navegaria para uma rota sem check-in gravado,
+        // que depois travaria no checkout com "faça o check-in".
+        {
+          const serverMsg = result?.message
+            || (result?.error === 'pending_justifications'
+              ? 'Existem rotas anteriores em aberto. Justifique antes de iniciar uma nova.'
+              : null)
+            || result?.error
+            || 'Erro ao realizar check-in';
+          logger.warn('[handlePdvCheckin] Check-in recusado pelo servidor', { result, pdvId, status: response.status });
+          const explicit = new Error(serverMsg);
+          (explicit as any)._geoHandled = true;
+          toast({ title: 'Erro no check-in', description: serverMsg, variant: 'destructive', duration: 10000 });
+          throw explicit;
+        }
       }
 
       logger.info('[handlePdvCheckin] Check-in realizado com sucesso', { pdvId, routeId: routeForPdv.id });

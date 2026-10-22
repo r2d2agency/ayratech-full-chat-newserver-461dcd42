@@ -1353,6 +1353,11 @@ export default function PromotorRota() {
       };
 
       if (isOnline) {
+        // Recusa do servidor NÃO pode cair na fila: a chamada morreria em
+        // silêncio e o estado otimista marcaria a rota como iniciada sem
+        // check-in gravado — travando o checkout com "faça o check-in".
+        // Só a queda de rede (fetch lançou antes de qualquer resposta) usa
+        // a fila offline.
         try {
           const token = localStorage.getItem('promotor_token') || localStorage.getItem('auth_token') || '';
           const baseUrl = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
@@ -1425,12 +1430,31 @@ export default function PromotorRota() {
             toast.error(withWindow, { duration: 10000 });
             const explicit = new Error(withWindow);
             (explicit as any)._geoHandled = true;
+            (explicit as any)._serverRejected = true;
             throw explicit;
           }
           if (!response.ok) {
-            throw new Error(result?.error || result?.message || `Erro na requisição (${response.status})`);
+            // Qualquer outra recusa do servidor (rota em status inválido,
+            // justificativa pendente, etc.): mostra a mensagem do servidor e
+            // NÃO marca a rota como iniciada.
+            const serverMsg = result?.message
+              || (result?.error === 'pending_justifications'
+                ? 'Existem rotas anteriores em aberto. Justifique antes de iniciar uma nova.'
+                : null)
+              || `Não foi possível fazer o check-in (${response.status}).`;
+            logger.warn('[handleCheckin] Check-in recusado pelo servidor', { routeId: id, status: response.status, result });
+            toast.error(serverMsg, { duration: 10000 });
+            const explicit = new Error(serverMsg);
+            (explicit as any)._geoHandled = true;
+            (explicit as any)._serverRejected = true;
+            throw explicit;
           }
         } catch (e: any) {
+          if (e?._serverRejected) {
+            // Recusa do servidor: nada foi gravado. Não enfileira e não aplica
+            // o estado otimista — o promotor precisa ver o motivo e refazer.
+            throw e;
+          }
           if (e?.message && (
             e.message.includes('área permitida') ||
             e.message.includes('GEO_OUT_OF_RANGE') ||
@@ -1438,6 +1462,9 @@ export default function PromotorRota() {
           )) {
             throw e;
           }
+          // Queda de rede de verdade (o fetch lançou antes de responder): aí
+          // sim a chamada vai para a fila. Qualquer resposta do servidor
+          // (response.ok ou não) já foi tratada acima e nunca chega aqui.
           logger.warn('[handleCheckin] Chamada síncrona falhou, caindo para queueApiCall', { error: e?.message });
           await queueApiCall({
             url: `/api/merch/promotor/routes/${id}/checkin`,
@@ -1509,6 +1536,9 @@ export default function PromotorRota() {
       setTimeout(() => refetch(), 1000);
     } catch (err: any) {
       (handleCheckin as any)._running = false;
+      // Recusa do servidor já avisou o motivo acima (toast específico com a
+      // explicação): não repetir a mensagem genérica em cima.
+      if (err?._serverRejected) return;
       logger.error('[handleCheckin] Erro fatal no check-in', { message: err.message, routeId: id }, err);
       toast.error(err.message || 'Não foi possível realizar o check-in');
     }
@@ -1529,6 +1559,8 @@ export default function PromotorRota() {
     // promotor só descobre o estado ao voltar para a Home.
     let slotCheckout: { canCheckout: boolean; remaining: number; message?: string } | null = null;
     let checkoutRejected: string | null = null;
+    // Recusa por check-in ausente: a tela precisa oferecer o botão de refazer.
+    let needsCheckinRecovery = false;
 
     const queueCheckout = () => queueApiCall({
       url: `/api/merch/promotor/routes/${id}/checkout`,
@@ -1556,7 +1588,16 @@ export default function PromotorRota() {
           // checkout NÃO aconteceu (ex.: contagem de estoque pendente) e o
           // promotor precisa saber — antes a fila marcava a operação como
           // falha sem ninguém ver.
-          checkoutRejected = result?.message || result?.error || `Erro na requisição (${response.status})`;
+          const isMissingCheckin =
+            result?.error === 'checkin_required' ||
+            (result?.error_code || '') === 'CHECKIN_REQUIRED';
+          const baseMsg = result?.message || result?.error || `Erro na requisição (${response.status})`;
+          // check-in ausente: dito em linguagem de ação, com o botão que
+          // resolve (o promotor completa o check-in e conclui de novo).
+          checkoutRejected = isMissingCheckin
+            ? `${baseMsg} Toque em "Refazer check-in" abaixo para registrar sua presença e concluir a rota.`
+            : baseMsg;
+          needsCheckinRecovery = isMissingCheckin;
           logger.warn('[handleCompleteRoute] Checkout recusado pelo servidor', { routeId: id, status: response.status, result });
         } else if (typeof result?.can_checkout_pdv === 'boolean') {
           slotCheckout = {
@@ -1579,6 +1620,18 @@ export default function PromotorRota() {
       // Recusa do servidor: nada foi concluído, então não marca otimista nem
       // navega — o promotor corrige o pendente e tenta de novo.
       toast.error(checkoutRejected, { duration: 10000 });
+      if (needsCheckinRecovery) {
+        // Abre a tela de check-in de volta para o promotor refazer a
+        // presença (com GPS) e concluir a rota em seguida.
+        setCheckinSubmitted(false);
+        (handleCheckin as any)._running = false;
+        qc.setQueryData(['promotor-route', id], (old: any) => old ? {
+          ...old,
+          status: 'scheduled',
+          checkin_at: null,
+        } : old);
+        await refetch().catch(() => {});
+      }
       return;
     }
 

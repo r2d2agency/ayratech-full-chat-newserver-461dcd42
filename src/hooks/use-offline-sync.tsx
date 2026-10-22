@@ -638,6 +638,32 @@ function useOfflineSyncState() {
           continue;
         }
 
+        // Check-in recusado por outro motivo (rota em status inválido,
+        // justificativa pendente, etc.): a chamada morre aqui de propósito
+        // (4xx é terminal) para o promotor ver o motivo e refazer o check-in
+        // na rota. Sem isso o replay marcava a chamada como falha genérica e a
+        // rota ficava "iniciada" no app sem check-in gravado — travando depois
+        // no checkout com "faça o check-in".
+        if (call.url.includes('/promotor/routes/') && call.url.endsWith('/checkin')
+          && !isGeoError && !isTimeWindowError && !isLocationError) {
+          const fullMsg = response?.message
+            || (response?.error === 'pending_justifications'
+              ? 'Existem rotas anteriores em aberto. Justifique antes de iniciar uma nova.'
+              : null)
+            || 'Não foi possível fazer o check-in. Tente novamente.';
+          try {
+            const { toast } = await import('sonner');
+            toast.error('Erro no check-in', { description: fullMsg, richColors: true, duration: 10000 });
+          } catch {}
+          await db.pending_api_calls.update(call.id!, {
+            status: 'failed',
+            attempts: (call.attempts || 0) + 1,
+            error: `${fullMsg} (não será reenviado automaticamente)`,
+          });
+          setSyncProgress(p => ({ ...p, failed: p.failed + 1 }));
+          continue;
+        }
+
         if (isGeoError && (call.url.includes('/promotor/routes/') && call.url.endsWith('/checkin'))) {
           const placeType = details.place_type === 'sede' ? 'Sede' : (details.place_name || 'PDV');
           const modeLabel = details.mode === 'polygon'

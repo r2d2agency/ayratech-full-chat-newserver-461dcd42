@@ -3259,8 +3259,18 @@ async function requireRouteCheckin(req, res, routeId) {
     return null;
   }
   const route = routeRes.rows[0];
-  // Já check-inada: nada a exigir.
-  if (route.checkin_at || route.status === 'in_progress' || route.status === 'completed') {
+  // Já check-inada (visita do titular OU a própria rota gravada): nada a exigir.
+  // Atenção: `in_progress` SOZINHO não vale — o app marcava o status otimista
+  // mesmo quando o check-in falhava, então uma rota podia ficar "em progresso"
+  // sem nenhuma visita com check-in. A guarda exige a visita gravada.
+  const visitRes0 = await query(
+    `SELECT id FROM pdv_visits
+      WHERE promoter_id=$1 AND pdv_id=$2 AND visit_date=$3 AND checkin_at IS NOT NULL
+      LIMIT 1`,
+    [req.employeeId, route.pdv_id, route.visit_date]
+  );
+  if (visitRes0.rows.length) return route;
+  if (route.checkin_at || route.status === 'completed') {
     return route;
   }
   // Promotor de APOIO (route_person_assignments) não tem check-in próprio: a
@@ -3995,7 +4005,12 @@ router.post('/promotor/routes/:id/checkin', promotorAuth, async (req, res) => {
       [req.params.id, req.employeeId]
     );
     if (!route.rows.length) return res.status(404).json({ error: 'Rota não encontrada' });
-    if (route.rows[0].status !== 'scheduled' && route.rows[0].status !== 'confirmed') {
+    // Rota "in_progress" SEM checkin_at é estado inconsistente (o app chegou a
+    // marcar como iniciada sem gravar o check-in). O check-in é justamente a
+    // correção: aceitamos para o promotor não ficar travado.
+    const recoverableInProgress =
+      route.rows[0].status === 'in_progress' && !route.rows[0].checkin_at;
+    if (route.rows[0].status !== 'scheduled' && route.rows[0].status !== 'confirmed' && !recoverableInProgress) {
       return res.status(400).json({ error: 'Rota não pode receber check-in neste status' });
     }
     const nowBR = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
@@ -4038,7 +4053,11 @@ router.post('/promotor/routes/:id/checkin', promotorAuth, async (req, res) => {
         [req.employeeId, todayStr]
       );
       if (pending.rows[0].cnt > 0) {
-        return res.status(409).json({ error: 'pending_justifications', message: 'Existem rotas anteriores em aberto. Justifique antes de iniciar uma nova.' });
+        return res.status(409).json({
+          error: 'pending_justifications',
+          error_code: 'PENDING_JUSTIFICATIONS',
+          message: 'Existem rotas anteriores em aberto. Justifique antes de iniciar uma nova.',
+        });
       }
     } catch (e) { /* ignore */ }
 
