@@ -758,6 +758,17 @@ app.listen(PORT, () => {
       }
     }, { timezone: 'America/Sao_Paulo' });
     console.log('📊 Merch report scheduler started - checks every 15 minutes');
+
+    // Ponto pelo check-in: saída automática no fim da jornada - every minute
+    cron.schedule('* * * * *', async () => {
+      try {
+        const { runPunchAutoExit } = await import('./lib/punch-auto-exit.js');
+        await runPunchAutoExit();
+      } catch (error) {
+        console.error('🕔 [CRON] Error running punch auto-exit:', error);
+      }
+    }, { timezone: 'America/Sao_Paulo' });
+    console.log('🕔 Punch auto-exit started - checks every minute');
   }).catch((error) => {
     databaseInitError = error?.message || 'Database initialization failed';
     console.error('🛑 Database initialization crashed. API remains online in degraded mode:', error);

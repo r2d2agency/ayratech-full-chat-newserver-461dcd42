@@ -12,12 +12,15 @@ import {
 import {
   CHECKIN_WINDOW_SETTING_KEY, CHECKIN_WINDOW_DEFAULTS, readCheckinWindowConfig,
 } from '../lib/checkin-window-config.js';
+import {
+  PUNCH_ON_CHECKIN_SETTING_KEY, PUNCH_ON_CHECKIN_DEFAULTS, readPunchOnCheckinConfig,
+} from '../lib/punch-on-checkin-config.js';
 
 
 const router = express.Router();
 router.use((req, res, next) => {
   // Public/tolerant endpoints (handle their own auth)
-  if (req.method === 'GET' && (req.path === '/photo-quality-config' || req.path === '/checkin-window-config')) return next();
+  if (req.method === 'GET' && (req.path === '/photo-quality-config' || req.path === '/checkin-window-config' || req.path === '/punch-on-checkin-config')) return next();
   return authenticate(req, res, (error) => {
     if (error) return next(error);
     return idempotency(req, res, next);
@@ -4174,6 +4177,40 @@ router.post('/promotor/routes/:id/checkin', promotorAuth, async (req, res) => {
       [req.params.id, JSON.stringify({ latitude, longitude, has_photo: !!effectivePhotoUrl, is_first_at_pdv: isFirstRouteAtPdv, visit_id: visitId, slot_key: slotKey, late: timeEval.late }), req.employeeId]
     );
 
+    // Controle de ponto pelo check-in: com a opção ativa no tenant, a foto da
+    // fachada já vale como batida de entrada — dispensa o passo do relógio.
+    let autoPunch = null;
+    try {
+      const punchCfg = await readPunchOnCheckinConfig(route.rows[0].organization_id || req.orgId);
+      if (punchCfg.enabled) {
+        const empRes = await query(`SELECT employment_type FROM employees WHERE id=$1`, [req.employeeId]);
+        const employmentType = String(empRes.rows[0]?.employment_type || 'clt').trim().toLowerCase();
+        if (!['pj', 'freelance', 'freelancer'].includes(employmentType)) {
+          const existing = await query(
+            `SELECT id FROM time_punches WHERE employee_id=$1 AND punch_type='entrada'
+               AND (punched_at AT TIME ZONE 'America/Sao_Paulo')::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+             LIMIT 1`,
+            [req.employeeId]
+          );
+          if (!existing.rows.length) {
+            const punchRes = await query(
+              `INSERT INTO time_punches (organization_id, employee_id, punch_type, punched_at, latitude, longitude,
+                 pdv_id, geo_status, device_info, ip_address, sync_status, source, justification)
+               VALUES ($1,$2,'entrada',NOW(),$3,$4,$5,'dentro_area',$6,$7,'synced','checkin',$8)
+               RETURNING id, punch_type, punched_at`,
+              [route.rows[0].organization_id || req.orgId, req.employeeId, latitude ?? null, longitude ?? null,
+               pdvId, device || req.headers['user-agent'] || null, req.ip || null,
+               'Entrada automática pelo check-in (foto da fachada)']
+            );
+            autoPunch = punchRes.rows[0] || null;
+          }
+        }
+      }
+    } catch (punchErr) {
+      // O ponto automático nunca pode quebrar o check-in: registra e segue.
+      logWarn('promotor.checkin.auto_punch_failed', { error: punchErr?.message, route_id: req.params.id });
+    }
+
     res.json({
       ...result.rows[0],
       visit_id: visitId,
@@ -4182,6 +4219,7 @@ router.post('/promotor/routes/:id/checkin', promotorAuth, async (req, res) => {
       late: timeEval.late,
       late_message: timeEval.late ? timeEval.message : null,
       time_window: describeRouteWindow(route.rows[0]),
+      auto_punch: autoPunch ? { id: autoPunch.id, punch_type: autoPunch.punch_type, punched_at: autoPunch.punched_at } : null,
     });
   } catch (err) { logError('promotor.checkin', err); res.status(500).json({ error: 'Erro' }); }
 });
@@ -5755,6 +5793,69 @@ router.put('/checkin-window-config', authenticate, async (req, res) => {
     res.json({ success: true, config });
   } catch (err) {
     logError('merch.checkin-window-config.put', err);
+    res.status(500).json({ error: 'Erro ao salvar configuração' });
+  }
+});
+
+// ===== PUNCH ON CHECKIN CONFIG =====
+
+// Controle de ponto pelo check-in: quando ativo, o check-in do PDV (foto da
+// fachada) registra automaticamente a entrada no relógio de ponto — o
+// promotor não precisa abrir o ponto para bater entrada. Almoço continua
+// manual; a saída pode ser automática no fim da jornada (cron).
+router.get('/punch-on-checkin-config', async (req, res) => {
+  try {
+    let orgId = null;
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
+        if (decoded.organizationId || decoded.organization_id) {
+          orgId = decoded.organizationId || decoded.organization_id;
+        } else if (decoded.userId) {
+          const orgRes = await query('SELECT organization_id FROM organization_members WHERE user_id=$1 LIMIT 1', [decoded.userId]);
+          orgId = orgRes.rows[0]?.organization_id || null;
+        } else if (decoded.employeeId || decoded.employee_id) {
+          const empId = decoded.employeeId || decoded.employee_id;
+          const orgRes = await query('SELECT organization_id FROM employees WHERE id=$1 LIMIT 1', [empId]);
+          orgId = orgRes.rows[0]?.organization_id || null;
+        }
+      } catch { /* sem org => defaults */ }
+    }
+    const config = await readPunchOnCheckinConfig(orgId);
+    res.json({ config });
+  } catch (err) {
+    logError('merch.punch-on-checkin-config.get', err);
+    res.json({ config: { ...PUNCH_ON_CHECKIN_DEFAULTS } });
+  }
+});
+
+router.put('/punch-on-checkin-config', authenticate, async (req, res) => {
+  try {
+    const orgRes = await query('SELECT organization_id FROM organization_members WHERE user_id=$1 LIMIT 1', [req.userId]);
+    if (!orgRes.rows.length) return res.status(403).json({ error: 'Sem organização' });
+    const orgId = orgRes.rows[0].organization_id;
+
+    await query(`CREATE TABLE IF NOT EXISTS organization_settings (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      organization_id UUID NOT NULL,
+      setting_key TEXT NOT NULL,
+      config JSONB DEFAULT '{}',
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(organization_id, setting_key)
+    )`);
+
+    const config = { enabled: req.body?.enabled === true };
+
+    await query(
+      `INSERT INTO organization_settings (organization_id, setting_key, config, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (organization_id, setting_key) DO UPDATE SET config = $3, updated_at = NOW()`,
+      [orgId, PUNCH_ON_CHECKIN_SETTING_KEY, JSON.stringify(config)]
+    );
+    res.json({ success: true, config });
+  } catch (err) {
+    logError('merch.punch-on-checkin-config.put', err);
     res.status(500).json({ error: 'Erro ao salvar configuração' });
   }
 });

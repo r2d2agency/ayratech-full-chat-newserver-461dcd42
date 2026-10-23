@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { useOfflineSync } from "@/hooks/use-offline-sync";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { PromotorLayout } from "./PromotorLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { api } from "@/lib/api";
@@ -841,6 +841,7 @@ function CategoryExtraPhotosPanel({
 export default function PromotorRota() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const qc = useQueryClient();
   const { data: route, isLoading, refetch, error: routeError } = usePromotorRouteDetail(id);
   const checkin = usePromotorCheckin();
@@ -865,6 +866,17 @@ export default function PromotorRota() {
   const [checkinPhotoUrl, setCheckinPhotoUrl] = useState('');
   const [checkinSubmitted, setCheckinSubmitted] = useState(false);
   const [checkinGeoError, setCheckinGeoError] = useState<{ title: string; message: string; details: any } | null>(null);
+  const [punchOnCheckinOpen, setPunchOnCheckinOpen] = useState(false);
+
+  // Vindo da Home logo após um check-in com entrada automática: exibe o aviso
+  // de jornada iniciada uma vez e limpa o sinal da navegação.
+  useEffect(() => {
+    if ((location.state as any)?.punchOnCheckin === true) {
+      setPunchOnCheckinOpen(true);
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
 
   // Load photo quality config
@@ -1433,6 +1445,12 @@ export default function PromotorRota() {
             (explicit as any)._serverRejected = true;
             throw explicit;
           }
+          // Sucesso: se o tenant tem controle de ponto pelo check-in, exibe o
+          // popup confirmando a batida de entrada (jornada iniciada).
+          if (response.ok && result?.auto_punch?.type === 'entrada') {
+            setPunchOnCheckinOpen(true);
+          }
+
           if (!response.ok) {
             // Qualquer outra recusa do servidor (rota em status inválido,
             // justificativa pendente, etc.): mostra a mensagem do servidor e
@@ -3196,6 +3214,33 @@ export default function PromotorRota() {
               <Button onClick={handlePdvCheckout} disabled={route.require_checkout_photo && !pdvCheckoutPhoto}>
                 Fazer Checkout
               </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Ponto automático: confirmação da batida de entrada pelo check-in */}
+        <Dialog open={punchOnCheckinOpen} onOpenChange={setPunchOnCheckinOpen}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Clock className="h-5 w-5 text-green-600" /> Ponto registrado!
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <Card className="border-green-500/30 bg-green-500/5">
+                <CardContent className="p-3">
+                  <p className="text-sm font-medium text-green-700">✅ Confirmando seu batimento de ponto</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Sua jornada foi iniciada com o check-in na loja. A entrada do ponto foi registrada automaticamente.
+                  </p>
+                </CardContent>
+              </Card>
+              <p className="text-xs text-muted-foreground">
+                O almoço (saída e retorno) e a saída continuam no botão do relógio de ponto, como de costume.
+              </p>
+            </div>
+            <DialogFooter>
+              <Button onClick={() => setPunchOnCheckinOpen(false)}>Entendi</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

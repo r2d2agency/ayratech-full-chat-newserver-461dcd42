@@ -27,6 +27,7 @@ import { GoogleCalendarPanel } from "@/components/crm/GoogleCalendarPanel";
 import { api as apiCall } from "@/lib/api";
 import { PhotoQualityConfigPanel } from "@/components/admin/PhotoQualityConfigPanel";
 import { CheckinWindowConfigPanel } from "@/components/admin/CheckinWindowConfigPanel";
+import { PunchOnCheckinConfigPanel } from "@/components/admin/PunchOnCheckinConfigPanel";
 import { applyThemeColors } from "@/hooks/use-branding";
 
 const Configuracoes = () => {
@@ -243,6 +244,12 @@ const Configuracoes = () => {
               {isAdminOrOwner && (
                 <div className="lg:col-span-2">
                   <CheckinWindowConfigPanel />
+                </div>
+              )}
+              {/* Controle de ponto pelo check-in (entrada automática) */}
+              {isAdminOrOwner && (
+                <div className="lg:col-span-2">
+                  <PunchOnCheckinConfigPanel />
                 </div>
               )}
               {/* Profile Settings */}

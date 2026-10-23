@@ -164,7 +164,7 @@ const getScopedAuthToken = (endpoint: string) => {
   }
 
   // Shared merchandising config endpoints — fall back to promotor token when no main token
-  if (endpoint.startsWith('/api/merchandising/') || endpoint.startsWith('/api/merch/photo-quality-config') || endpoint.startsWith('/api/merch/checkin-window-config')) {
+  if (endpoint.startsWith('/api/merchandising/') || endpoint.startsWith('/api/merch/photo-quality-config') || endpoint.startsWith('/api/merch/checkin-window-config') || endpoint.startsWith('/api/merch/punch-on-checkin-config')) {
     return localStorage.getItem('auth_token') || localStorage.getItem('promotor_token');
   }
 

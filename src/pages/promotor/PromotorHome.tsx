@@ -613,7 +613,11 @@ export default function PromotorHome() {
 
       logger.info('[handlePdvCheckin] Check-in realizado com sucesso', { pdvId, routeId: routeForPdv.id });
       toast({ title: 'Check-in da loja realizado!' });
-      
+
+      // Ponto automático: com a opção ativa no tenant, a entrada já foi batida
+      // pelo check-in — navega para a rota com o sinal para exibir o aviso de
+      // jornada iniciada.
+      const autoPunch = result?.auto_punch?.type === 'entrada';
       // Limpa estados e navega
       markPdvRoutesCheckedIn();
       setShowPdvCheckin(false);
@@ -632,7 +636,7 @@ export default function PromotorHome() {
       // Delay curto para o backend gravar + invalidar cache antes da navegação
       const delayMs = 350;
       setTimeout(() => {
-        navigate(`/promotor/rota/${routeForPdv.id}`, { replace: true });
+        navigate(`/promotor/rota/${routeForPdv.id}`, { replace: true, state: { punchOnCheckin: autoPunch } });
       }, delayMs);
       
     } catch (err: any) {
