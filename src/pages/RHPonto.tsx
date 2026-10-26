@@ -339,7 +339,7 @@ export default function RHPonto() {
   const filteredRecords = useMemo(() => {
     if (reportType === 'todos') return records;
     if (reportType === 'horas_extras') return records.filter((r: any) => parseFloat(r.overtime_hours) > 0);
-    return records.filter((r: any) => r.status === 'falta' || (r.total_hours && parseFloat(r.total_hours) < 8));
+    return records.filter((r: any) => r.status === 'falta' || (r.total_hours && parseFloat(r.total_hours) < 8 && r.status !== 'atestado' && r.status !== 'feriado' && r.status !== 'compensado'));
   }, [records, reportType]);
 
   const calcMinutes = (f: any) => {
