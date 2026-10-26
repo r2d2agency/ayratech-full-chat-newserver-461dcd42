@@ -1313,10 +1313,30 @@ function buildCartaoDay(row, { employee, organizationSchedule, tolerance, closur
     isHoliday: Boolean(row.holiday_name),
     isWorkday: sched.isWorkday,
   });
-  if (row.absence_type) {
-    // An approved absence overrides the type but keeps the punches visible, so
-    // the manager can see the day was worked on paper but marked as leave.
+  if (row.medical_cid) {
     if (!punches.length) {
+      return {
+        date,
+        isoDow,
+        dayType: 'atestado',
+        absenceType: 'atestado',
+        medicalCid: row.medical_cid,
+        medicalHours: row.medical_hours || null,
+        medicalPartial: Boolean(row.medical_partial),
+        punches: [],
+        workedMinutes: 0,
+        creditMinutes: 0,
+        debitMinutes: 0,
+        worked: '--',
+        credit: '--',
+        debit: '--',
+        expected: formatHHMM(subtractBreak(exit > entry ? exit - entry : 0, sched.breakMinutes)),
+        expectedMinutes: 0,
+        schedule: { entry: formatHHMM(entry), exit: formatHHMM(exit), name: row.schedule_name || null, source: sched.source },
+        closed: Boolean(closure?.closed),
+      };
+    }
+  }
       return {
         date,
         isoDow,
@@ -1566,6 +1586,17 @@ async function queryCartaoDays({ employeeId, orgId, start, end, capabilities }) 
           LIMIT 1
        ) a ON true` : '';
 
+  const medicalSql = `
+       LEFT JOIN LATERAL (
+         SELECT mc.cid_code, mc.absence_start, mc.absence_end, mc.absence_hours, mc.is_partial
+           FROM rh_medical_certificates mc
+          WHERE mc.employee_id = $1
+            AND d.dt::date BETWEEN mc.absence_start AND mc.absence_end
+            AND COALESCE(mc.validated, false) = true
+          ORDER BY mc.absence_start DESC
+          LIMIT 1
+       ) mc ON true`;
+
   const r = await query(
     `SELECT
        to_char(d.dt, 'YYYY-MM-DD') AS date,
@@ -1576,6 +1607,9 @@ async function queryCartaoDays({ employeeId, orgId, start, end, capabilities }) 
        sched.schedule_name,
        h.name AS holiday_name,
        a.absence_type,
+       mc.cid_code AS medical_cid,
+       mc.absence_hours AS medical_hours,
+       mc.is_partial AS medical_partial,
        COALESCE(
          (SELECT json_agg(json_build_object(
              'id', p.id, 'punch_type', p.punch_type, 'punched_at', p.punched_at,
@@ -1590,6 +1624,7 @@ async function queryCartaoDays({ employeeId, orgId, start, end, capabilities }) 
      ${schedSql}
      ${holidaySql}
      ${absenceSql}
+     ${medicalSql}
     ORDER BY d.dt`,
     [employeeId, orgId, start, end]
   );
