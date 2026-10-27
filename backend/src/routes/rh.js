@@ -1337,6 +1337,10 @@ function buildCartaoDay(row, { employee, organizationSchedule, tolerance, closur
       };
     }
   }
+  if (row.absence_type) {
+    // An approved absence overrides the type but keeps the punches visible, so
+    // the manager can see the day was worked on paper but marked as leave.
+    if (!punches.length) {
       return {
         date,
         isoDow,
