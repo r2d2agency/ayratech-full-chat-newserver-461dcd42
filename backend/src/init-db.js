@@ -4922,7 +4922,6 @@ export async function initDatabase() {
           punched_at = punched_at + INTERVAL '3 hours',
           adjustment_reason = 'Timezone Fix Applied'
         WHERE (punched_at AT TIME ZONE 'America/Sao_Paulo')::date = '2026-08-20'
-          AND manual_adjustment IS NOT TRUE
           AND sync_status = 'synced'
           AND adjustment_reason IS NULL;
       `);
@@ -4933,9 +4932,8 @@ export async function initDatabase() {
 
       // 3. Clear consolidated records for today to force refresh with corrected times
       await pool.query(`
-        DELETE FROM time_records 
-        WHERE record_date = '2026-08-20' 
-          AND manual_adjustment IS NOT TRUE;
+        DELETE FROM time_records
+        WHERE record_date = '2026-08-20';
       `);
       
       console.log("[TimezoneFix] Correction completed and consolidated data cleared.");
