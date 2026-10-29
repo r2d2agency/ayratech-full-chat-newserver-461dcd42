@@ -20,7 +20,7 @@ export default function SupervisorRotas() {
   const [editDate, setEditDate] = useState('');
 
   const { data: routes = [], isLoading } = useSupervisorRoutes({
-    promoter_id: filterPromoter || undefined,
+    promoter_id: filterPromoter && filterPromoter !== "all" ? filterPromoter : undefined,
   });
 
   const updateRoute = useSupervisorUpdateRoute();
@@ -28,7 +28,7 @@ export default function SupervisorRotas() {
   const filtered = useMemo(() => {
     let arr = (routes as any[]) || [];
     if (filterPdv) arr = arr.filter((r: any) => (r.pdv_name || '').toLowerCase().includes(filterPdv.toLowerCase()) || (r.pdv_city || '').toLowerCase().includes(filterPdv.toLowerCase()));
-    if (filterStatus) arr = arr.filter((r: any) => r.status === filterStatus);
+    if (filterStatus && filterStatus !== 'all') arr = arr.filter((r: any) => r.status === filterStatus);
     return arr;
   }, [routes, filterPdv, filterStatus]);
 
@@ -52,14 +52,14 @@ export default function SupervisorRotas() {
           <Select value={filterPromoter} onValueChange={setFilterPromoter}>
             <SelectTrigger className="flex-1"><SelectValue placeholder="Promotor" /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Todos</SelectItem>
+              <SelectItem value="all">Todos</SelectItem>
               {(team as any[]).map((p: any) => <SelectItem key={p.id} value={p.id}>{p.full_name}</SelectItem>)}
             </SelectContent>
           </Select>
           <Select value={filterStatus} onValueChange={setFilterStatus}>
             <SelectTrigger className="w-32"><SelectValue placeholder="Status" /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Todos</SelectItem>
+              <SelectItem value="all">Todos</SelectItem>
               <SelectItem value="scheduled">Agendada</SelectItem>
               <SelectItem value="in_progress">Em execução</SelectItem>
               <SelectItem value="completed">Concluída</SelectItem>
