@@ -114,5 +114,3 @@ export default function SupervisorRotas() {
     </SupervisorLayout>
   );
 }
-EOF
-npm run build 2>&1 | grep -i "vite: build" | head
