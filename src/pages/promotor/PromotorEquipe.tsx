@@ -24,6 +24,31 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 
+function formatWorkSchedule(v: any): string {
+  if (!v) return '—';
+  if (typeof v === 'string') {
+    // Tenta parsear JSON
+    try {
+      const parsed = JSON.parse(v);
+      if (parsed && typeof parsed === 'object') {
+        // Extrai dias ativos
+        const days = parsed.days || parsed;
+        if (typeof days === 'object') {
+          const dayNames: Record<string, string> = { seg: 'Seg', ter: 'Ter', qua: 'Qua', qui: 'Qui', sex: 'Sex', sab: 'Sáb', dom: 'Dom' };
+          const active = Object.entries(days).filter(([_, val]) => val === true).map(([k]) => dayNames[k] || k);
+          if (active.length) {
+            const hours = parsed.start_time && parsed.end_time ? ` ${parsed.start_time}–${parsed.end_time}` : '';
+            return active.join(', ') + hours;
+          }
+        }
+      }
+    } catch { /* não é JSON */ }
+    // Trunca strings muito longas
+    return v.length > 60 ? v.slice(0, 60) + '…' : v;
+  }
+  return String(v);
+}
+
 function safeDate(v: any, fmt: string, fb = '—') {
   if (!v) return fb;
   const d = new Date(String(v).replace(' ', 'T'));
@@ -242,7 +267,7 @@ export default function PromotorEquipe() {
                 </div>
                 <div className="bg-muted/50 rounded p-2">
                   <p className="text-muted-foreground">Jornada</p>
-                  <p className="font-medium">{selectedPromoter.work_schedule || '—'}</p>
+                  <p className="font-medium break-all">{formatWorkSchedule(selectedPromoter.work_schedule)}</p>
                 </div>
                 <div className="bg-muted/50 rounded p-2">
                   <p className="text-muted-foreground">Rotas Hoje</p>

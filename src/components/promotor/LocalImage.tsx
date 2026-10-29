@@ -78,9 +78,7 @@ export function LocalImage({ src, className, ...props }: LocalImageProps) {
       className={className}
       onError={() => {
         console.warn('[LocalImage] Failed to load image:', resolvedUrl);
-        if (resolvedUrl.startsWith('blob:')) {
-          setHasError(true);
-        }
+        setHasError(true);
       }}
       {...props}
     />
