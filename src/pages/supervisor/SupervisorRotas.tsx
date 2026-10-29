@@ -7,7 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Loader2, MapPin, Clock, User, Search } from 'lucide-react';
-import { useSupervisorTeam, useSupervisorRoutes, useSupervisorUpdateRoute } from '@/hooks/use-supervisor';
+import { useSupervisorRoutes, useSupervisorUpdateRoute } from '@/hooks/use-supervisor';
+import { useSupervisorTeam } from '@/hooks/use-promotor';
 import { toast } from 'sonner';
 
 export default function SupervisorRotas() {
