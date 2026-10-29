@@ -116,6 +116,9 @@ import MerchContagemEstoque from "./pages/MerchContagemEstoque";
 import MerchContagemDashboard from "./pages/MerchContagemDashboard";
 
 import PromotorLogin from "./pages/promotor/PromotorLogin";
+import SupervisorLogin from "./pages/supervisor/SupervisorLogin";
+import SupervisorHome from "./pages/supervisor/SupervisorHome";
+import SupervisorLayout from "./pages/supervisor/SupervisorLayout";
 import PromotorHome from "./pages/promotor/PromotorHome";
 import PromotorAgenda from "./pages/promotor/PromotorAgenda";
 import PromotorRota from "./pages/promotor/PromotorRota";
@@ -214,12 +217,14 @@ function SmartRedirect() {
   const isPWA = window.matchMedia('(display-mode: standalone)').matches
     || (navigator as any).standalone === true;
   const isPromotorDomain = hostname.startsWith('promotor.');
+  const isSupervisorDomain = hostname.startsWith('supervisor.');
   const isAccessDomain = hostname.includes('access.ayratech.app') || hostname.includes('acesso.ayratech.app');
   const isSupermarketDomain = hostname.startsWith('supermercado.') || isAccessDomain;
   const isAccessPromotorDomain = hostname.startsWith('parceiro.') || hostname.startsWith('acesso-promotor.');
   
   // Subdomain specific redirects
   if (isPromotorDomain) return <Navigate to="/promotor/login" replace />;
+  if (isSupervisorDomain) return <Navigate to="/supervisor/login" replace />;
   if (isAccessPromotorDomain) return <Navigate to="/acesso/promotor/login" replace />;
   if (isSupermarketDomain) return <Navigate to="/acesso-supermercado" replace />;
   
@@ -403,6 +408,9 @@ const App = () => (
             <Route path="/p/history" element={<PromoterAppAuthProvider><PromoterAppHistory /></PromoterAppAuthProvider>} />
             {/* Promotor App */}
             <Route path="/promotor/login" element={<PromotorLogin />} />
+            {/* Supervisor App */}
+            <Route path="/supervisor/login" element={<SupervisorLogin />} />
+            <Route path="/supervisor/home" element={<SupervisorHome />} />
             <Route path="/promotor/home" element={<PromotorHome />} />
             <Route path="/promotor/agenda" element={<PromotorAgenda />} />
             <Route path="/promotor/rota/:id" element={<PromotorRota />} />

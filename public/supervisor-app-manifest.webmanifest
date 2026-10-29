@@ -1,0 +1,14 @@
+{
+  "name": "Supervisor — ayratech",
+  "short_name": "Supervisor",
+  "description": "App do supervisor: merchandising e RH dos liderados.",
+  "start_url": "/supervisor/login",
+  "scope": "/supervisor",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    { "src": "/favicon.ico", "sizes": "64x64", "type": "image/x-icon" }
+  ]
+}
