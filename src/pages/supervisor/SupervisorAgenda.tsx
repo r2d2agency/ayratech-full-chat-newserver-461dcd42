@@ -144,7 +144,7 @@ export default function SupervisorAgenda() {
                 <span>{format(d, 'd')}</span>
                 <div className="flex gap-0.5 mt-0.5">
                   {rs.slice(0, 3).map((r: any) => (
-                    <span key={r.id} className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[r.status] || 'bg-gray-400'}`} />
+                    <span key={r.id} className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[r.status] || 'bg-gray-400'}`} title={STATUS_LABELS[r.status] || r.status} />
                   ))}
                 </div>
               </button>

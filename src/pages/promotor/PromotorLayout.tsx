@@ -81,7 +81,7 @@ function PromotorLayoutInner({ children }: PromotorLayoutProps) {
   }, []);
 
   useEffect(() => {
-    const token = localStorage.getItem('promotor_token');
+    const token = localStorage.getItem('promotor_token') || localStorage.getItem('supervisor_token');
     if (!token && !location.pathname.includes('/promotor/login')) {
       navigate('/promotor/login');
     }
@@ -90,6 +90,8 @@ function PromotorLayoutInner({ children }: PromotorLayoutProps) {
   const handleLogout = () => {
     localStorage.removeItem('promotor_token');
     localStorage.removeItem('promotor_employee');
+    localStorage.removeItem('supervisor_token');
+    localStorage.removeItem('supervisor_employee');
     navigate('/promotor/login');
   };
 

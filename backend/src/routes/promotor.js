@@ -248,7 +248,9 @@ const authenticatePromotor = async (req, res, next) => {
   const token = authHeader.replace('Bearer ', '');
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    if (decoded.appType !== 'promotor') return res.status(403).json({ error: 'Token inválido para este app' });
+    if (decoded.appType !== 'promotor' && decoded.appType !== 'supervisor') {
+      return res.status(403).json({ error: 'Token inválido para este app' });
+    }
     req.employeeId = decoded.employeeId;
     req.organizationId = decoded.organizationId;
 
