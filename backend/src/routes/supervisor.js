@@ -114,4 +114,99 @@ router.get('/me', authenticateSupervisor, async (req, res) => {
   }
 });
 
+// List routes of subordinates
+router.get('/routes', authenticateSupervisor, async (req, res) => {
+  try {
+    const { promoter_id, date_from, date_to } = req.query;
+    // Restrict to subordinates
+    const subs = await query(`SELECT id FROM employees WHERE (direct_manager_id=$1 OR supervisor_id=$1)`, [req.employeeId]);
+    const subIds = subs.rows.map(r => r.id);
+    if (!subIds.length) return res.json([]);
+    let allowedPromoters = subIds;
+    if (promoter_id) {
+      if (!subIds.includes(promoter_id)) return res.status(403).json({ error: 'Promotor não é liderado' });
+      allowedPromoters = [promoter_id];
+    }
+    const params = [req.organizationId];
+    let sql = `SELECT r.*, e.full_name as promoter_name, p.name as pdv_name, p.city as pdv_city, b.name as brand_name
+               FROM merch_routes r
+               LEFT JOIN employees e ON e.id = r.promoter_id
+               LEFT JOIN pdvs p ON p.id = r.pdv_id
+               LEFT JOIN merch_brands b ON b.id = r.brand_id
+               WHERE r.organization_id = $1 AND r.promoter_id = ANY($2::uuid[])`;
+    params.push(allowedPromoters);
+    let idx = 3;
+    if (date_from && date_to) {
+      sql += ` AND r.visit_date BETWEEN $${idx++} AND $${idx++}`;
+      params.push(date_from, date_to);
+    } else if (date_from) {
+      sql += ` AND r.visit_date >= $${idx++}`;
+      params.push(date_from);
+    } else if (date_to) {
+      sql += ` AND r.visit_date <= $${idx++}`;
+      params.push(date_to);
+    }
+    sql += ' ORDER BY r.visit_date DESC, r.scheduled_time';
+    const result = await query(sql, params);
+    res.json(result.rows);
+  } catch (err) {
+    logError('supervisor.routes.list', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update route (only if promoter is subordinate)
+router.put('/routes/:id', authenticateSupervisor, async (req, res) => {
+  try {
+    const existing = await query(`SELECT * FROM merch_routes WHERE id=$1 AND organization_id=$2`, [req.params.id, req.organizationId]);
+    if (!existing.rows.length) return res.status(404).json({ error: 'Rota não encontrada' });
+    const old = existing.rows[0];
+    // verify promoter is subordinate
+    const sub = await query(`SELECT 1 FROM employees WHERE id=$1 AND (direct_manager_id=$2 OR supervisor_id=$2)`, [old.promoter_id, req.employeeId]);
+    if (!sub.rows.length) return res.status(403).json({ error: 'Rota não pertence a um liderado' });
+    const allowed = ['visit_date','scheduled_time','promoter_id','notes','window_start','window_end'];
+    const sets = [];
+    const params = [];
+    let idx = 1;
+    for (const f of allowed) {
+      if (req.body[f] !== undefined) {
+        sets.push(`${f} = $${idx++}`);
+        params.push(req.body[f]);
+      }
+    }
+    if (!sets.length) return res.status(400).json({ error: 'Nada para atualizar' });
+    sets.push('updated_at = NOW()');
+    params.push(req.params.id);
+    await query(`UPDATE merch_routes SET ${sets.join(', ')} WHERE id=$${idx}`, params);
+    // if promoter changed, ensure new promoter is subordinate
+    if (req.body.promoter_id) {
+      const newSub = await query(`SELECT 1 FROM employees WHERE id=$1 AND (direct_manager_id=$2 OR supervisor_id=$2)`, [req.body.promoter_id, req.employeeId]);
+      if (!newSub.rows.length) return res.status(403).json({ error: 'Novo promotor não é liderado' });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    logError('supervisor.routes.update', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Add support (apoio) to a route
+router.post('/routes/:id/support', authenticateSupervisor, async (req, res) => {
+  try {
+    const existing = await query(`SELECT promoter_id FROM merch_routes WHERE id=$1 AND organization_id=$2`, [req.params.id, req.organizationId]);
+    if (!existing.rows.length) return res.status(404).json({ error: 'Rota não encontrada' });
+    const sub = await query(`SELECT 1 FROM employees WHERE id=$1 AND (direct_manager_id=$2 OR supervisor_id=$2)`, [existing.rows[0].promoter_id, req.employeeId]);
+    if (!sub.rows.length) return res.status(403).json({ error: 'Rota não pertence a um liderado' });
+    const { employee_id } = req.body;
+    if (!employee_id) return res.status(400).json({ error: 'employee_id obrigatório' });
+    const empSub = await query(`SELECT 1 FROM employees WHERE id=$1 AND (direct_manager_id=$2 OR supervisor_id=$2)`, [employee_id, req.employeeId]);
+    if (!empSub.rows.length) return res.status(403).json({ error: 'Apoio não é liderado' });
+    await query(`INSERT INTO route_person_assignments (route_id, employee_id, role, assigned_by, active) VALUES ($1,$2,'apoio',$3,true)`, [req.params.id, employee_id, req.employeeId]);
+    res.json({ ok: true });
+  } catch (err) {
+    logError('supervisor.routes.support', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

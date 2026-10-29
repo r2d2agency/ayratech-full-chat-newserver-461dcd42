@@ -25,3 +25,31 @@ export function useSupervisorMe() {
     queryFn: () => supervisorApi<any>('/api/supervisor/me'),
   });
 }
+
+export function useSupervisorRoutes(filters?: { promoter_id?: string; date_from?: string; date_to?: string }) {
+  const params = new URLSearchParams();
+  if (filters?.promoter_id) params.set('promoter_id', filters.promoter_id);
+  if (filters?.date_from) params.set('date_from', filters.date_from);
+  if (filters?.date_to) params.set('date_to', filters.date_to);
+  const qs = params.toString();
+  return useQuery({
+    queryKey: ['supervisor-routes', qs],
+    queryFn: () => supervisorApi<any[]>(`/api/supervisor/routes${qs ? `?${qs}` : ''}`),
+  });
+}
+
+export function useSupervisorUpdateRoute() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: any) => supervisorApi<any>(`/api/supervisor/routes/${id}`, { method: 'PUT', body: data }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['supervisor-routes'] }),
+  });
+}
+
+export function useSupervisorAddSupport() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ routeId, employee_id }: any) => supervisorApi<any>(`/api/supervisor/routes/${routeId}/support`, { method: 'POST', body: { employee_id } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['supervisor-routes'] }),
+  });
+}
