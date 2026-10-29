@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { SupervisorLayout } from './SupervisorLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -20,7 +21,8 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function SupervisorAgenda() {
   const { data: team = [], isLoading: loadingTeam } = useSupervisorTeam();
-  const [promoterId, setPromoterId] = useState<string>('');
+  const [searchParams] = useSearchParams();
+  const [promoterId, setPromoterId] = useState<string>(searchParams.get('promoter') || '');
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const [editingRoute, setEditingRoute] = useState<any>(null);

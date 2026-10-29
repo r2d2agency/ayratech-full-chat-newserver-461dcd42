@@ -307,7 +307,12 @@ export default function PromotorEquipe() {
                   <Bell className="h-3.5 w-3.5" /> Notificar
                 </Button>
                 <Button size="sm" variant="outline" className="gap-1 text-xs" onClick={() => {
-                  navigate('/promotor/agenda');
+                  const isSupervisor = !!localStorage.getItem('supervisor_token');
+                  if (isSupervisor) {
+                    navigate(`/supervisor/agenda?promoter=${selectedPromoter.id}`);
+                  } else {
+                    navigate('/promotor/agenda');
+                  }
                   setSelectedPromoter(null);
                 }}>
                   <Calendar className="h-3.5 w-3.5" /> Agenda
