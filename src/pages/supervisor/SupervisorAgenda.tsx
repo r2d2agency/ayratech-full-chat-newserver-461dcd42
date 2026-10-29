@@ -186,4 +186,3 @@ export default function SupervisorAgenda() {
     </SupervisorLayout>
   );
 }
-EOF
