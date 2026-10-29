@@ -53,3 +53,19 @@ export function useSupervisorAddSupport() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['supervisor-routes'] }),
   });
 }
+
+export function useSupervisorRouteExecutions(routeId?: string) {
+  return useQuery({
+    queryKey: ['supervisor-route-executions', routeId],
+    enabled: !!routeId,
+    queryFn: () => supervisorApi<any[]>(`/api/supervisor/routes/${routeId}/executions`),
+  });
+}
+
+export function useSupervisorRoutePhotos(routeId?: string) {
+  return useQuery({
+    queryKey: ['supervisor-route-photos', routeId],
+    enabled: !!routeId,
+    queryFn: () => supervisorApi<any[]>(`/api/supervisor/routes/${routeId}/photos`),
+  });
+}

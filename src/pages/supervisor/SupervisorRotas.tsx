@@ -6,8 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Loader2, MapPin, Clock, User, Search } from 'lucide-react';
-import { useSupervisorRoutes, useSupervisorUpdateRoute } from '@/hooks/use-supervisor';
+import { Loader2, MapPin, Clock, User, Search, UserPlus, Image, CheckCircle } from 'lucide-react';
+import { useSupervisorRoutes, useSupervisorUpdateRoute, useSupervisorAddSupport, useSupervisorRoutePhotos, useSupervisorRouteExecutions } from '@/hooks/use-supervisor';
 import { useSupervisorTeam } from '@/hooks/use-promotor';
 import { toast } from 'sonner';
 
@@ -18,12 +18,17 @@ export default function SupervisorRotas() {
   const [filterStatus, setFilterStatus] = useState('');
   const [editing, setEditing] = useState<any>(null);
   const [editDate, setEditDate] = useState('');
+  const [supportEmployee, setSupportEmployee] = useState('');
+  const [showPhotos, setShowPhotos] = useState<any>(null);
 
   const { data: routes = [], isLoading } = useSupervisorRoutes({
     promoter_id: filterPromoter && filterPromoter !== "all" ? filterPromoter : undefined,
   });
 
   const updateRoute = useSupervisorUpdateRoute();
+  const addSupport = useSupervisorAddSupport();
+  const { data: photos = [], isLoading: loadingPhotos } = useSupervisorRoutePhotos(showPhotos?.id);
+  const { data: executions = [], isLoading: loadingExecs } = useSupervisorRouteExecutions(showPhotos?.id);
 
   const filtered = useMemo(() => {
     let arr = (routes as any[]) || [];
@@ -38,6 +43,17 @@ export default function SupervisorRotas() {
       await updateRoute.mutateAsync({ id: editing.id, visit_date: editDate });
       toast.success('Rota atualizada');
       setEditing(null);
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+
+  const handleAddSupport = async () => {
+    if (!editing || !supportEmployee) return;
+    try {
+      await addSupport.mutateAsync({ routeId: editing.id, employee_id: supportEmployee });
+      toast.success('Apoio adicionado');
+      setSupportEmployee('');
     } catch (e: any) {
       toast.error(e.message);
     }
@@ -94,7 +110,7 @@ export default function SupervisorRotas() {
           {filtered.length === 0 && !isLoading && <p className="text-sm text-muted-foreground text-center py-8">Nenhuma rota</p>}
         </div>
 
-        <Dialog open={!!editing} onOpenChange={(o) => { if (!o) setEditing(null); }}>
+        <Dialog open={!!editing} onOpenChange={(o) => { if (!o) { setEditing(null); setSupportEmployee(''); } }}>
           <DialogContent className="max-w-sm">
             <DialogHeader><DialogTitle>Ajustar rota</DialogTitle></DialogHeader>
             {editing && (
@@ -104,11 +120,73 @@ export default function SupervisorRotas() {
                   <Input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} />
                 </div>
                 <Button onClick={handleSave} disabled={updateRoute.isPending} className="w-full">
-                  {updateRoute.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null} Salvar
+                  {updateRoute.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null} Salvar data
+                </Button>
+                <div className="border-t pt-3">
+                  <Label>Adicionar apoio (promotor)</Label>
+                  <Select value={supportEmployee} onValueChange={setSupportEmployee}>
+                    <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                    <SelectContent>
+                      {(team as any[]).map((p: any) => (
+                        <SelectItem key={p.id} value={p.id}>{p.full_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button onClick={handleAddSupport} disabled={addSupport.isPending || !supportEmployee} className="w-full mt-2" variant="outline">
+                    <UserPlus className="h-4 w-4 mr-2" /> Adicionar apoio
+                  </Button>
+                </div>
+                <Button variant="outline" className="w-full" onClick={() => { setShowPhotos(editing); setEditing(null); }}>
+                  <Image className="h-4 w-4 mr-2" /> Ver fotos e execução
                 </Button>
               </div>
             )}
-            <DialogFooter><Button variant="outline" onClick={() => setEditing(null)}>Fechar</Button></DialogFooter>
+            <DialogFooter><Button variant="outline" onClick={() => { setEditing(null); setSupportEmployee(''); }}>Fechar</Button></DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={!!showPhotos} onOpenChange={(o) => { if (!o) setShowPhotos(null); }}>
+          <DialogContent className="max-w-sm max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Execução da rota</DialogTitle>
+            </DialogHeader>
+            {showPhotos && (
+              <div className="space-y-3">
+                <div className="text-xs text-muted-foreground">
+                  <p className="font-medium text-foreground">{showPhotos.pdv_name}</p>
+                  <p>{showPhotos.promoter_name} • {String(showPhotos.visit_date).slice(0,10)}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium mb-2 flex items-center gap-2"><CheckCircle className="h-4 w-4" /> Check-ins</p>
+                  {loadingExecs && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {executions.length === 0 && !loadingExecs && <p className="text-xs text-muted-foreground">Sem registros</p>}
+                  <div className="space-y-1">
+                    {(executions as any[]).map((ex: any) => (
+                      <div key={ex.id} className="text-xs p-2 rounded bg-muted/40">
+                        <div className="flex justify-between">
+                          <span>{ex.action || ex.status || 'Registro'}</span>
+                          <span className="text-muted-foreground">{ex.created_at ? new Date(ex.created_at).toLocaleString('pt-BR') : ''}</span>
+                        </div>
+                        {ex.notes && <p className="text-muted-foreground mt-1">{ex.notes}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm font-medium mb-2 flex items-center gap-2"><Image className="h-4 w-4" /> Fotos</p>
+                  {loadingPhotos && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {photos.length === 0 && !loadingPhotos && <p className="text-xs text-muted-foreground">Sem fotos</p>}
+                  <div className="grid grid-cols-2 gap-2">
+                    {(photos as any[]).map((ph: any) => (
+                      <a key={ph.id} href={ph.photo_url} target="_blank" rel="noreferrer" className="block">
+                        <img src={ph.thumbnail_url || ph.photo_url} alt="" className="w-full h-24 object-cover rounded border" />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            <DialogFooter><Button variant="outline" onClick={() => setShowPhotos(null)}>Fechar</Button></DialogFooter>
           </DialogContent>
         </Dialog>
       </div>

@@ -6,7 +6,7 @@ import { api } from '@/lib/api';
 
 const promotorApi = async <T>(endpoint: string, options: any = {}): Promise<T> => {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const token = localStorage.getItem('promotor_token');
+  const token = localStorage.getItem('promotor_token') || localStorage.getItem('supervisor_token');
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const url = `${(import.meta.env.VITE_API_URL || '').replace(/\/$/, '')}${endpoint}`;

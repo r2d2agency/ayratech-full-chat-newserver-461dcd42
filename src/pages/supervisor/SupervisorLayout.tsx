@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useBranding } from "@/hooks/use-branding";
-import { Home, FileText, Clock, Upload, Settings, LogOut, Bell, X, Users, RefreshCw, WifiOff } from "lucide-react";
+import { Home, FileText, Clock, Settings, LogOut, Bell, X, Users, WifiOff, Route } from "lucide-react";
 import { useOfflineSync, OfflineSyncProvider } from "@/hooks/use-offline-sync";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/lib/offline-db";
@@ -101,10 +101,10 @@ function SupervisorLayoutInner({ children }: SupervisorLayoutProps) {
   const isSupervisor = employee?.worker_profile === 'supervisor' || employee?.worker_profile === 'administrativo' || employee?.profile === 'supervisor' || employee?.profile === 'administrativo';
 
   const navItems = [
-    { path: '/promotor/home', icon: Home, label: 'Início' },
-    { path: '/promotor/agenda', icon: Clock, label: 'Agenda' },
-    ...(isSupervisor ? [{ path: '/promotor/equipe', icon: Users, label: 'Equipe' }] : []),
-    { path: '/promotor/avarias', icon: FileText, label: 'Perdas' },
+    { path: '/supervisor/home', icon: Home, label: 'Início' },
+    { path: '/supervisor/rotas', icon: Route, label: 'Rotas' },
+    { path: '/supervisor/agenda', icon: Clock, label: 'Agenda' },
+    { path: '/promotor/equipe', icon: Users, label: 'Equipe' },
     { path: '/promotor/ponto', icon: Clock, label: 'Ponto' },
     { path: '/promotor/configuracoes', icon: Settings, label: 'Config' },
   ];

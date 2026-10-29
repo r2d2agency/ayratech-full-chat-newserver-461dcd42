@@ -201,10 +201,43 @@ router.post('/routes/:id/support', authenticateSupervisor, async (req, res) => {
     if (!employee_id) return res.status(400).json({ error: 'employee_id obrigatório' });
     const empSub = await query(`SELECT 1 FROM employees WHERE id=$1 AND (direct_manager_id=$2 OR supervisor_id=$2)`, [employee_id, req.employeeId]);
     if (!empSub.rows.length) return res.status(403).json({ error: 'Apoio não é liderado' });
+    // Avoid duplicate active assignment
+    const exists = await query(`SELECT 1 FROM route_person_assignments WHERE route_id=$1 AND employee_id=$2 AND role='apoio' AND active=true`, [req.params.id, employee_id]);
+    if (exists.rows.length) return res.json({ ok: true });
     await query(`INSERT INTO route_person_assignments (route_id, employee_id, role, assigned_by, active) VALUES ($1,$2,'apoio',$3,true)`, [req.params.id, employee_id, req.employeeId]);
     res.json({ ok: true });
   } catch (err) {
     logError('supervisor.routes.support', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List route executions (checkins) for subordinate route
+router.get('/routes/:id/executions', authenticateSupervisor, async (req, res) => {
+  try {
+    const route = await query(`SELECT promoter_id FROM merch_routes WHERE id=$1 AND organization_id=$2`, [req.params.id, req.organizationId]);
+    if (!route.rows.length) return res.status(404).json({ error: 'Rota não encontrada' });
+    const sub = await query(`SELECT 1 FROM employees WHERE id=$1 AND (direct_manager_id=$2 OR supervisor_id=$2)`, [route.rows[0].promoter_id, req.employeeId]);
+    if (!sub.rows.length) return res.status(403).json({ error: 'Rota não pertence a um liderado' });
+    const execs = await query(`SELECT * FROM route_executions WHERE route_id=$1 ORDER BY created_at ASC`, [req.params.id]);
+    res.json(execs.rows);
+  } catch (err) {
+    logError('supervisor.routes.executions', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List route photos for subordinate route
+router.get('/routes/:id/photos', authenticateSupervisor, async (req, res) => {
+  try {
+    const route = await query(`SELECT promoter_id FROM merch_routes WHERE id=$1 AND organization_id=$2`, [req.params.id, req.organizationId]);
+    if (!route.rows.length) return res.status(404).json({ error: 'Rota não encontrada' });
+    const sub = await query(`SELECT 1 FROM employees WHERE id=$1 AND (direct_manager_id=$2 OR supervisor_id=$2)`, [route.rows[0].promoter_id, req.employeeId]);
+    if (!sub.rows.length) return res.status(403).json({ error: 'Rota não pertence a um liderado' });
+    const photos = await query(`SELECT DISTINCT ON (photo_url) * FROM route_photos WHERE route_id=$1 ORDER BY photo_url, captured_at DESC`, [req.params.id]);
+    res.json(photos.rows);
+  } catch (err) {
+    logError('supervisor.routes.photos', err);
     res.status(500).json({ error: err.message });
   }
 });
