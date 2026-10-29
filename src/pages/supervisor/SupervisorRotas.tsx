@@ -6,18 +6,46 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Loader2, MapPin, Clock, User, Search, UserPlus, Image, CheckCircle } from 'lucide-react';
+import { Loader2, MapPin, Clock, User, Search, UserPlus, Image, CheckCircle, Store } from 'lucide-react';
 import { useSupervisorRoutes, useSupervisorUpdateRoute, useSupervisorAddSupport, useSupervisorRoutePhotos, useSupervisorRouteExecutions } from '@/hooks/use-supervisor';
 import { useSupervisorTeam } from '@/hooks/use-promotor';
+import { usePDVs } from '@/hooks/use-promotor';
 import { toast } from 'sonner';
+
+const STATUS_COLORS: Record<string, string> = {
+  scheduled: 'bg-blue-500/10 text-blue-700 dark:text-blue-400',
+  in_progress: 'bg-orange-500/10 text-orange-700 dark:text-orange-400',
+  completed: 'bg-green-500/10 text-green-700 dark:text-green-400',
+  confirmed: 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-400',
+  not_done: 'bg-red-500/10 text-red-700 dark:text-red-400',
+  cancelled: 'bg-gray-400/10 text-gray-600 dark:text-gray-400',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  scheduled: 'Agendada',
+  in_progress: 'Em execução',
+  completed: 'Concluída',
+  confirmed: 'Confirmada',
+  not_done: 'Não realizada',
+  cancelled: 'Cancelada',
+};
 
 export default function SupervisorRotas() {
   const { data: team = [] } = useSupervisorTeam();
+  const { data: pdvs = [] } = usePDVs();
+  const supervisorEmployee = (() => {
+    try {
+      return JSON.parse(localStorage.getItem('supervisor_employee') || '{}');
+    } catch {
+      return {};
+    }
+  })();
   const [filterPromoter, setFilterPromoter] = useState('');
   const [filterPdv, setFilterPdv] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [editing, setEditing] = useState<any>(null);
   const [editDate, setEditDate] = useState('');
+  const [editPdv, setEditPdv] = useState('');
   const [supportEmployee, setSupportEmployee] = useState('');
   const [showPhotos, setShowPhotos] = useState<any>(null);
 
@@ -40,9 +68,12 @@ export default function SupervisorRotas() {
   const handleSave = async () => {
     if (!editing) return;
     try {
-      await updateRoute.mutateAsync({ id: editing.id, visit_date: editDate });
+      const payload: any = { id: editing.id, visit_date: editDate };
+      if (editPdv) payload.pdv_id = editPdv;
+      await updateRoute.mutateAsync(payload);
       toast.success('Rota atualizada');
       setEditing(null);
+      setEditPdv('');
     } catch (e: any) {
       toast.error(e.message);
     }
@@ -92,7 +123,7 @@ export default function SupervisorRotas() {
 
         <div className="space-y-2">
           {filtered.map((r: any) => (
-            <Card key={r.id} className="cursor-pointer" onClick={() => { setEditing(r); setEditDate(String(r.visit_date).slice(0, 10)); }}>
+            <Card key={r.id} className="cursor-pointer hover:border-primary/40 transition-colors" onClick={() => { setEditing(r); setEditDate(String(r.visit_date).slice(0, 10)); setEditPdv(r.pdv_id || ''); }}>
               <CardContent className="p-3 space-y-1">
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-sm">{r.pdv_name || 'PDV'}</span>
@@ -103,7 +134,9 @@ export default function SupervisorRotas() {
                   <User className="h-3 w-3" />{r.promoter_name}
                   <Clock className="h-3 w-3" />{String(r.visit_date).slice(0, 10)}
                 </div>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-muted">{r.status}</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full inline-flex ${STATUS_COLORS[r.status] || 'bg-muted text-muted-foreground'}`}>
+                  {STATUS_LABELS[r.status] || r.status}
+                </span>
               </CardContent>
             </Card>
           ))}
@@ -119,14 +152,34 @@ export default function SupervisorRotas() {
                   <Label>Data da visita</Label>
                   <Input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} />
                 </div>
+                <div>
+                  <Label>PDV</Label>
+                  <Select value={editPdv} onValueChange={setEditPdv}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecionar PDV" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(pdvs as any[]).map((p: any) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.name} {p.city ? `- ${p.city}` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Button onClick={handleSave} disabled={updateRoute.isPending} className="w-full">
-                  {updateRoute.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null} Salvar data
+                  {updateRoute.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null} Salvar alterações
                 </Button>
                 <div className="border-t pt-3">
-                  <Label>Adicionar apoio (promotor)</Label>
+                  <Label>Adicionar apoio</Label>
                   <Select value={supportEmployee} onValueChange={setSupportEmployee}>
                     <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                     <SelectContent>
+                      {supervisorEmployee?.id && (
+                        <SelectItem value={supervisorEmployee.id}>
+                          {supervisorEmployee.name || supervisorEmployee.full_name || 'Eu (Supervisor)'}
+                        </SelectItem>
+                      )}
                       {(team as any[]).map((p: any) => (
                         <SelectItem key={p.id} value={p.id}>{p.full_name}</SelectItem>
                       ))}

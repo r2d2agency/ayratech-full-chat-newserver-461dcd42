@@ -120,6 +120,7 @@ import SupervisorLogin from "./pages/supervisor/SupervisorLogin";
 import SupervisorHome from "./pages/supervisor/SupervisorHome";
 import SupervisorAgenda from "./pages/supervisor/SupervisorAgenda";
 import SupervisorRotas from "./pages/supervisor/SupervisorRotas";
+import SupervisorMapa from "./pages/supervisor/SupervisorMapa";
 import SupervisorLayout from "./pages/supervisor/SupervisorLayout";
 import PromotorHome from "./pages/promotor/PromotorHome";
 import PromotorAgenda from "./pages/promotor/PromotorAgenda";
@@ -415,6 +416,7 @@ const App = () => (
             <Route path="/supervisor/home" element={<SupervisorHome />} />
             <Route path="/supervisor/agenda" element={<SupervisorAgenda />} />
             <Route path="/supervisor/rotas" element={<SupervisorRotas />} />
+            <Route path="/supervisor/mapa" element={<SupervisorMapa />} />
             <Route path="/promotor/home" element={<PromotorHome />} />
             <Route path="/promotor/agenda" element={<PromotorAgenda />} />
             <Route path="/promotor/rota/:id" element={<PromotorRota />} />

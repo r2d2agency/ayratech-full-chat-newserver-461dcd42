@@ -9,6 +9,7 @@ import {
 const tiles = [
   { label: 'Rotas', icon: Route, path: '/supervisor/rotas', desc: 'Supervisionar e ajustar rotas' },
   { label: 'Agenda', icon: Calendar, path: '/supervisor/agenda', desc: 'Agenda dos liderados' },
+  { label: 'Mapa PDVs', icon: MapPin, path: '/supervisor/mapa', desc: 'PDVs das rotas atribuídas' },
   { label: 'Equipe', icon: Users, path: '/promotor/equipe', desc: 'Minha equipe' },
   { label: 'Ponto', icon: Clock, path: '/promotor/ponto', desc: 'Ponto dos liderados' },
 ];

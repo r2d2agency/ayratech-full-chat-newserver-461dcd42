@@ -128,7 +128,7 @@ router.get('/routes', authenticateSupervisor, async (req, res) => {
       allowedPromoters = [promoter_id];
     }
     const params = [req.organizationId];
-    let sql = `SELECT r.*, e.full_name as promoter_name, p.name as pdv_name, p.city as pdv_city, b.name as brand_name
+    let sql = `SELECT r.*, e.full_name as promoter_name, p.name as pdv_name, p.city as pdv_city, p.address as pdv_address, p.latitude as pdv_latitude, p.longitude as pdv_longitude, b.name as brand_name
                FROM merch_routes r
                LEFT JOIN employees e ON e.id = r.promoter_id
                LEFT JOIN pdvs p ON p.id = r.pdv_id
@@ -164,7 +164,7 @@ router.put('/routes/:id', authenticateSupervisor, async (req, res) => {
     // verify promoter is subordinate
     const sub = await query(`SELECT 1 FROM employees WHERE id=$1 AND (direct_manager_id=$2 OR supervisor_id=$2)`, [old.promoter_id, req.employeeId]);
     if (!sub.rows.length) return res.status(403).json({ error: 'Rota não pertence a um liderado' });
-    const allowed = ['visit_date','scheduled_time','promoter_id','notes','window_start','window_end'];
+    const allowed = ['visit_date','scheduled_time','promoter_id','notes','window_start','window_end','pdv_id'];
     const sets = [];
     const params = [];
     let idx = 1;
@@ -199,8 +199,11 @@ router.post('/routes/:id/support', authenticateSupervisor, async (req, res) => {
     if (!sub.rows.length) return res.status(403).json({ error: 'Rota não pertence a um liderado' });
     const { employee_id } = req.body;
     if (!employee_id) return res.status(400).json({ error: 'employee_id obrigatório' });
-    const empSub = await query(`SELECT 1 FROM employees WHERE id=$1 AND (direct_manager_id=$2 OR supervisor_id=$2)`, [employee_id, req.employeeId]);
-    if (!empSub.rows.length) return res.status(403).json({ error: 'Apoio não é liderado' });
+    // Allow adding supervisor themselves or any subordinate as support
+    if (employee_id !== req.employeeId) {
+      const empSub = await query(`SELECT 1 FROM employees WHERE id=$1 AND (direct_manager_id=$2 OR supervisor_id=$2)`, [employee_id, req.employeeId]);
+      if (!empSub.rows.length) return res.status(403).json({ error: 'Apoio não é liderado' });
+    }
     // Avoid duplicate active assignment
     const exists = await query(`SELECT 1 FROM route_person_assignments WHERE route_id=$1 AND employee_id=$2 AND role='apoio' AND active=true`, [req.params.id, employee_id]);
     if (exists.rows.length) return res.json({ ok: true });
@@ -238,6 +241,20 @@ router.get('/routes/:id/photos', authenticateSupervisor, async (req, res) => {
     res.json(photos.rows);
   } catch (err) {
     logError('supervisor.routes.photos', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List PDVs for supervisor organization
+router.get('/pdvs', authenticateSupervisor, async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, name, city, address, latitude, longitude FROM pdvs WHERE organization_id=$1 AND active=true ORDER BY name`,
+      [req.organizationId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    logError('supervisor.pdvs', err);
     res.status(500).json({ error: err.message });
   }
 });

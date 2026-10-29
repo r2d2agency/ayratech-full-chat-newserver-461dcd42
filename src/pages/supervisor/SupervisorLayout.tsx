@@ -104,9 +104,8 @@ function SupervisorLayoutInner({ children }: SupervisorLayoutProps) {
     { path: '/supervisor/home', icon: Home, label: 'Início' },
     { path: '/supervisor/rotas', icon: Route, label: 'Rotas' },
     { path: '/supervisor/agenda', icon: Clock, label: 'Agenda' },
+    { path: '/supervisor/mapa', icon: MapPin, label: 'Mapa' },
     { path: '/promotor/equipe', icon: Users, label: 'Equipe' },
-    { path: '/promotor/ponto', icon: Clock, label: 'Ponto' },
-    { path: '/promotor/configuracoes', icon: Settings, label: 'Config' },
   ];
 
   const isLoginPage = location.pathname.includes('/login') || location.pathname.includes('/trocar-senha');

@@ -19,8 +19,33 @@ const STATUS_COLORS: Record<string, string> = {
   completed: 'bg-green-500', not_done: 'bg-red-500', cancelled: 'bg-gray-400',
 };
 
+const STATUS_BADGE_COLORS: Record<string, string> = {
+  scheduled: 'bg-blue-500/10 text-blue-700 dark:text-blue-400',
+  in_progress: 'bg-orange-500/10 text-orange-700 dark:text-orange-400',
+  completed: 'bg-green-500/10 text-green-700 dark:text-green-400',
+  confirmed: 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-400',
+  not_done: 'bg-red-500/10 text-red-700 dark:text-red-400',
+  cancelled: 'bg-gray-400/10 text-gray-600 dark:text-gray-400',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  scheduled: 'Agendada',
+  in_progress: 'Em execução',
+  completed: 'Concluída',
+  confirmed: 'Confirmada',
+  not_done: 'Não realizada',
+  cancelled: 'Cancelada',
+};
+
 export default function SupervisorAgenda() {
   const { data: team = [], isLoading: loadingTeam } = useSupervisorTeam();
+  const supervisorEmployee = (() => {
+    try {
+      return JSON.parse(localStorage.getItem('supervisor_employee') || '{}');
+    } catch {
+      return {};
+    }
+  })();
   const [searchParams] = useSearchParams();
   const [promoterId, setPromoterId] = useState<string>(searchParams.get('promoter') || '');
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -164,10 +189,15 @@ export default function SupervisorAgenda() {
                   {updateRoute.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null} Salvar data
                 </Button>
                 <div className="border-t pt-3">
-                  <Label>Adicionar apoio (promotor)</Label>
+                  <Label>Adicionar apoio</Label>
                   <Select value={supportEmployee} onValueChange={setSupportEmployee}>
                     <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                     <SelectContent>
+                      {supervisorEmployee?.id && (
+                        <SelectItem value={supervisorEmployee.id}>
+                          {supervisorEmployee.name || supervisorEmployee.full_name || 'Eu (Supervisor)'}
+                        </SelectItem>
+                      )}
                       {(team as any[]).map((p: any) => (
                         <SelectItem key={p.id} value={p.id}>{p.full_name}</SelectItem>
                       ))}
