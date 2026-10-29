@@ -70,7 +70,7 @@ function SupervisorLayoutInner({ children }: SupervisorLayoutProps) {
 
   // Apply saved promotor theme on mount
   useEffect(() => {
-    const savedTheme = localStorage.getItem('promotor-theme') || 'auto';
+    const savedTheme = localStorage.getItem('supervisor-theme') || 'auto';
     const root = document.documentElement;
     let effective: 'light' | 'dark';
     if (savedTheme === 'claro') effective = 'light';
@@ -81,15 +81,15 @@ function SupervisorLayoutInner({ children }: SupervisorLayoutProps) {
   }, []);
 
   useEffect(() => {
-    const token = localStorage.getItem('promotor_token');
+    const token = localStorage.getItem('supervisor_token');
     if (!token && !location.pathname.includes('/promotor/login')) {
       navigate('/promotor/login');
     }
   }, [location, navigate]);
 
   const handleLogout = () => {
-    localStorage.removeItem('promotor_token');
-    localStorage.removeItem('promotor_employee');
+    localStorage.removeItem('supervisor_token');
+    localStorage.removeItem('supervisor_employee');
     navigate('/promotor/login');
   };
 
@@ -97,7 +97,7 @@ function SupervisorLayoutInner({ children }: SupervisorLayoutProps) {
     markRead.mutate(id);
   };
 
-  const employee = JSON.parse(localStorage.getItem('promotor_employee') || '{}');
+  const employee = JSON.parse(localStorage.getItem('supervisor_employee') || '{}');
   const isSupervisor = employee?.worker_profile === 'supervisor' || employee?.worker_profile === 'administrativo' || employee?.profile === 'supervisor' || employee?.profile === 'administrativo';
 
   const navItems = [
@@ -124,6 +124,9 @@ function SupervisorLayoutInner({ children }: SupervisorLayoutProps) {
               <h2 className="text-sm font-bold text-foreground truncate leading-tight">
                 {branding.company_name || 'Ayratech'}
               </h2>
+              <p className="text-[11px] text-muted-foreground truncate leading-tight">
+                Seja bem-vindo, supervisor {employee?.name || employee?.full_name || ''}
+              </p>
             </div>
             <div className="flex items-center gap-1">
               <div className="flex items-center">

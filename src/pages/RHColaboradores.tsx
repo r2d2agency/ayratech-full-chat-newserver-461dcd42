@@ -275,6 +275,8 @@ export default function RHColaboradores() {
     status: statusFilter !== "all" ? statusFilter : undefined,
   });
 
+  const { data: allEmployeesForSupervisor = [] } = useEmployees({});
+
   const employees = useMemo(() => {
     if (profileFilter === "all") return rawEmployees;
     if (profileFilter === "promotor_access") return rawEmployees.filter((e: any) => e.promotor_access);
@@ -1016,7 +1018,7 @@ export default function RHColaboradores() {
                     <SelectTrigger><SelectValue placeholder="Selecionar supervisor" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">Nenhum</SelectItem>
-                      {employees.filter((e: any) => e.id !== editId && (e.worker_profile === 'supervisor' || e.worker_profile === 'administrativo')).map((e: any) => (
+                      {allEmployeesForSupervisor.filter((e: any) => e.id !== editId && (e.worker_profile === 'supervisor' || e.worker_profile === 'administrativo' || e.profile === 'supervisor' || e.profile === 'administrativo')).map((e: any) => (
                         <SelectItem key={e.id} value={e.id}>{e.full_name} ({e.position || e.worker_profile})</SelectItem>
                       ))}
                     </SelectContent>
