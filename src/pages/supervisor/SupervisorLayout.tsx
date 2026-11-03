@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useBranding } from "@/hooks/use-branding";
-import { Home, FileText, Clock, Settings, LogOut, Bell, X, Users, WifiOff, Route } from "lucide-react";
+import { Home, FileText, Clock, Settings, LogOut, Bell, X, Users, WifiOff, Route, MapPin } from "lucide-react";
 import { useOfflineSync, OfflineSyncProvider } from "@/hooks/use-offline-sync";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/lib/offline-db";
