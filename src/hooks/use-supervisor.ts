@@ -62,6 +62,25 @@ export function useSupervisorRouteExecutions(routeId?: string) {
   });
 }
 
+export function useSupervisorTeam() {
+  return useQuery({
+    queryKey: ['supervisor-team'],
+    queryFn: () => supervisorApi<any[]>('/api/supervisor/team'),
+  });
+}
+
+export function useSupervisorTeamPunches(filters?: { employee_id?: string; date?: string; days?: number }) {
+  const params = new URLSearchParams();
+  if (filters?.employee_id) params.set('employee_id', filters.employee_id);
+  if (filters?.date) params.set('date', filters.date);
+  if (filters?.days) params.set('days', String(filters.days));
+  const qs = params.toString();
+  return useQuery({
+    queryKey: ['supervisor-team-punches', qs],
+    queryFn: () => supervisorApi<any[]>(`/api/supervisor/team/punches${qs ? `?${qs}` : ''}`),
+  });
+}
+
 export function useSupervisorRoutePhotos(routeId?: string) {
   return useQuery({
     queryKey: ['supervisor-route-photos', routeId],

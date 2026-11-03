@@ -10,8 +10,8 @@ const tiles = [
   { label: 'Rotas', icon: Route, path: '/supervisor/rotas', desc: 'Supervisionar e ajustar rotas' },
   { label: 'Agenda', icon: Calendar, path: '/supervisor/agenda', desc: 'Agenda dos liderados' },
   { label: 'Mapa PDVs', icon: MapPin, path: '/supervisor/mapa', desc: 'PDVs das rotas atribuídas' },
-  { label: 'Equipe', icon: Users, path: '/promotor/equipe', desc: 'Minha equipe' },
-  { label: 'Ponto', icon: Clock, path: '/promotor/ponto', desc: 'Ponto dos liderados' },
+  { label: 'Equipe', icon: Users, path: '/supervisor/equipe', desc: 'Minha equipe' },
+  { label: 'Ponto', icon: Clock, path: '/supervisor/ponto', desc: 'Ponto dos liderados' },
 ];
 
 export default function SupervisorHome() {
@@ -32,7 +32,7 @@ export default function SupervisorHome() {
             </Card>
           ))}
         </div>
-        <Button variant="outline" className="w-full" onClick={() => navigate('/promotor/equipe')}>
+        <Button variant="outline" className="w-full" onClick={() => navigate('/supervisor/equipe')}>
           <Users className="h-4 w-4 mr-2" /> Ver equipe detalhada
         </Button>
       </div>

@@ -121,6 +121,8 @@ import SupervisorHome from "./pages/supervisor/SupervisorHome";
 import SupervisorAgenda from "./pages/supervisor/SupervisorAgenda";
 import SupervisorRotas from "./pages/supervisor/SupervisorRotas";
 import SupervisorMapa from "./pages/supervisor/SupervisorMapa";
+import SupervisorEquipe from "./pages/supervisor/SupervisorEquipe";
+import SupervisorPonto from "./pages/supervisor/SupervisorPonto";
 import SupervisorLayout from "./pages/supervisor/SupervisorLayout";
 import PromotorHome from "./pages/promotor/PromotorHome";
 import PromotorAgenda from "./pages/promotor/PromotorAgenda";
@@ -417,6 +419,8 @@ const App = () => (
             <Route path="/supervisor/agenda" element={<SupervisorAgenda />} />
             <Route path="/supervisor/rotas" element={<SupervisorRotas />} />
             <Route path="/supervisor/mapa" element={<SupervisorMapa />} />
+            <Route path="/supervisor/equipe" element={<SupervisorEquipe />} />
+            <Route path="/supervisor/ponto" element={<SupervisorPonto />} />
             <Route path="/promotor/home" element={<PromotorHome />} />
             <Route path="/promotor/agenda" element={<PromotorAgenda />} />
             <Route path="/promotor/rota/:id" element={<PromotorRota />} />

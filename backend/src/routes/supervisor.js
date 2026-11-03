@@ -259,4 +259,76 @@ router.get('/pdvs', authenticateSupervisor, async (req, res) => {
   }
 });
 
+// Team (subordinates) for supervisor app
+router.get('/team', authenticateSupervisor, async (req, res) => {
+  try {
+    const tablesCheck = await query(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name IN ('location_tracking', 'merch_routes')`
+    );
+    const existingTables = new Set(tablesCheck.rows.map(r => r.table_name));
+    let sql = `SELECT e.id, e.full_name, e.position, e.photo_url, e.worker_profile, e.work_schedule, e.status, e.phone`;
+    if (existingTables.has('location_tracking')) {
+      sql += `,
+              lt.latitude as last_latitude, lt.longitude as last_longitude,
+              lt.is_moving, lt.battery_level, lt.recorded_at as last_location_at,
+              CASE WHEN lt.recorded_at > NOW() - interval '10 minutes' THEN 'online' ELSE 'offline' END as live_status`;
+    } else {
+      sql += `, NULL as last_latitude, NULL as last_longitude, NULL as is_moving, NULL as battery_level, NULL as last_location_at, 'offline' as live_status`;
+    }
+    if (existingTables.has('merch_routes')) {
+      sql += `, (SELECT COUNT(*) FROM merch_routes mr WHERE mr.promoter_id = e.id AND mr.visit_date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date) as today_routes_count`;
+    } else {
+      sql += `, 0 as today_routes_count`;
+    }
+    sql += ` FROM employees e`;
+    if (existingTables.has('location_tracking')) {
+      sql += ` LEFT JOIN LATERAL (
+         SELECT latitude, longitude, is_moving, battery_level, recorded_at
+         FROM location_tracking WHERE employee_id = e.id ORDER BY recorded_at DESC LIMIT 1
+       ) lt ON true`;
+    }
+    sql += ` WHERE e.organization_id = $1 AND (e.direct_manager_id = $2 OR e.supervisor_id = $2) AND e.status = 'ativo'
+       ORDER BY e.full_name`;
+    const result = await query(sql, [req.organizationId, req.employeeId]);
+    res.json(result.rows);
+  } catch (err) {
+    logError('supervisor.team', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Punches of the team (time_punches of subordinates)
+router.get('/team/punches', authenticateSupervisor, async (req, res) => {
+  try {
+    const { employee_id, date } = req.query;
+    const subs = await query(
+      `SELECT id, full_name FROM employees WHERE organization_id=$1 AND (direct_manager_id=$2 OR supervisor_id=$2) AND status='ativo'`,
+      [req.organizationId, req.employeeId]
+    );
+    const subIds = subs.rows.map(r => r.id);
+    if (!subIds.length) return res.json([]);
+    const names = new Map(subs.rows.map(r => [r.id, r.full_name]));
+    let allowed = subIds;
+    if (employee_id) {
+      if (!subIds.includes(employee_id)) return res.status(403).json({ error: 'Promotor não é liderado' });
+      allowed = [employee_id];
+    }
+    let sql = `SELECT tp.*, p.name as pdv_name FROM time_punches tp LEFT JOIN pdvs p ON p.id = tp.pdv_id WHERE tp.employee_id = ANY($1)`;
+    const params = [allowed];
+    let idx = 2;
+    if (date) { sql += ` AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $${idx++}`; params.push(date); }
+    else {
+      const days = parseInt(req.query.days || '7', 10);
+      sql += ` AND tp.punched_at >= NOW() - ($${idx++} || ' days')::interval`; params.push(String(Math.min(Math.max(days, 1), 31)));
+    }
+    sql += ` ORDER BY tp.punched_at DESC LIMIT 500`;
+    const result = await query(sql, params);
+    res.json(result.rows.map(r => ({ ...r, employee_name: names.get(r.employee_id) || null })));
+  } catch (err) {
+    logError('supervisor.team.punches', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

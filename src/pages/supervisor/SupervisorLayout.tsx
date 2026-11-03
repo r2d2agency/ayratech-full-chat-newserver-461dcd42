@@ -105,7 +105,7 @@ function SupervisorLayoutInner({ children }: SupervisorLayoutProps) {
     { path: '/supervisor/rotas', icon: Route, label: 'Rotas' },
     { path: '/supervisor/agenda', icon: Clock, label: 'Agenda' },
     { path: '/supervisor/mapa', icon: MapPin, label: 'Mapa' },
-    { path: '/promotor/equipe', icon: Users, label: 'Equipe' },
+    { path: '/supervisor/equipe', icon: Users, label: 'Equipe' },
   ];
 
   const isLoginPage = location.pathname.includes('/login') || location.pathname.includes('/trocar-senha');
