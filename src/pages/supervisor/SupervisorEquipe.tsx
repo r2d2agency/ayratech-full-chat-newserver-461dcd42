@@ -18,8 +18,9 @@ import { useUpload } from "@/hooks/use-upload";
 import { SupervisorLayout } from "./SupervisorLayout";
 import { LocalImage } from "@/components/promotor/LocalImage";
 import {
-  Users, MapPin, Bell, Send, FileText, ChevronRight,
+  Users, Bell, Send, FileText, ChevronRight,
   Loader2, Check, X, Search, Calendar, Navigation, ShieldAlert,
+  MapPin,
 } from "lucide-react";
 import { format } from "date-fns";
 
