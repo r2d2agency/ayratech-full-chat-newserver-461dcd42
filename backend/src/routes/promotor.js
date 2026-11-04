@@ -1282,18 +1282,34 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
     // Use Brazil/Sao Paulo timezone for "now"
     const punchedAt = is_offline && offline_local_time ? new Date(offline_local_time) : nowBr;
 
-    const result = await query(
-      `INSERT INTO time_punches (
-        organization_id, employee_id, punch_type, punched_at, latitude, longitude, accuracy_meters, 
-        pdv_id, distance_from_pdv, geo_status, device_info, ip_address, is_offline, 
-        offline_local_time, sync_status, justification, adjustment_reason
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, 'Live BR Time Fix') RETURNING *`,
-      [req.organizationId, req.employeeId, punch_type, punchedAt,
-        latitude, longitude, accuracy_meters, pdv_id || null, distance, geo_status,
-        req.headers['user-agent'], req.ip, is_offline || false, offline_local_time || null,
-        'synced', justification || null]
-    );
+    // Idempotency: if local_id provided and already synced, return existing
+    if (local_id) {
+      try {
+        const existingByLocal = await query(
+          `SELECT tp.* FROM offline_sync_queue osq
+           JOIN time_punches tp ON tp.id = osq.server_id
+           WHERE osq.employee_id = $1 AND osq.local_id = $2 AND osq.action_type = 'time_punch' AND osq.server_id IS NOT NULL
+           LIMIT 1`,
+          [req.employeeId, local_id]
+        );
+        if (existingByLocal.rows.length > 0) {
+          return res.json({ ...existingByLocal.rows[0], is_late: lateMinutes > 0, late_minutes: lateMinutes, schedule: { start: scheduleStart, end: scheduleEnd }, schedule_source: scheduleSource, duplicate: true });
+        }
+      } catch (e) {}
+    }
+
+    // Prevent duplicate punch of same type within last 15 seconds
+    try {
+      const recent = await query(
+        `SELECT * FROM time_punches WHERE employee_id = $1 AND punch_type = $2 AND punched_at >= (NOW() - INTERVAL '15 seconds') ORDER BY punched_at DESC LIMIT 1`,
+        [req.employeeId, punch_type]
+      );
+      if (recent.rows.length > 0) {
+        return res.json({ ...recent.rows[0], is_late: lateMinutes > 0, late_minutes: lateMinutes, schedule: { start: scheduleStart, end: scheduleEnd }, schedule_source: scheduleSource, duplicate: true });
+      }
+    } catch (e) {}
+
+    
 
     if (geo_status === 'fora_area' || geo_status === 'excecao') {
       await query(
