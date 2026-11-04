@@ -45,6 +45,7 @@ export default function SupervisorRotas() {
   const [filterStatus, setFilterStatus] = useState('');
   const [editing, setEditing] = useState<any>(null);
   const [editDate, setEditDate] = useState('');
+  const [editTime, setEditTime] = useState('');
   const [editPdv, setEditPdv] = useState('');
   const [supportEmployee, setSupportEmployee] = useState('');
   const [showPhotos, setShowPhotos] = useState<any>(null);
@@ -69,6 +70,7 @@ export default function SupervisorRotas() {
     if (!editing) return;
     try {
       const payload: any = { id: editing.id, visit_date: editDate };
+      if (editTime) payload.scheduled_time = editTime;
       if (editPdv) payload.pdv_id = editPdv;
       await updateRoute.mutateAsync(payload);
       toast.success('Rota atualizada');
@@ -123,7 +125,7 @@ export default function SupervisorRotas() {
 
         <div className="space-y-2">
           {filtered.map((r: any) => (
-            <Card key={r.id} className="cursor-pointer hover:border-primary/40 transition-colors" onClick={() => { setEditing(r); setEditDate(String(r.visit_date).slice(0, 10)); setEditPdv(r.pdv_id || ''); }}>
+            <Card key={r.id} className="cursor-pointer hover:border-primary/40 transition-colors" onClick={() => { setEditing(r); setEditDate(String(r.visit_date).slice(0, 10)); setEditTime(r.scheduled_time ? String(r.scheduled_time).slice(0,5) : ''); setEditPdv(r.pdv_id || ''); }}>
               <CardContent className="p-3 space-y-1">
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-sm">{r.pdv_name || 'PDV'}</span>
@@ -143,7 +145,7 @@ export default function SupervisorRotas() {
           {filtered.length === 0 && !isLoading && <p className="text-sm text-muted-foreground text-center py-8">Nenhuma rota</p>}
         </div>
 
-        <Dialog open={!!editing} onOpenChange={(o) => { if (!o) { setEditing(null); setSupportEmployee(''); } }}>
+        <Dialog open={!!editing} onOpenChange={(o) => { if (!o) { setEditing(null); setSupportEmployee(''); setEditTime(''); } }}>
           <DialogContent className="max-w-sm">
             <DialogHeader><DialogTitle>Ajustar rota</DialogTitle></DialogHeader>
             {editing && (
@@ -151,6 +153,10 @@ export default function SupervisorRotas() {
                 <div>
                   <Label>Data da visita</Label>
                   <Input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} />
+                </div>
+                <div>
+                  <Label>Horário agendado</Label>
+                  <Input type="time" value={editTime} onChange={(e) => setEditTime(e.target.value)} />
                 </div>
                 <div>
                   <Label>PDV</Label>
