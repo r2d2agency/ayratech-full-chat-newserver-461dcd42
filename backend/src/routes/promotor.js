@@ -1318,7 +1318,6 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
       } catch (e) {}
     }
 
-    const punchedAt = is_offline && offline_local_time ? new Date(offline_local_time) : nowBr;
     const result = await query(
       `INSERT INTO time_punches (
         organization_id, employee_id, punch_type, punched_at, latitude, longitude, accuracy_meters,
