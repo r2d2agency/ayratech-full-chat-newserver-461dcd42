@@ -1309,17 +1309,28 @@ router.post('/punch', authenticatePromotor, async (req, res) => {
       }
     } catch (e) {}
 
-    
-
     if (geo_status === 'fora_area' || geo_status === 'excecao') {
-      await query(
-        `INSERT INTO time_alerts (organization_id, employee_id, alert_type, alert_date, description) VALUES ($1,$2,'fora_pdv',$3,$4)`,
-        // Dia civil de Brasilia: `toISOString()` e UTC e, entre 21:00 e 23:59,
-        // jogava o alerta do ponto de hoje para o dia seguinte (o mesmo atraso
-        // de um dia que aparecia no consolidado/monitor).
-        [req.organizationId, req.employeeId, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()), `Ponto registrado ${Math.round(distance)}m do PDV (${geo_status})`]
-      );
+      try {
+        await query(
+          `INSERT INTO time_alerts (organization_id, employee_id, alert_type, alert_date, description) VALUES ($1,$2,'fora_pdv',$3,$4)`,
+          [req.organizationId, req.employeeId, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()), `Ponto registrado ${Math.round(distance)}m do PDV (${geo_status})`]
+        );
+      } catch (e) {}
     }
+
+    const punchedAt = is_offline && offline_local_time ? new Date(offline_local_time) : nowBr;
+    const result = await query(
+      `INSERT INTO time_punches (
+        organization_id, employee_id, punch_type, punched_at, latitude, longitude, accuracy_meters,
+        pdv_id, distance_from_pdv, geo_status, device_info, ip_address, is_offline,
+        offline_local_time, sync_status, justification, adjustment_reason
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, 'Live BR Time Fix') RETURNING *`,
+      [req.organizationId, req.employeeId, punch_type, punchedAt,
+        latitude, longitude, accuracy_meters, pdv_id || null, distance, geo_status,
+        req.headers['user-agent'], req.ip, is_offline || false, offline_local_time || null,
+        'synced', justification || null]
+    );
 
     res.json({
       ...result.rows[0],
