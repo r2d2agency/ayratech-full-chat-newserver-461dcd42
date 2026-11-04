@@ -1,13 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { SupervisorLayout } from './SupervisorLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, MapPin, Navigation, Clock, User, Store } from 'lucide-react';
+import { Loader2, MapPin, Navigation, Clock, User, Store, Users, Route } from 'lucide-react';
 import { useSupervisorRoutes } from '@/hooks/use-supervisor';
 import { useSupervisorTeam } from '@/hooks/use-supervisor';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 const STATUS_COLORS: Record<string, string> = {
   online: 'bg-green-500/20 text-green-700',
@@ -20,10 +22,86 @@ function isRecent(ts: any) {
   return !isNaN(d.getTime()) && (Date.now() - d.getTime()) < 15 * 60 * 1000;
 }
 
+const createPromoterIcon = (online: boolean) =>
+  L.divIcon({
+    className: 'custom-marker',
+    html: `<div style="
+      background-color: ${online ? '#22c55e' : '#9ca3af'};
+      width: 28px;
+      height: 28px;
+      border-radius: 50% 50% 50% 0;
+      border: 3px solid white;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      transform: rotate(-45deg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    "><div style="width: 10px; height: 10px; background: white; border-radius: 50%; transform: rotate(45deg);"></div></div>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 28],
+    popupAnchor: [0, -28],
+  });
+
+function PromoterMap({ team }: { team: any[] }) {
+  const mapRef = useRef<L.Map | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const markersRef = useRef<L.Marker[]>([]);
+
+  const promotersWithLoc = useMemo(
+    () => team.filter((p: any) => p.last_latitude && p.last_longitude),
+    [team]
+  );
+
+  useEffect(() => {
+    if (!containerRef.current || mapRef.current) return;
+    mapRef.current = L.map(containerRef.current).setView(promotersWithLoc.length ? [Number(promotersWithLoc[0].last_latitude), Number(promotersWithLoc[0].last_longitude)] : [-14.235, -51.9253], promotersWithLoc.length ? 12 : 4);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap',
+    }).addTo(mapRef.current);
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!mapRef.current) return;
+    markersRef.current.forEach((m) => m.remove());
+    markersRef.current = [];
+
+    promotersWithLoc.forEach((p: any) => {
+      const recent = p.last_location_at ? (Date.now() - new Date(p.last_location_at).getTime()) < 15 * 60 * 1000 : false;
+      const online = p.live_status === 'online' || recent;
+      const icon = createPromoterIcon(online);
+      const marker = L.marker([Number(p.last_latitude), Number(p.last_longitude)], { icon }).addTo(mapRef.current!);
+      const popup = `
+        <div style="min-width: 180px;">
+          <p style="font-weight: 600; margin: 0;">${p.full_name}</p>
+          <p style="font-size: 12px; color: #666; margin: 2px 0;">${p.position || 'Promotor'}</p>
+          <p style="font-size: 12px; margin: 4px 0;">${online ? '🟢 Online' : '⚪ Offline'}</p>
+          ${p.last_pdv_name ? `<p style="font-size: 12px; color: #666; margin: 2px 0;">Último PDV: ${p.last_pdv_name}</p>` : ''}
+          ${p.last_location_at ? `<p style="font-size: 11px; color: #888; margin: 2px 0;">${new Date(p.last_location_at).toLocaleString('pt-BR')}</p>` : ''}
+        </div>
+      `;
+      marker.bindPopup(popup);
+      markersRef.current.push(marker);
+    });
+
+    if (promotersWithLoc.length > 0) {
+      const group = L.featureGroup(markersRef.current);
+      mapRef.current.fitBounds(group.getBounds().pad(0.2));
+    }
+  }, [promotersWithLoc]);
+
+  return <div ref={containerRef} className="w-full h-[400px] rounded-lg overflow-hidden" />;
+}
+
 export default function SupervisorMapa() {
   const { data: team = [], isLoading: loadingTeam } = useSupervisorTeam();
   const { data: routes = [], isLoading: loadingRoutes } = useSupervisorRoutes({});
-  const [tab, setTab] = useState<'pdvs' | 'location'>('pdvs');
+  const [tab, setTab] = useState<'pdvs' | 'location' | 'map'>('pdvs');
   const [filterPromoter, setFilterPromoter] = useState('all');
 
   // PDVs agrupados por promotor
@@ -68,8 +146,11 @@ export default function SupervisorMapa() {
           <Button variant={tab === 'pdvs' ? 'default' : 'outline'} size="sm" onClick={() => setTab('pdvs')} className="flex-1">
             <Store className="h-4 w-4 mr-1" /> PDVs por promotor
           </Button>
+          <Button variant={tab === 'map' ? 'default' : 'outline'} size="sm" onClick={() => setTab('map')} className="flex-1">
+            <MapPin className="h-4 w-4 mr-1" /> Mapa
+          </Button>
           <Button variant={tab === 'location' ? 'default' : 'outline'} size="sm" onClick={() => setTab('location')} className="flex-1">
-            <Navigation className="h-4 w-4 mr-1" /> Localização
+            <Navigation className="h-4 w-4 mr-1" /> Lista
           </Button>
         </div>
 
@@ -128,6 +209,19 @@ export default function SupervisorMapa() {
             ))}
             {pdvsByPromoter.length === 0 && <p className="text-sm text-muted-foreground text-center py-8">Nenhum promotor</p>}
           </div>
+        ) : tab === 'map' ? (
+          <Card>
+            <CardContent className="p-0">
+              {(team as any[]).some((p: any) => p.last_latitude && p.last_longitude) ? (
+                <PromoterMap team={team as any[]} />
+              ) : (
+                <div className="h-[400px] flex flex-col items-center justify-center text-muted-foreground">
+                  <MapPin className="h-12 w-12 mb-4 opacity-30" />
+                  <p className="text-sm">Nenhum promotor com localização recente</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         ) : (
           <div className="space-y-2">
             {filteredTeam.map((p: any) => {
