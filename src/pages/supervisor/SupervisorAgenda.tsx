@@ -148,7 +148,7 @@ export default function SupervisorAgenda() {
                   ))}
                   {rs.some((r: any) => r.status === 'in_progress') && (
                     <span className="text-[9px] font-bold leading-none">
-                      {Math.round(Math.max(...rs.filter((r: any) => r.status === 'in_progress').map((r: any) => Number(r.progress_pct || 0)))))}%
+                      {Math.round(Math.max(...rs.filter((r: any) => r.status === 'in_progress').map((r: any) => Number(r.progress_pct || 0))))}%
                     </span>
                   )}
                 </div>
