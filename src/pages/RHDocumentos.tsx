@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,9 +13,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { useEmployees } from "@/hooks/use-rh";
-import { useDocumentDeliveries, useSendDocumentDelivery, useInboundDocumentsRH, useDocumentTypes, useSendNotice } from "@/hooks/use-promotor";
+import { useDocumentDeliveries, useSendDocumentDelivery, useInboundDocumentsRH, useDocumentTypes, useSendNotice, useDocumentDeliveryDetail } from "@/hooks/use-promotor";
 import { FileUploadInput } from "@/components/ui/file-upload-input";
-import { FileText, Send, Search, Megaphone, Loader2, Users } from "lucide-react";
+import { FileText, Send, Search, Megaphone, Loader2, Users, Eye, Globe, Monitor, Smartphone, MapPin, Clock, CheckCircle2 } from "lucide-react";
 import { format } from "date-fns";
 
 const STATUS_MAP: Record<string, { label: string; variant: string }> = {
@@ -39,16 +39,38 @@ function parseSafe(val: unknown, mask: string) {
   } catch { return '—'; }
 }
 
+function deviceLabel(ua?: string | null) {
+  if (!ua) return '—';
+  const s = ua.toLowerCase();
+  const device = /ipad|tablet|kindle|silk|playbook/.test(s) ? 'Tablet' : /mobile|android|iphone|ipod|blackberry|opera mini|iemobile/.test(s) ? 'Celular' : 'Computador';
+  let browser = 'Navegador';
+  if (s.includes('edg/')) browser = 'Edge';
+  else if (s.includes('opr/') || s.includes('opera')) browser = 'Opera';
+  else if (s.includes('chrome/')) browser = 'Chrome';
+  else if (s.includes('firefox/')) browser = 'Firefox';
+  else if (s.includes('safari/')) browser = 'Safari';
+  return `${device} • ${browser}`;
+}
+
+function mapsLink(lat?: number | string | null, lng?: number | string | null) {
+  if (lat == null || lng == null || lat === '' || lng === '') return null;
+  const a = Number(lat), b = Number(lng);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return `https://www.google.com/maps?q=${a},${b}`;
+}
+
 export default function RHDocumentos() {
   const [tab, setTab] = useState("enviados");
   const [showSendDialog, setShowSendDialog] = useState(false);
   const [showNoticeDialog, setShowNoticeDialog] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const { data: deliveries } = useDocumentDeliveries({ status: statusFilter || undefined });
   const { data: inboundDocs } = useInboundDocumentsRH();
   const { data: employees } = useEmployees();
   const { data: docTypes } = useDocumentTypes();
+  const { data: detail, isLoading: detailLoading } = useDocumentDeliveryDetail(detailId || undefined);
   const sendDelivery = useSendDocumentDelivery();
   const sendNotice = useSendNotice();
   const { toast } = useToast();
@@ -182,20 +204,26 @@ export default function RHDocumentos() {
                     <TableHead>Enviado em</TableHead>
                     <TableHead>Visualizado</TableHead>
                     <TableHead>Assinado</TableHead>
+                    <TableHead className="w-[120px]">Ações</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredDeliveries.map((d: any) => (
-                    <TableRow key={d.id}>
+                    <TableRow key={d.id} className="cursor-pointer hover:bg-muted/40" onClick={() => setDetailId(d.id)}>
                       <TableCell className="font-medium">{d.title}</TableCell>
                       <TableCell>{d.employee_name}</TableCell>
                       <TableCell><Badge variant={STATUS_MAP[d.status]?.variant as any || 'outline'}>{STATUS_MAP[d.status]?.label || d.status}</Badge></TableCell>
                       <TableCell className="text-xs">{parseSafe(d.sent_at, 'dd/MM/yy HH:mm')}</TableCell>
                       <TableCell className="text-xs">{parseSafe(d.viewed_at, 'dd/MM/yy HH:mm')}</TableCell>
-                      <TableCell className="text-xs">{parseSafe(d.signed_at, 'dd/MM/yy HH:mm')}</TableCell>
+                      <TableCell className="text-xs">{d.signed_at ? parseSafe(d.signed_at, 'dd/MM/yy HH:mm') : <span className="text-muted-foreground">—</span>}</TableCell>
+                      <TableCell>
+                        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={(e) => { e.stopPropagation(); setDetailId(d.id); }}>
+                          <Eye className="h-3.5 w-3.5 mr-1" /> Detalhes
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))}
-                  {filteredDeliveries.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">Nenhum documento encontrado</TableCell></TableRow>}
+                  {filteredDeliveries.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">Nenhum documento encontrado</TableCell></TableRow>}
                 </TableBody>
               </Table>
             </Card>
@@ -360,6 +388,103 @@ export default function RHDocumentos() {
               Enviar Recado
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delivery / Signature Details Dialog */}
+      <Dialog open={!!detailId} onOpenChange={(open) => { if (!open) setDetailId(null); }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><FileText className="h-5 w-5" /> Detalhes do documento</DialogTitle></DialogHeader>
+          {detailLoading ? (
+            <div className="py-10 flex items-center justify-center text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin mr-2" /> Carregando...</div>
+          ) : detail?.delivery ? (() => {
+            const d = detail.delivery;
+            const signed = !!d.signed_at || d.status === 'assinado';
+            const geoUrl = mapsLink(d.geo_lat_at_sign, d.geo_lng_at_sign);
+            return (
+              <div className="space-y-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">{d.title}</p>
+                    <p className="text-sm text-muted-foreground">{d.employee_name} {d.employee_cpf ? `• CPF ${d.employee_cpf}` : ''}</p>
+                  </div>
+                  <Badge variant={STATUS_MAP[d.status]?.variant as any || 'outline'}>{STATUS_MAP[d.status]?.label || d.status}</Badge>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="rounded-lg border p-3 text-sm"><p className="text-xs text-muted-foreground">Enviado em</p><p className="font-medium flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> {parseSafe(d.sent_at, 'dd/MM/yyyy HH:mm:ss')}</p></div>
+                  <div className="rounded-lg border p-3 text-sm"><p className="text-xs text-muted-foreground">Visualizado em</p><p className="font-medium flex items-center gap-1"><Eye className="h-3.5 w-3.5" /> {parseSafe(d.viewed_at, 'dd/MM/yyyy HH:mm:ss')}</p></div>
+                </div>
+
+                <div className="rounded-lg border p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="font-medium flex items-center gap-2">
+                      {signed ? <CheckCircle2 className="h-4 w-4 text-green-600" /> : <Clock className="h-4 w-4 text-muted-foreground" />}
+                      Assinatura
+                    </p>
+                    <Badge variant={signed ? 'default' : 'outline'}>{signed ? 'Assinado' : 'Pendente'}</Badge>
+                  </div>
+                  {signed ? (
+                    <div className="space-y-3 text-sm">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div><p className="text-xs text-muted-foreground">Data e hora da assinatura</p><p className="font-medium">{parseSafe(d.signed_at, 'dd/MM/yyyy HH:mm:ss')}</p></div>
+                        <div><p className="text-xs text-muted-foreground">Nome declarado</p><p className="font-medium">{d.signed_name || d.employee_name || '—'}</p></div>
+                        <div><p className="text-xs text-muted-foreground flex items-center gap-1"><Globe className="h-3.5 w-3.5" /> Endereço IP</p><p className="font-medium font-mono text-xs break-all">{d.ip_at_sign || '—'}</p></div>
+                        <div>
+                          <p className="text-xs text-muted-foreground flex items-center gap-1"><Monitor className="h-3.5 w-3.5" /> Dispositivo / navegador</p>
+                          <p className="font-medium">{deviceLabel(d.device_at_sign)}</p>
+                          {d.device_at_sign && <p className="text-[11px] text-muted-foreground mt-0.5 break-all" title={d.device_at_sign}>{d.device_at_sign}</p>}
+                        </div>
+                        <div className="sm:col-span-2">
+                          <p className="text-xs text-muted-foreground flex items-center gap-1"><MapPin className="h-3.5 w-3.5" /> Geolocalização</p>
+                          {d.geo_lat_at_sign != null && d.geo_lng_at_sign != null ? (
+                            <p className="font-medium">
+                              {Number(d.geo_lat_at_sign).toFixed(6)}, {Number(d.geo_lng_at_sign).toFixed(6)}
+                              {geoUrl && <a href={geoUrl} target="_blank" rel="noreferrer" className="ml-2 text-primary underline text-xs">Ver no mapa</a>}
+                            </p>
+                          ) : <p className="text-muted-foreground">Não informada pelo dispositivo</p>}
+                        </div>
+                      </div>
+                      {d.signature_image && (
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-1">Assinatura capturada</p>
+                          <img src={d.signature_image} alt="Assinatura" className="max-h-28 border rounded bg-white p-1" />
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Este documento ainda não foi assinado pelo colaborador.</p>
+                  )}
+                </div>
+
+                {detail.events?.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="font-medium text-sm">Histórico de eventos</p>
+                    <div className="border rounded-lg divide-y max-h-56 overflow-y-auto">
+                      {detail.events.map((ev: any) => (
+                        <div key={ev.id} className="p-2.5 text-sm flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-medium capitalize">{String(ev.event_type || '').replace(/_/g, ' ')}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {ev.actor_name || (ev.actor_type === 'colaborador' ? d.employee_name : ev.actor_type === 'rh' ? 'RH' : ev.actor_type) || ''}
+                              {ev.ip_address ? ` • IP ${ev.ip_address}` : ''}
+                              {ev.geo_lat != null && ev.geo_lng != null ? ` • ${Number(ev.geo_lat).toFixed(5)}, ${Number(ev.geo_lng).toFixed(5)}` : ''}
+                            </p>
+                            {ev.notes && <p className="text-xs text-muted-foreground mt-0.5">{ev.notes}</p>}
+                          </div>
+                          <span className="text-xs text-muted-foreground whitespace-nowrap">{parseSafe(ev.event_at, 'dd/MM/yy HH:mm:ss')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {d.file_url && (
+                  <Button variant="outline" className="w-full" onClick={() => window.open(d.file_url, '_blank')}>Abrir documento</Button>
+                )}
+              </div>
+            );
+          })() : <p className="text-sm text-muted-foreground py-6 text-center">Não foi possível carregar os detalhes.</p>}
         </DialogContent>
       </Dialog>
     </MainLayout>

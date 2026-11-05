@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { usePromotorDocuments, usePromotorConfirmDocument, usePromotorViewDocument, usePromotorPayslips, usePromotorTimesheets, usePromotorInboundDocuments, usePromotorSendDocument } from "@/hooks/use-promotor";
+import { usePromotorDocuments, usePromotorConfirmDocument, usePromotorViewDocument, usePromotorPayslips, usePromotorTimesheets, usePromotorInboundDocuments, usePromotorSendDocument, usePromotorSignDocument } from "@/hooks/use-promotor";
 import { useUpload } from "@/hooks/use-upload";
 import { PromotorLayout } from "./PromotorLayout";
 import { FileText, Eye, Check, Clock, Loader2, Upload, Camera, Image, Download, Send, CheckCircle2 } from "lucide-react";
@@ -47,8 +47,21 @@ export default function PromotorDocumentos() {
   const confirmDoc = usePromotorConfirmDocument();
   const viewDoc = usePromotorViewDocument();
   const sendDoc = usePromotorSendDocument();
+  const signDoc = usePromotorSignDocument();
   const { uploadFile, isUploading, progress } = useUpload(() => localStorage.getItem('promotor_token'));
   const { toast } = useToast();
+
+  const [signName, setSignName] = useState("");
+  const [geo, setGeo] = useState<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
+
+  const requestGeo = () => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setGeo({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => setGeo({ lat: null, lng: null }),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
 
   // Send form state
   const [category, setCategory] = useState("");
@@ -76,6 +89,26 @@ export default function PromotorDocumentos() {
       setSelectedDoc(null);
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const handleSign = async (id: string) => {
+    try {
+      requestGeo();
+      await signDoc.mutateAsync({
+        id,
+        data: {
+          signature_name: signName || selectedDoc?.employee_name || undefined,
+          latitude: geo.lat,
+          longitude: geo.lng,
+        },
+      });
+      toast({ title: 'Documento assinado com sucesso!' });
+      setSelectedDoc(null);
+      setSignName("");
+      setGeo({ lat: null, lng: null });
+    } catch (err: any) {
+      toast({ title: 'Erro ao assinar', description: err.message, variant: 'destructive' });
     }
   };
 
@@ -374,6 +407,21 @@ export default function PromotorDocumentos() {
                 {confirmDoc.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Check className="h-4 w-4 mr-2" />}
                 Confirmar Recebimento
               </Button>
+            )}
+            {selectedDoc?.requires_signature && !['assinado', 'recusado', 'cancelado', 'expirado'].includes(selectedDoc?.status) && (
+              <div className="space-y-2">
+                <div className="space-y-1">
+                  <Label>Nome para assinatura</Label>
+                  <Input value={signName} onChange={(e) => setSignName(e.target.value)} placeholder={selectedDoc?.employee_name || 'Digite seu nome completo'} />
+                </div>
+                <Button className="w-full" onClick={() => handleSign(selectedDoc.id)} disabled={signDoc.isPending}>
+                  {signDoc.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+                  Assinar Documento
+                </Button>
+                {(geo.lat != null && geo.lng != null) && (
+                  <p className="text-xs text-muted-foreground text-center">Geolocalização capturada</p>
+                )}
+              </div>
             )}
           </div>
         </DialogContent>

@@ -3972,8 +3972,9 @@ ALTER TABLE employee_absences ADD COLUMN IF NOT EXISTS organization_id UUID;
 // ============================================
 const step43PromotorApp = `
 -- PDVs
-CREATE TABLE IF NOT EXISTS pdvs (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, name VARCHAR(255) NOT NULL, client_name VARCHAR(255), cnpj VARCHAR(20), address TEXT, zip_code VARCHAR(10), city VARCHAR(100), state VARCHAR(2), neighborhood VARCHAR(100), latitude NUMERIC(10,7), longitude NUMERIC(10,7), radius_meters INTEGER DEFAULT 200, supervisor_id UUID, active BOOLEAN DEFAULT true, notes TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS pdvs (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, name VARCHAR(255) NOT NULL, client_name VARCHAR(255), cnpj VARCHAR(20), address TEXT, zip_code VARCHAR(10), city VARCHAR(100), state VARCHAR(2), neighborhood VARCHAR(100), latitude NUMERIC(10,7), longitude NUMERIC(10,7), radius_meters INTEGER DEFAULT 200, supervisor_id UUID, active BOOLEAN DEFAULT true, notes TEXT, schedule_id UUID REFERENCES rh_schedules(id) ON DELETE SET NULL, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());
 DO $$ BEGIN ALTER TABLE pdvs ADD COLUMN IF NOT EXISTS type VARCHAR(20) DEFAULT 'pdv'; EXCEPTION WHEN duplicate_column THEN null; END $$;
+DO $$ BEGIN ALTER TABLE pdvs ADD COLUMN IF NOT EXISTS schedule_id UUID REFERENCES rh_schedules(id) ON DELETE SET NULL; EXCEPTION WHEN duplicate_column THEN null; END $$;
 CREATE INDEX IF NOT EXISTS idx_pdvs_org ON pdvs(organization_id);
 
 -- Collaborator PDVs
@@ -4023,6 +4024,10 @@ CREATE INDEX IF NOT EXISTS idx_doc_deliveries_status ON rh_document_deliveries(s
 
 -- Delivery Events
 CREATE TABLE IF NOT EXISTS rh_document_delivery_events (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), delivery_id UUID NOT NULL REFERENCES rh_document_deliveries(id) ON DELETE CASCADE, event_type VARCHAR(30) NOT NULL, event_at TIMESTAMPTZ DEFAULT NOW(), actor_type VARCHAR(20), actor_id UUID, ip_address VARCHAR(45), device_info TEXT, notes TEXT);
+DO $$ BEGIN ALTER TABLE rh_document_deliveries ADD COLUMN IF NOT EXISTS signed_name VARCHAR(255); EXCEPTION WHEN duplicate_column THEN null; END $$;
+DO $$ BEGIN ALTER TABLE rh_document_deliveries ADD COLUMN IF NOT EXISTS signature_image TEXT; EXCEPTION WHEN duplicate_column THEN null; END $$;
+DO $$ BEGIN ALTER TABLE rh_document_delivery_events ADD COLUMN IF NOT EXISTS geo_lat NUMERIC(10,7); EXCEPTION WHEN duplicate_column THEN null; END $$;
+DO $$ BEGIN ALTER TABLE rh_document_delivery_events ADD COLUMN IF NOT EXISTS geo_lng NUMERIC(10,7); EXCEPTION WHEN duplicate_column THEN null; END $$;
 
 -- Inbound Documents
 CREATE TABLE IF NOT EXISTS rh_inbound_documents (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE, employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE, category VARCHAR(50) NOT NULL, title VARCHAR(255), file_url TEXT, observation TEXT, status VARCHAR(20) DEFAULT 'recebido', read_by UUID, read_at TIMESTAMPTZ, processed_by UUID, processed_at TIMESTAMPTZ, process_notes TEXT, ip_address VARCHAR(45), device_info TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW());

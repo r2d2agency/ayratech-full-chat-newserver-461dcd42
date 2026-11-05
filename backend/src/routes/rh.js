@@ -3040,6 +3040,7 @@ async function ensureRegionsInfrastructure() {
       // Ensure geo columns
       try { await query(`ALTER TABLE pdvs ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION`); } catch (_e) { /* */ }
       try { await query(`ALTER TABLE pdvs ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION`); } catch (_e) { /* */ }
+      try { await query(`ALTER TABLE pdvs ADD COLUMN IF NOT EXISTS schedule_id UUID REFERENCES rh_schedules(id) ON DELETE SET NULL`); } catch (_e) { /* */ }
       try { await query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS home_latitude NUMERIC(10,7)`); } catch (_e) { /* */ }
       try { await query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS home_longitude NUMERIC(10,7)`); } catch (_e) { /* */ }
     })().catch(err => { regionsInfraPromise = null; throw err; });

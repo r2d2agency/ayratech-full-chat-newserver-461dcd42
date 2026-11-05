@@ -1557,6 +1557,64 @@ router.post('/documents/:id/refuse', authenticatePromotor, async (req, res) => {
 });
 
 // =============================================
+// PROMOTOR: ASSINAR DOCUMENTO (com IP, dispositivo e geolocalização)
+// =============================================
+async function ensureDeliverySignatureColumns() {
+  const stmts = [
+    `ALTER TABLE rh_document_deliveries ADD COLUMN IF NOT EXISTS signed_name VARCHAR(255)`,
+    `ALTER TABLE rh_document_deliveries ADD COLUMN IF NOT EXISTS signature_image TEXT`,
+    `ALTER TABLE rh_document_deliveries ADD COLUMN IF NOT EXISTS signed_at TIMESTAMPTZ`,
+    `ALTER TABLE rh_document_deliveries ADD COLUMN IF NOT EXISTS ip_at_sign VARCHAR(45)`,
+    `ALTER TABLE rh_document_deliveries ADD COLUMN IF NOT EXISTS device_at_sign TEXT`,
+    `ALTER TABLE rh_document_deliveries ADD COLUMN IF NOT EXISTS geo_lat_at_sign NUMERIC(10,7)`,
+    `ALTER TABLE rh_document_deliveries ADD COLUMN IF NOT EXISTS geo_lng_at_sign NUMERIC(10,7)`,
+    `ALTER TABLE rh_document_delivery_events ADD COLUMN IF NOT EXISTS geo_lat NUMERIC(10,7)`,
+    `ALTER TABLE rh_document_delivery_events ADD COLUMN IF NOT EXISTS geo_lng NUMERIC(10,7)`,
+  ];
+  for (const s of stmts) { try { await query(s); } catch (_e) { /* coluna já existe */ } }
+}
+
+router.post('/documents/:id/sign', authenticatePromotor, async (req, res) => {
+  try {
+    await ensureDeliverySignatureColumns();
+    const { id } = req.params;
+    const { signature_name, signature_image, latitude, longitude } = req.body || {};
+    const existing = await query(`SELECT * FROM rh_document_deliveries WHERE id = $1 AND employee_id = $2`, [id, req.employeeId]);
+    if (!existing.rows[0]) return res.status(404).json({ error: 'Documento não encontrado' });
+    const doc = existing.rows[0];
+    if (doc.status === 'assinado') return res.status(400).json({ error: 'Documento já assinado' });
+    if (['recusado', 'cancelado'].includes(doc.status)) return res.status(400).json({ error: 'Documento não está disponível para assinatura' });
+    const lat = latitude != null && latitude !== '' ? Number(latitude) : null;
+    const lng = longitude != null && longitude !== '' ? Number(longitude) : null;
+    const result = await query(
+      `UPDATE rh_document_deliveries
+       SET status = 'assinado', signed_at = NOW(),
+           signed_name = COALESCE($2, signed_name),
+           signature_image = COALESCE($3, signature_image),
+           ip_at_sign = $4, device_at_sign = $5,
+           geo_lat_at_sign = COALESCE($6, geo_lat_at_sign),
+           geo_lng_at_sign = COALESCE($7, geo_lng_at_sign),
+           viewed_at = COALESCE(viewed_at, NOW()),
+           updated_at = NOW()
+       WHERE id = $1 RETURNING *`,
+      [id, signature_name || null, signature_image || null, req.ip || null, req.headers['user-agent'] || null,
+        Number.isFinite(lat) ? lat : null, Number.isFinite(lng) ? lng : null]
+    );
+    await query(
+      `INSERT INTO rh_document_delivery_events (delivery_id, event_type, actor_type, actor_id, ip_address, device_info, geo_lat, geo_lng, notes)
+       VALUES ($1, 'assinado', 'colaborador', $2, $3, $4, $5, $6, $7)`,
+      [id, req.employeeId, req.ip || null, req.headers['user-agent'] || null,
+        Number.isFinite(lat) ? lat : null, Number.isFinite(lng) ? lng : null,
+        signature_name ? `Assinado por ${signature_name}` : 'Assinatura registrada no app']
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    logError('promotor.document-sign', err);
+    res.status(500).json({ error: 'Erro ao assinar documento' });
+  }
+});
+
+// =============================================
 // PROMOTOR: ENVIAR DOCUMENTO AO RH (upload reverso)
 // =============================================
 router.post('/inbound-documents', authenticatePromotor, async (req, res) => {
@@ -2204,6 +2262,34 @@ router.get('/rh/document-delivery-events/:deliveryId', async (req, res) => {
     const result = await query(`SELECT * FROM rh_document_delivery_events WHERE delivery_id = $1 ORDER BY event_at`, [req.params.deliveryId]);
     res.json(result.rows);
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
+});
+
+// =============================================
+// RH: DETALHES DA ENTREGA (inclui dados da assinatura)
+// =============================================
+router.get('/rh/document-deliveries/:id', async (req, res) => {
+  try {
+    await ensureDeliverySignatureColumns();
+    const { rows } = await query(
+      `SELECT dd.*, e.full_name as employee_name, e.cpf as employee_cpf, e.email as employee_email,
+              dt.name as type_name, u.name as sent_by_name
+       FROM rh_document_deliveries dd
+       JOIN employees e ON e.id = dd.employee_id
+       LEFT JOIN rh_document_types dt ON dt.id = dd.document_type_id
+       LEFT JOIN users u ON u.id = dd.sent_by
+       WHERE dd.id = $1`,
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Documento não encontrado' });
+    const events = (await query(
+      `SELECT ev.*, u.name as actor_name FROM rh_document_delivery_events ev
+       LEFT JOIN users u ON u.id = ev.actor_id
+       WHERE ev.delivery_id = $1 ORDER BY ev.event_at`, [req.params.id])).rows;
+    res.json({ delivery: rows[0], events });
+  } catch (err) {
+    logError('promotor.delivery-detail', err);
+    res.status(500).json({ error: 'Erro ao carregar detalhes' });
+  }
 });
 
 // =============================================

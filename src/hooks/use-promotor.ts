@@ -190,6 +190,15 @@ export function usePromotorRefuseDocument() {
   });
 }
 
+export function usePromotorSignDocument() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: { signature_name?: string; signature_image?: string; latitude?: number | null; longitude?: number | null } }) =>
+      promotorApi<any>(`/api/promotor/documents/${id}/sign`, { method: 'POST', body: data }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['promotor-documents'] }),
+  });
+}
+
 export function usePromotorInboundDocuments() {
   return useQuery({
     queryKey: ['promotor-inbound-docs'],
@@ -311,6 +320,23 @@ export function useSendDocumentDelivery() {
   return useMutation({
     mutationFn: (data: any) => api<any>('/api/promotor/rh/document-deliveries', { method: 'POST', body: data }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['rh-doc-deliveries'] }),
+  });
+}
+
+export function useDocumentDeliveryDetail(id?: string) {
+  return useQuery({
+    queryKey: ['rh-doc-delivery-detail', id],
+    queryFn: () => api<{ delivery: any; events: any[] }>(`/api/promotor/rh/document-deliveries/${id}`),
+    enabled: !!id,
+  });
+}
+
+export function useDocumentDeliveryEvents(deliveryId?: string) {
+  const params = deliveryId ? `?delivery_id=${deliveryId}` : '';
+  return useQuery({
+    queryKey: ['rh-doc-delivery-events', deliveryId],
+    queryFn: () => api<any[]>(`/api/promotor/rh/document-delivery-events/${deliveryId}`),
+    enabled: !!deliveryId,
   });
 }
 
