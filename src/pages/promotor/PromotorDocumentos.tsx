@@ -398,30 +398,47 @@ export default function PromotorDocumentos() {
               <span>Enviado em {selectedDoc?.sent_at ? format(new Date(selectedDoc.sent_at), 'dd/MM/yyyy HH:mm') : '-'}</span>
             </div>
             {selectedDoc?.file_url && (
-              <Button variant="outline" className="w-full" onClick={() => window.open(selectedDoc.file_url, '_blank')}>
-                <Eye className="h-4 w-4 mr-2" /> Visualizar Documento
-              </Button>
-            )}
-            {selectedDoc?.requires_confirmation && ['enviado', 'entregue', 'visualizado'].includes(selectedDoc?.status) && (
-              <Button className="w-full" onClick={() => handleConfirm(selectedDoc.id)} disabled={confirmDoc.isPending}>
-                {confirmDoc.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Check className="h-4 w-4 mr-2" />}
-                Confirmar Recebimento
-              </Button>
+              (() => {
+                const needsAction =
+                  (selectedDoc?.requires_signature && !['assinado'].includes(selectedDoc?.status)) ||
+                  (!selectedDoc?.requires_signature && selectedDoc?.requires_confirmation && !['confirmado', 'assinado'].includes(selectedDoc?.status));
+                if (needsAction) {
+                  return (
+                    <p className="text-xs text-center text-muted-foreground">
+                      Visualize o arquivo apenas após confirmar/assinar o recebimento.
+                    </p>
+                  );
+                }
+                return (
+                  <Button variant="outline" className="w-full" onClick={() => window.open(selectedDoc.file_url, '_blank')}>
+                    <Eye className="h-4 w-4 mr-2" /> Visualizar Documento
+                  </Button>
+                );
+              })()
             )}
             {selectedDoc?.requires_signature && !['assinado', 'recusado', 'cancelado', 'expirado'].includes(selectedDoc?.status) && (
               <div className="space-y-2">
+                <p className="text-xs text-muted-foreground text-center">
+                  Este documento exige assinatura. Assine abaixo para confirmar o recebimento e liberar a visualização.
+                </p>
                 <div className="space-y-1">
                   <Label>Nome para assinatura</Label>
                   <Input value={signName} onChange={(e) => setSignName(e.target.value)} placeholder={selectedDoc?.employee_name || 'Digite seu nome completo'} />
                 </div>
                 <Button className="w-full" onClick={() => handleSign(selectedDoc.id)} disabled={signDoc.isPending}>
                   {signDoc.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-                  Assinar Documento
+                  Assinar e Confirmar Recebimento
                 </Button>
                 {(geo.lat != null && geo.lng != null) && (
                   <p className="text-xs text-muted-foreground text-center">Geolocalização capturada</p>
                 )}
               </div>
+            )}
+            {!selectedDoc?.requires_signature && selectedDoc?.requires_confirmation && !['confirmado', 'assinado'].includes(selectedDoc?.status) && (
+              <Button className="w-full" onClick={() => handleConfirm(selectedDoc.id)} disabled={confirmDoc.isPending}>
+                {confirmDoc.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Check className="h-4 w-4 mr-2" />}
+                Confirmar Recebimento
+              </Button>
             )}
           </div>
         </DialogContent>
