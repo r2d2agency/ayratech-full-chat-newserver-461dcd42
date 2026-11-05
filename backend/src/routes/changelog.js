@@ -186,6 +186,7 @@ const SEED_ENTRIES = [
     problem_text: 'O painel "Qualidade de Foto" em Configurações salvava as alterações num endereço que não existia no servidor — o carregamento sempre mostrava os valores padrão de fábrica, e salvar retornava erro. Na prática, diminuir o brilho mínimo (para permitir fotos em locais escuros do supermercado) ou ajustar a tolerância de borrado nunca tinha efeito real no app do promotor.',
     solution_text: 'Corrigido para usar o endereço correto, o mesmo que o app do promotor já lia. Os ajustes salvos em Configurações → Geral → Qualidade de Foto agora realmente valem para as fotos tiradas pelos promotores.',
     ref: '3fa0709d',
+  },
   {
     entry_date: '2026-11-05', type: 'bug', area: 'Ponto e escala',
     title: 'Ponto duplicado (saída de intervalo registrada ~25 vezes)',
