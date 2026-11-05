@@ -94,7 +94,7 @@ async function ensureTables() {
       employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
       termination_date DATE NOT NULL,
       reason_code VARCHAR(30) NOT NULL,
-      -- sem_justa_causa, justa_causa, pedido_colaborador, acordo_484a, fim_experiencia, aposentadoria, morte, pj_encerramento
+      -- sem_justa_causa, justa_causa, pedido_colaborador, acordo_484a, fim_experiencia, fim_exp_colaborador, fim_exp_empresa, aposentadoria, morte, pj_encerramento
       notice_type VARCHAR(20) DEFAULT 'indenizado', -- trabalhado, indenizado, dispensado
       notice_start DATE,
       notice_end DATE,
@@ -494,7 +494,7 @@ router.post('/termination', async (req, res) => {
     await query(`UPDATE collaborator_app_access SET access_status='desligado', updated_at=NOW() WHERE employee_id=$1`, [b.employee_id]).catch(()=>{});
 
     // Enfileira S-2299
-    const reason_code_esocial_map = { sem_justa_causa: '02', justa_causa: '03', pedido_colaborador: '07', acordo_484a: '11', fim_experiencia: '02', aposentadoria: '09', morte: '17', pj_encerramento: '05' };
+    const reason_code_esocial_map = { sem_justa_causa: '02', justa_causa: '03', pedido_colaborador: '07', acordo_484a: '11', fim_experiencia: '02', fim_exp_colaborador: '07', fim_exp_empresa: '02', aposentadoria: '09', morte: '17', pj_encerramento: '05' };
     const event = await enqueueEsocialEvent({
       orgId, employeeId: b.employee_id, eventType: 'S-2299',
       payload: {

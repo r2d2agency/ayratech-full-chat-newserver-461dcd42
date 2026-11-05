@@ -20,11 +20,16 @@ const REASONS = [
   { code: "pedido_colaborador", label: "Pedido do colaborador", esocial: "07" },
   { code: "acordo_484a", label: "Acordo (art. 484-A, Lei 13.467)", esocial: "11" },
   { code: "fim_experiencia", label: "Fim de contrato de experiência", esocial: "02" },
+  { code: "fim_exp_colaborador", label: "ENCERRAMENTO DO CONTRATO DE EXPERIÊNCIA PELO COLABORADOR", esocial: "07" },
+  { code: "fim_exp_empresa", label: "ENCERRAMENTO DO CONTRATO DE EXPERIÊNCIA PELA EMPRESA", esocial: "02" },
   { code: "justa_causa", label: "Justa causa", esocial: "03" },
   { code: "aposentadoria", label: "Aposentadoria", esocial: "09" },
   { code: "morte", label: "Falecimento", esocial: "17" },
   { code: "pj_encerramento", label: "Encerramento contrato PJ", esocial: "05" },
 ];
+
+// Modalidades sem cumprimento de aviso prévio
+const NO_NOTICE_REASONS = ["fim_exp_colaborador", "fim_exp_empresa"];
 
 const DEFAULT_CHECKLIST = [
   { key: "crachá", label: "Crachá / ID funcional", checked: false },
@@ -82,7 +87,9 @@ export default function RHDemissao() {
     }, {
       onSuccess: (r) => {
         setCalc(r);
-        setForm((f: any) => ({ ...f, ...r }));
+        setForm((f: any) => NO_NOTICE_REASONS.includes(f.reason_code)
+          ? ({ ...f, ...r, notice_type: "dispensado", notice_start: "", notice_end: "", notice_indemnity: 0 })
+          : ({ ...f, ...r }));
       },
     });
   }, [step, form.reason_code, form.notice_type, form.termination_date, form.fgts_balance, emp]);
@@ -93,13 +100,14 @@ export default function RHDemissao() {
   async function finish() {
     if (!emp) return;
     try {
+      const noNotice = NO_NOTICE_REASONS.includes(form.reason_code);
       await create.mutateAsync({
         employee_id: emp.id,
         termination_date: form.termination_date,
         reason_code: form.reason_code,
-        notice_type: form.notice_type,
-        notice_start: form.notice_start || null,
-        notice_end: form.notice_end || null,
+        notice_type: noNotice ? "dispensado" : form.notice_type,
+        notice_start: noNotice ? null : (form.notice_start || null),
+        notice_end: noNotice ? null : (form.notice_end || null),
         last_worked_date: form.last_worked_date || null,
         fgts_balance: Number(form.fgts_balance || 0),
         salary_balance: Number(form.salary_balance || 0),
@@ -107,7 +115,7 @@ export default function RHDemissao() {
         vacation_proportional: Number(form.vacation_proportional || 0),
         vacation_bonus: Number(form.vacation_bonus || 0),
         thirteenth_proportional: Number(form.thirteenth_proportional || 0),
-        notice_indemnity: Number(form.notice_indemnity || 0),
+        notice_indemnity: noNotice ? 0 : Number(form.notice_indemnity || 0),
         fgts_fine: Number(form.fgts_fine || 0),
         other_credits: Number(form.other_credits || 0),
         other_debits: Number(form.other_debits || 0),
@@ -181,22 +189,31 @@ export default function RHDemissao() {
       {step === 2 && (
         <Card className="p-6 space-y-4">
           <h2 className="text-xl font-semibold">Aviso prévio</h2>
-          <div><Label>Tipo *</Label>
-            <Select value={form.notice_type} onValueChange={v => setField("notice_type", v)}>
-              <SelectTrigger className="max-w-sm"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="indenizado">Indenizado (pago sem trabalhar)</SelectItem>
-                <SelectItem value="trabalhado">Trabalhado (cumprido no serviço)</SelectItem>
-                <SelectItem value="dispensado">Dispensado</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid md:grid-cols-3 gap-4">
-            <div><Label>Início do aviso</Label><Input type="date" value={form.notice_start} onChange={e => setField("notice_start", e.target.value)} /></div>
-            <div><Label>Fim do aviso</Label><Input type="date" value={form.notice_end} onChange={e => setField("notice_end", e.target.value)} /></div>
-            <div><Label>Último dia trabalhado</Label><Input type="date" value={form.last_worked_date} onChange={e => setField("last_worked_date", e.target.value)} /></div>
-          </div>
-          <p className="text-xs text-muted-foreground">Aviso proporcional: 30 dias + 3 dias por ano completo (Lei 12.506/2011), teto de 90 dias.</p>
+          {NO_NOTICE_REASONS.includes(form.reason_code) ? (
+            <div className="rounded-lg border border-muted bg-muted/20 p-4 text-sm flex gap-2">
+              <AlertTriangle className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+              <span>O encerramento do contrato de experiência não exige cumprimento de aviso prévio. O aviso foi desabilitado automaticamente.</span>
+            </div>
+          ) : (
+            <>
+              <div><Label>Tipo *</Label>
+                <Select value={form.notice_type} onValueChange={v => setField("notice_type", v)}>
+                  <SelectTrigger className="max-w-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="indenizado">Indenizado (pago sem trabalhar)</SelectItem>
+                    <SelectItem value="trabalhado">Trabalhado (cumprido no serviço)</SelectItem>
+                    <SelectItem value="dispensado">Dispensado</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid md:grid-cols-3 gap-4">
+                <div><Label>Início do aviso</Label><Input type="date" value={form.notice_start} onChange={e => setField("notice_start", e.target.value)} /></div>
+                <div><Label>Fim do aviso</Label><Input type="date" value={form.notice_end} onChange={e => setField("notice_end", e.target.value)} /></div>
+                <div><Label>Último dia trabalhado</Label><Input type="date" value={form.last_worked_date} onChange={e => setField("last_worked_date", e.target.value)} /></div>
+              </div>
+              <p className="text-xs text-muted-foreground">Aviso proporcional: 30 dias + 3 dias por ano completo (Lei 12.506/2011), teto de 90 dias.</p>
+            </>
+          )}
         </Card>
       )}
 
