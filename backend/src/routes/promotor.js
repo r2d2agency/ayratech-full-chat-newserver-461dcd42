@@ -6,6 +6,9 @@ import { query } from '../db.js';
 import { authenticate } from '../middleware/auth.js';
 import { logInfo, logError, logWarn } from '../logger.js';
 import { setRequestContext } from '../request-context.js';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import fs from 'fs';
+import path from 'path';
 import { validatePdvLocation, ensurePdvGeofenceColumn, recordGeofenceAttempt } from '../lib/geofence.js';
 import { parseWorkSchedule, resolveDaySchedule, normalizeDow } from '../lib/work-schedule.js';
 import { DEFAULT_ENTRY, DEFAULT_EXIT, formatHHMM } from '../lib/time-calc.js';
@@ -1568,6 +1571,7 @@ async function ensureDeliverySignatureColumns() {
     `ALTER TABLE rh_document_deliveries ADD COLUMN IF NOT EXISTS device_at_sign TEXT`,
     `ALTER TABLE rh_document_deliveries ADD COLUMN IF NOT EXISTS geo_lat_at_sign NUMERIC(10,7)`,
     `ALTER TABLE rh_document_deliveries ADD COLUMN IF NOT EXISTS geo_lng_at_sign NUMERIC(10,7)`,
+    `ALTER TABLE rh_document_deliveries ADD COLUMN IF NOT EXISTS signed_file_url TEXT`,
     `ALTER TABLE rh_document_delivery_events ADD COLUMN IF NOT EXISTS geo_lat NUMERIC(10,7)`,
     `ALTER TABLE rh_document_delivery_events ADD COLUMN IF NOT EXISTS geo_lng NUMERIC(10,7)`,
   ];
@@ -1586,6 +1590,44 @@ router.post('/documents/:id/sign', authenticatePromotor, async (req, res) => {
     if (['recusado', 'cancelado'].includes(doc.status)) return res.status(400).json({ error: 'Documento não está disponível para assinatura' });
     const lat = latitude != null && latitude !== '' ? Number(latitude) : null;
     const lng = longitude != null && longitude !== '' ? Number(longitude) : null;
+
+    let signedFileUrl = doc.signed_file_url || null;
+    try {
+      if (doc.file_url && signature_image && String(doc.file_url).toLowerCase().includes('.pdf')) {
+        const uploadsDir = path.join(process.cwd(), 'uploads');
+        if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+        const fileName = path.basename(doc.file_url.split('?')[0]);
+        const localPath = path.join(uploadsDir, fileName);
+        if (fs.existsSync(localPath)) {
+          const existingPdfBytes = fs.readFileSync(localPath);
+          const pdfDoc = await PDFDocument.load(existingPdfBytes);
+          const pages = pdfDoc.getPages();
+          const lastPage = pages[pages.length - 1];
+          const { width, height } = lastPage.getSize();
+          const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+          const base64Data = signature_image.replace(/^data:image\/\w+;base64,/, '');
+          const sigImageBytes = Buffer.from(base64Data, 'base64');
+          let sigImage;
+          try { sigImage = await pdfDoc.embedPng(sigImageBytes); } catch { try { sigImage = await pdfDoc.embedJpg(sigImageBytes); } catch {} }
+          if (sigImage) {
+            const sigW = Math.min(200, width * 0.35);
+            const sigH = (sigImage.height / sigImage.width) * sigW;
+            lastPage.drawImage(sigImage, { x: width - sigW - 50, y: 40, width: sigW, height: sigH });
+          }
+          lastPage.drawText(`Assinado digitalmente por: ${signature_name || req.employeeId}`, { x: 50, y: 70, size: 9, font, color: rgb(0, 0, 0) });
+          lastPage.drawText(`Data/Hora: ${new Date().toLocaleString('pt-BR')}`, { x: 50, y: 55, size: 9, font, color: rgb(0, 0, 0) });
+          lastPage.drawText(`IP: ${req.ip || '-'}`, { x: 50, y: 40, size: 9, font, color: rgb(0, 0, 0) });
+          const pdfBytes = await pdfDoc.save();
+          const signedName = `signed_${id}_${Date.now()}.pdf`;
+          const signedPath = path.join(uploadsDir, signedName);
+          fs.writeFileSync(signedPath, pdfBytes);
+          signedFileUrl = `/uploads/${signedName}`;
+        }
+      }
+    } catch (e) {
+      logError('promotor.document-sign.pdf', e);
+    }
+
     const result = await query(
       `UPDATE rh_document_deliveries
        SET status = 'assinado', signed_at = NOW(),
@@ -1595,10 +1637,11 @@ router.post('/documents/:id/sign', authenticatePromotor, async (req, res) => {
            geo_lat_at_sign = COALESCE($6, geo_lat_at_sign),
            geo_lng_at_sign = COALESCE($7, geo_lng_at_sign),
            viewed_at = COALESCE(viewed_at, NOW()),
+           signed_file_url = COALESCE($8, signed_file_url),
            updated_at = NOW()
        WHERE id = $1 RETURNING *`,
       [id, signature_name || null, signature_image || null, req.ip || null, req.headers['user-agent'] || null,
-        Number.isFinite(lat) ? lat : null, Number.isFinite(lng) ? lng : null]
+        Number.isFinite(lat) ? lat : null, Number.isFinite(lng) ? lng : null, signedFileUrl]
     );
     await query(
       `INSERT INTO rh_document_delivery_events (delivery_id, event_type, actor_type, actor_id, ip_address, device_info, geo_lat, geo_lng, notes)

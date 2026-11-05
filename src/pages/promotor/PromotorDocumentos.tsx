@@ -92,13 +92,14 @@ export default function PromotorDocumentos() {
     }
   };
 
-  const handleSign = async (id: string) => {
+  const handleSign = async (id: string, signature_image?: string) => {
     try {
       requestGeo();
       await signDoc.mutateAsync({
         id,
         data: {
           signature_name: signName || selectedDoc?.employee_name || undefined,
+          signature_image: signature_image || undefined,
           latitude: geo.lat,
           longitude: geo.lng,
         },
@@ -419,13 +420,63 @@ export default function PromotorDocumentos() {
             {selectedDoc?.requires_signature && !['assinado', 'recusado', 'cancelado', 'expirado'].includes(selectedDoc?.status) && (
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground text-center">
-                  Este documento exige assinatura. Assine abaixo para confirmar o recebimento e liberar a visualização.
+                  Este documento exige assinatura. Desenhe sua assinatura abaixo e confirme o recebimento.
                 </p>
                 <div className="space-y-1">
-                  <Label>Nome para assinatura</Label>
+                  <Label>Nome completo</Label>
                   <Input value={signName} onChange={(e) => setSignName(e.target.value)} placeholder={selectedDoc?.employee_name || 'Digite seu nome completo'} />
                 </div>
-                <Button className="w-full" onClick={() => handleSign(selectedDoc.id)} disabled={signDoc.isPending}>
+                <div className="space-y-1">
+                  <Label>Assinatura digital (desenhe)</Label>
+                  <div className="border rounded-lg overflow-hidden bg-white">
+                    <canvas
+                      ref={(el) => { (window as any)._sigCanvas = el; }}
+                      width={320}
+                      height={120}
+                      className="w-full touch-none"
+                      onPointerDown={(e) => {
+                        const canvas = e.currentTarget as HTMLCanvasElement;
+                        const ctx = canvas.getContext('2d');
+                        if (!ctx) return;
+                        (canvas as any)._drawing = true;
+                        const rect = canvas.getBoundingClientRect();
+                        ctx.beginPath();
+                        ctx.moveTo((e.clientX - rect.left) * (canvas.width / rect.width), (e.clientY - rect.top) * (canvas.height / rect.height));
+                      }}
+                      onPointerMove={(e) => {
+                        const canvas = e.currentTarget as HTMLCanvasElement;
+                        if (!(canvas as any)._drawing) return;
+                        const ctx = canvas.getContext('2d');
+                        if (!ctx) return;
+                        const rect = canvas.getBoundingClientRect();
+                        ctx.lineWidth = 2;
+                        ctx.lineCap = 'round';
+                        ctx.strokeStyle = '#000';
+                        ctx.lineTo((e.clientX - rect.left) * (canvas.width / rect.width), (e.clientY - rect.top) * (canvas.height / rect.height));
+                        ctx.stroke();
+                      }}
+                      onPointerUp={(e) => { const canvas = e.currentTarget as HTMLCanvasElement; (canvas as any)._drawing = false; }}
+                      onPointerLeave={(e) => { const canvas = e.currentTarget as HTMLCanvasElement; (canvas as any)._drawing = false; }}
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <Button type="button" variant="outline" size="sm" className="flex-1" onClick={() => {
+                      const canvas = (window as any)._sigCanvas as HTMLCanvasElement;
+                      if (canvas) {
+                        const ctx = canvas.getContext('2d');
+                        ctx?.clearRect(0,0,canvas.width,canvas.height);
+                      }
+                    }}>Limpar</Button>
+                  </div>
+                </div>
+                <Button className="w-full" onClick={async () => {
+                  const canvas = (window as any)._sigCanvas as HTMLCanvasElement;
+                  let sigData: string | undefined;
+                  if (canvas) {
+                    try { sigData = canvas.toDataURL('image/png'); } catch {}
+                  }
+                  handleSign(selectedDoc.id, sigData);
+                }} disabled={signDoc.isPending}>
                   {signDoc.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
                   Assinar e Confirmar Recebimento
                 </Button>
