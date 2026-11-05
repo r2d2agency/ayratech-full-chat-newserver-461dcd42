@@ -479,8 +479,11 @@ export default function RHDocumentos() {
                   </div>
                 )}
 
+                {d.signed_file_url && (
+                  <Button className="w-full" onClick={() => window.open(d.signed_file_url, '_blank')}><CheckCircle2 className="h-4 w-4 mr-2" /> Abrir cópia assinada (com assinatura no PDF)</Button>
+                )}
                 {d.file_url && (
-                  <Button variant="outline" className="w-full" onClick={() => window.open(d.file_url, '_blank')}>Abrir documento</Button>
+                  <Button variant="outline" className="w-full" onClick={() => window.open(d.file_url, '_blank')}>Abrir documento original</Button>
                 )}
               </div>
             );

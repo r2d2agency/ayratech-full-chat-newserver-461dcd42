@@ -411,9 +411,17 @@ export default function PromotorDocumentos() {
                   );
                 }
                 return (
-                  <Button variant="outline" className="w-full" onClick={() => window.open(selectedDoc.file_url, '_blank')}>
-                    <Eye className="h-4 w-4 mr-2" /> Visualizar Documento
-                  </Button>
+                  <div className="space-y-2">
+                    {selectedDoc.signed_file_url ? (
+                      <Button variant="outline" className="w-full" onClick={() => window.open(selectedDoc.signed_file_url, '_blank')}>
+                        <Eye className="h-4 w-4 mr-2" /> Visualizar Cópia Assinada
+                      </Button>
+                    ) : (
+                      <Button variant="outline" className="w-full" onClick={() => window.open(selectedDoc.file_url, '_blank')}>
+                        <Eye className="h-4 w-4 mr-2" /> Visualizar Documento
+                      </Button>
+                    )}
+                  </div>
                 );
               })()
             )}

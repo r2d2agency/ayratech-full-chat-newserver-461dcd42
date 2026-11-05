@@ -1578,6 +1578,18 @@ async function ensureDeliverySignatureColumns() {
   for (const s of stmts) { try { await query(s); } catch (_e) { /* coluna já existe */ } }
 }
 
+function toAbsoluteUploadUrl(req, filePath) {
+  if (!filePath || typeof filePath !== 'string') return null;
+  if (/^https?:\/\//i.test(filePath) || /^data:/i.test(filePath) || /^blob:/i.test(filePath)) return filePath;
+  const normalized = filePath.startsWith('/') ? filePath : `/${filePath}`;
+  const envBase = String(process.env.API_BASE_URL || '').trim().replace(/\/+$/, '');
+  if (envBase && /^https?:\/\//i.test(envBase)) return `${envBase}${normalized}`;
+  const fwd = req.headers?.['x-forwarded-proto'];
+  const proto = (Array.isArray(fwd) ? fwd[0] : (typeof fwd === 'string' ? fwd.split(',')[0].trim() : req.protocol)) || 'http';
+  const host = req.get?.('host') || req.headers?.host;
+  if (!host) return normalized;
+  return `${proto}://${host}${normalized}`;
+}
 router.post('/documents/:id/sign', authenticatePromotor, async (req, res) => {
   try {
     await ensureDeliverySignatureColumns();
@@ -1593,12 +1605,31 @@ router.post('/documents/:id/sign', authenticatePromotor, async (req, res) => {
 
     let signedFileUrl = doc.signed_file_url || null;
     try {
-      if (doc.file_url && signature_image && String(doc.file_url).toLowerCase().includes('.pdf')) {
+      if (doc.file_url && signature_image && String(doc.file_url).toLowerCase().split('?')[0].includes('.pdf')) {
         const uploadsDir = path.join(process.cwd(), 'uploads');
         if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-        const fileName = path.basename(doc.file_url.split('?')[0]);
-        const localPath = path.join(uploadsDir, fileName);
-        if (fs.existsSync(localPath)) {
+        let existingPdfBytes = null;
+        const rawUrl = String(doc.file_url);
+        if (/^https?:\/\//i.test(rawUrl)) {
+          // Arquivo hospedado remotamente: baixa antes de carimbar
+          try {
+            const resp = await fetch(rawUrl);
+            if (resp.ok) {
+              const buf = Buffer.from(await resp.arrayBuffer());
+              // valida assinatura mínima de PDF
+              if (buf.length > 4 && buf.subarray(0, 4).toString() === '%PDF') existingPdfBytes = buf;
+            }
+          } catch { /* mantém null, cai no fallback abaixo */ }
+          if (!existingPdfBytes) {
+            // fallback: tenta o arquivo local com o mesmo nome, se existir
+            const localPath = path.join(uploadsDir, path.basename(rawUrl.split('?')[0]));
+            if (fs.existsSync(localPath)) existingPdfBytes = fs.readFileSync(localPath);
+          }
+        } else {
+          const localPath = path.join(uploadsDir, path.basename(rawUrl.split('?')[0]));
+          if (fs.existsSync(localPath)) existingPdfBytes = fs.readFileSync(localPath);
+        }
+        if (existingPdfBytes) {
           const existingPdfBytes = fs.readFileSync(localPath);
           const pdfDoc = await PDFDocument.load(existingPdfBytes);
           const pages = pdfDoc.getPages();
@@ -1621,7 +1652,7 @@ router.post('/documents/:id/sign', authenticatePromotor, async (req, res) => {
           const signedName = `signed_${id}_${Date.now()}.pdf`;
           const signedPath = path.join(uploadsDir, signedName);
           fs.writeFileSync(signedPath, pdfBytes);
-          signedFileUrl = `/uploads/${signedName}`;
+          signedFileUrl = toAbsoluteUploadUrl(req, `/uploads/${signedName}`) || `/uploads/${signedName}`;
         }
       }
     } catch (e) {
