@@ -95,7 +95,7 @@ export default function PromotorDocumentos() {
   const handleSign = async (id: string, signature_image?: string) => {
     try {
       requestGeo();
-      await signDoc.mutateAsync({
+      const res = await signDoc.mutateAsync({
         id,
         data: {
           signature_name: signName || selectedDoc?.employee_name || undefined,
@@ -105,6 +105,10 @@ export default function PromotorDocumentos() {
         },
       });
       toast({ title: 'Documento assinado com sucesso!' });
+      const signedUrl = (res as any)?.signed_file_url;
+      if (signedUrl) {
+        try { window.open(signedUrl, '_blank'); } catch {}
+      }
       setSelectedDoc(null);
       setSignName("");
       setGeo({ lat: null, lng: null });

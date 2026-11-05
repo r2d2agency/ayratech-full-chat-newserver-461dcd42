@@ -1630,24 +1630,39 @@ router.post('/documents/:id/sign', authenticatePromotor, async (req, res) => {
           if (fs.existsSync(localPath)) existingPdfBytes = fs.readFileSync(localPath);
         }
         if (existingPdfBytes) {
-          const existingPdfBytes = fs.readFileSync(localPath);
           const pdfDoc = await PDFDocument.load(existingPdfBytes);
-          const pages = pdfDoc.getPages();
-          const lastPage = pages[pages.length - 1];
-          const { width, height } = lastPage.getSize();
           const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+          const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
           const base64Data = signature_image.replace(/^data:image\/\w+;base64,/, '');
           const sigImageBytes = Buffer.from(base64Data, 'base64');
           let sigImage;
           try { sigImage = await pdfDoc.embedPng(sigImageBytes); } catch { try { sigImage = await pdfDoc.embedJpg(sigImageBytes); } catch {} }
-          if (sigImage) {
-            const sigW = Math.min(200, width * 0.35);
-            const sigH = (sigImage.height / sigImage.width) * sigW;
-            lastPage.drawImage(sigImage, { x: width - sigW - 50, y: 40, width: sigW, height: sigH });
+          // Página extra com dados da assinatura
+          const page = pdfDoc.addPage([595, 842]); // A4
+          const { width, height } = page.getSize();
+          let y = height - 80;
+          page.drawText('COMPROVANTE DE ASSINATURA DIGITAL', { x: 50, y, size: 16, font: fontBold, color: rgb(0, 0, 0) });
+          y -= 30;
+          page.drawText(`Documento: ${doc.title || id}`, { x: 50, y, size: 11, font });
+          y -= 20;
+          page.drawText(`Assinado por: ${signature_name || doc.employee_name || '-'}`, { x: 50, y, size: 11, font });
+          y -= 20;
+          page.drawText(`Data/Hora: ${new Date().toLocaleString('pt-BR')}`, { x: 50, y, size: 11, font });
+          y -= 20;
+          page.drawText(`Endereço IP: ${req.ip || '-'}`, { x: 50, y, size: 11, font });
+          if (Number.isFinite(lat) && Number.isFinite(lng)) {
+            y -= 20;
+            page.drawText(`Geolocalização: ${lat.toFixed(6)}, ${lng.toFixed(6)}`, { x: 50, y, size: 11, font });
           }
-          lastPage.drawText(`Assinado digitalmente por: ${signature_name || req.employeeId}`, { x: 50, y: 70, size: 9, font, color: rgb(0, 0, 0) });
-          lastPage.drawText(`Data/Hora: ${new Date().toLocaleString('pt-BR')}`, { x: 50, y: 55, size: 9, font, color: rgb(0, 0, 0) });
-          lastPage.drawText(`IP: ${req.ip || '-'}`, { x: 50, y: 40, size: 9, font, color: rgb(0, 0, 0) });
+          if (sigImage) {
+            const sigW = Math.min(260, width * 0.4);
+            const sigH = (sigImage.height / sigImage.width) * sigW;
+            page.drawImage(sigImage, { x: 50, y: y - sigH - 10, width: sigW, height: sigH });
+            y -= sigH + 30;
+          } else {
+            y -= 40;
+          }
+          page.drawText('Este comprovante foi gerado automaticamente pelo sistema Ayratech.', { x: 50, y, size: 9, font, color: rgb(0.4, 0.4, 0.4) });
           const pdfBytes = await pdfDoc.save();
           const signedName = `signed_${id}_${Date.now()}.pdf`;
           const signedPath = path.join(uploadsDir, signedName);
