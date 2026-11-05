@@ -186,6 +186,40 @@ const SEED_ENTRIES = [
     problem_text: 'O painel "Qualidade de Foto" em Configurações salvava as alterações num endereço que não existia no servidor — o carregamento sempre mostrava os valores padrão de fábrica, e salvar retornava erro. Na prática, diminuir o brilho mínimo (para permitir fotos em locais escuros do supermercado) ou ajustar a tolerância de borrado nunca tinha efeito real no app do promotor.',
     solution_text: 'Corrigido para usar o endereço correto, o mesmo que o app do promotor já lia. Os ajustes salvos em Configurações → Geral → Qualidade de Foto agora realmente valem para as fotos tiradas pelos promotores.',
     ref: '3fa0709d',
+  {
+    entry_date: '2026-11-05', type: 'bug', area: 'Ponto e escala',
+    title: 'Ponto duplicado (saída de intervalo registrada ~25 vezes)',
+    problem_text: 'Cliques rápidos ou retries da requisição podiam registrar o mesmo ponto (ex.: saída de intervalo) dezenas de vezes. Também a inserção do punch havia sido desativada por engano, impedindo o registro.',
+    solution_text: 'Restaurada a inserção do ponto no POST /punch e adicionada proteção contra duplicidade em cliques rápidos/retries.',
+    ref: 'f1d07bf7',
+  },
+  {
+    entry_date: '2026-11-05', type: 'melhoria', area: 'Supervisor',
+    title: 'PDVs por promotor, localização em tempo real e edição de rota',
+    problem_text: 'O supervisor não tinha visão consolidada dos PDVs por promotor, nem localização em tempo real dos liderados, nem capacidade de alterar ordem/horário/sequência das rotas.',
+    solution_text: 'Novas telas de equipe e ponto com dados dos liderados, mapa com localização em tempo real dos promotores e edição de data, horário e PDV da rota.',
+    ref: 'da0306a6',
+  },
+  {
+    entry_date: '2026-11-05', type: 'melhoria', area: 'Supervisor',
+    title: 'Porcentagem de execução nas rotas do calendário',
+    problem_text: 'A porcentagem de execução só aparecia ao clicar na rota; no calendário ("rotas & agenda") era preciso entrar em cada item para ver o progresso.',
+    solution_text: 'Porcentagem de execução exibida diretamente no calendário e nas listagens de rotas.',
+    ref: '4bd7a27f',
+  },
+  {
+    entry_date: '2026-11-05', type: 'melhoria', area: 'Execução',
+    title: 'Data de execução nas listagens e detalhe',
+    problem_text: 'Na busca de execuções aparecia o PDV, mas a data da execução não era exibida (só via fotos).',
+    solution_text: 'Data de execução incluída na listagem e no detalhe de execução.',
+    ref: '4bd7a27f',
+  },
+  {
+    entry_date: '2026-11-05', type: 'melhoria', area: 'RH',
+    title: 'Modalidades de encerramento de contrato de experiência sem aviso prévio',
+    problem_text: 'Não existiam modalidades específicas para encerramento de contrato de experiência pelo colaborador ou pela empresa, que não exigem cumprimento de aviso prévio.',
+    solution_text: 'Adicionadas "ENCERRAMENTO DO CONTRATO DE EXPERIÊNCIA PELO COLABORADOR" e "PELA EMPRESA", com aviso prévio desabilitado automaticamente.',
+    ref: '221c0381',
   },
 ];
 
