@@ -128,11 +128,19 @@ router.get('/routes', authenticateSupervisor, async (req, res) => {
       allowedPromoters = [promoter_id];
     }
     const params = [req.organizationId];
-    let sql = `SELECT r.*, e.full_name as promoter_name, p.name as pdv_name, p.city as pdv_city, p.address as pdv_address, p.latitude as pdv_latitude, p.longitude as pdv_longitude, b.name as brand_name
+    let sql = `SELECT r.*, COALESCE(r.progress_pct, 0) as progress_pct, e.full_name as promoter_name, p.name as pdv_name, p.city as pdv_city, p.address as pdv_address, p.latitude as pdv_latitude, p.longitude as pdv_longitude, b.name as brand_name,
+               COALESCE(pc.total_products, 0)::int as total_products,
+               COALESCE(pc.completed_products, 0)::int as completed_products
                FROM merch_routes r
                LEFT JOIN employees e ON e.id = r.promoter_id
                LEFT JOIN pdvs p ON p.id = r.pdv_id
                LEFT JOIN merch_brands b ON b.id = r.brand_id
+               LEFT JOIN LATERAL (
+                 SELECT COUNT(*)::int as total_products,
+                        COUNT(*) FILTER (WHERE rpe.status = 'completed')::int as completed_products
+                 FROM route_product_executions rpe
+                 WHERE rpe.route_id = r.id
+               ) pc ON true
                WHERE r.organization_id = $1 AND r.promoter_id = ANY($2::uuid[])`;
     params.push(allowedPromoters);
     let idx = 3;
@@ -147,7 +155,27 @@ router.get('/routes', authenticateSupervisor, async (req, res) => {
       params.push(date_to);
     }
     sql += ' ORDER BY r.visit_date DESC, r.scheduled_time';
-    const result = await query(sql, params);
+    let result;
+    try {
+      result = await query(sql, params);
+    } catch (e) {
+      // Fallback para instalações antigas sem route_product_executions
+      const fallbackSql = sql.replace(/,\s*COALESCE\(pc\.total_products[\s\S]*?\) pc ON true/, '');
+      result = await query(fallbackSql, params);
+      result.rows = result.rows.map(r => ({ ...r, progress_pct: r.progress_pct ?? 0, total_products: 0, completed_products: 0 }));
+    }
+    // Garante progress consistente com produtos (evita progress_pct desatualizado)
+    result.rows = result.rows.map(r => {
+      const total = Number(r.total_products || 0);
+      const done = Number(r.completed_products || 0);
+      if (total > 0 && (r.progress_pct == null || (r.status === 'completed' && Number(r.progress_pct) < 100))) {
+        r.progress_pct = Math.round((done / total) * 100);
+      }
+      if (r.status === 'completed' && total === 0 && (r.progress_pct == null || Number(r.progress_pct) === 0)) {
+        r.progress_pct = 100;
+      }
+      return r;
+    });
     res.json(result.rows);
   } catch (err) {
     logError('supervisor.routes.list', err);

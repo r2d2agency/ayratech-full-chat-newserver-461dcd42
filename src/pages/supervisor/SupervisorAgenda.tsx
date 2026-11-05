@@ -144,8 +144,13 @@ export default function SupervisorAgenda() {
                 <span>{format(d, 'd')}</span>
                 <div className="flex gap-0.5 mt-0.5">
                   {rs.slice(0, 3).map((r: any) => (
-                    <span key={r.id} className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[r.status] || 'bg-gray-400'}`} title={STATUS_LABELS[r.status] || r.status} />
+                    <span key={r.id} className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[r.status] || 'bg-gray-400'}`} title={`${STATUS_LABELS[r.status] || r.status}${r.status === 'in_progress' && r.progress_pct != null ? ` — ${Math.round(r.progress_pct)}%` : ''}`} />
                   ))}
+                  {rs.some((r: any) => r.status === 'in_progress') && (
+                    <span className="text-[9px] font-bold leading-none">
+                      {Math.round(Math.max(...rs.filter((r: any) => r.status === 'in_progress').map((r: any) => Number(r.progress_pct || 0)))))}%
+                    </span>
+                  )}
                 </div>
               </button>
             );
@@ -167,7 +172,17 @@ export default function SupervisorAgenda() {
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <MapPin className="h-3 w-3" />{r.pdv_city}
                     <Clock className="h-3 w-3" />{r.brand_name}
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full inline-flex ${STATUS_BADGE_COLORS[r.status] || 'bg-muted text-muted-foreground'}`}>
+                      {STATUS_LABELS[r.status] || r.status}
+                      {r.status === 'in_progress' && r.progress_pct != null ? ` • ${Math.round(r.progress_pct)}%` : ''}
+                      {r.status === 'completed' ? ' • 100%' : ''}
+                    </span>
                   </div>
+                  {(r.status === 'in_progress' || r.status === 'completed') && r.progress_pct != null && String(r.progress_pct) !== '' && (
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div className={`h-full rounded-full ${r.status === 'completed' ? 'bg-green-500' : 'bg-orange-500'}`} style={{ width: `${Math.min(100, Math.max(0, Number(r.progress_pct) || 0))}%` }} />
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             ))}

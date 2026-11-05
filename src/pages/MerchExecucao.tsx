@@ -155,7 +155,7 @@ export default function MerchExecucao() {
     setExportProgress(0);
     try {
       const { ok, failed } = await exportPhotosAsJpg(list, {
-        zipName: `execucao-${viewRoute?.pdv_name || 'rota'}-${(viewRoute?.scheduled_date || '').slice(0, 10)}`,
+        zipName: `execucao-${viewRoute?.pdv_name || 'rota'}-${(viewRoute?.visit_date || '').slice(0, 10)}`,
         onProgress: (done, total) => setExportProgress(Math.round((done / total) * 100)),
       });
       if (ok > 0) toast.success(`${ok} foto(s) exportada(s) em JPG${failed ? ` — ${failed} falharam` : ''}`);
@@ -352,7 +352,14 @@ export default function MerchExecucao() {
                       )}
                       {r.checkin_at && (
                         <div className="text-[10px] text-muted-foreground mt-1">
+                          {r.visit_date ? `${new Date(`${String(r.visit_date).slice(0, 10)}T12:00:00`).toLocaleDateString('pt-BR')} • ` : ''}
                           Check-in: {new Date(r.checkin_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                          {r.pdv_city && ` • ${r.pdv_city}`}
+                        </div>
+                      )}
+                      {!r.checkin_at && r.visit_date && (
+                        <div className="text-[10px] text-muted-foreground mt-1">
+                          Data: {new Date(`${String(r.visit_date).slice(0, 10)}T12:00:00`).toLocaleDateString('pt-BR')}
                           {r.pdv_city && ` • ${r.pdv_city}`}
                         </div>
                       )}
@@ -372,10 +379,10 @@ export default function MerchExecucao() {
                     <CardContent className="p-3 flex items-center justify-between">
                       <div>
                         <div className="font-semibold text-sm">{r.pdv_name}</div>
-                        <div className="text-xs text-muted-foreground">{r.promoter_name} • {r.brand_name}</div>
+                        <div className="text-xs text-muted-foreground">{r.promoter_name} • {r.brand_name}{r.visit_date ? ` • ${new Date(`${String(r.visit_date).slice(0, 10)}T12:00:00`).toLocaleDateString('pt-BR')}` : ''}</div>
                         <div className="text-[10px] text-muted-foreground mt-0.5">
                           {r.completed_products || 0}/{r.total_products || 0} produtos
-                          {r.completed_at && ` • Concluída ${new Date(r.completed_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`}
+                          {r.completed_at && ` • Concluída ${new Date(r.completed_at).toLocaleDateString('pt-BR')} ${new Date(r.completed_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`}
                         </div>
                       </div>
                       <CheckCircle2 className="h-5 w-5 text-green-500" />
@@ -396,7 +403,7 @@ export default function MerchExecucao() {
                       <div>
                         <div className="font-semibold text-sm">{r.pdv_name}</div>
                         <div className="text-xs text-muted-foreground">
-                          {r.scheduled_time?.slice(0, 5)} • {r.promoter_name} • {r.brand_name}
+                          {r.scheduled_time?.slice(0, 5)} • {r.promoter_name} • {r.brand_name}{r.visit_date ? ` • ${new Date(`${String(r.visit_date).slice(0, 10)}T12:00:00`).toLocaleDateString('pt-BR')}` : ''}
                         </div>
                       </div>
                       <Badge variant="secondary">{r.scheduled_time?.slice(0, 5) || 'S/ horário'}</Badge>
@@ -519,6 +526,12 @@ export default function MerchExecucao() {
                 </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                  {(viewRoute.visit_date || viewRoute.scheduled_date) && (
+                    <div>
+                      <div className="text-[10px] text-muted-foreground uppercase font-bold">Data de execução</div>
+                      <div className="font-medium flex items-center gap-1"><Calendar className="h-3.5 w-3.5" /> {new Date(`${String(viewRoute.visit_date || viewRoute.scheduled_date).slice(0, 10)}T12:00:00`).toLocaleDateString('pt-BR')}</div>
+                    </div>
+                  )}
                   <div>
                     <div className="text-[10px] text-muted-foreground uppercase font-bold">Promotor</div>
                     <div className="font-medium flex items-center gap-1"><User className="h-3.5 w-3.5" /> {viewRoute.promoter_name}</div>
@@ -603,6 +616,9 @@ export default function MerchExecucao() {
                       <Progress value={viewRoute.progress_pct || 0} className="h-2" />
                       <div className="flex justify-between text-[10px] text-muted-foreground">
                         <span>Produtos: {viewRoute.completed_products || 0}/{viewRoute.total_products || 0}</span>
+                        {viewRoute.visit_date && (
+                          <span>Data: {new Date(`${String(viewRoute.visit_date).slice(0, 10)}T12:00:00`).toLocaleDateString('pt-BR')}</span>
+                        )}
                         {viewRoute.checkin_at && (
                           <span>Check-in: {new Date(viewRoute.checkin_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
                         )}
