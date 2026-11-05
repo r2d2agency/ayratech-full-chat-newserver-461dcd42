@@ -138,7 +138,22 @@ export default function SupervisorRotas() {
                 </div>
                 <span className={`text-[10px] px-2 py-0.5 rounded-full inline-flex ${STATUS_COLORS[r.status] || 'bg-muted text-muted-foreground'}`}>
                   {STATUS_LABELS[r.status] || r.status}
+                  {r.status === 'in_progress' && r.progress_pct != null ? ` • ${Math.round(r.progress_pct)}%` : ''}
+                  {r.status === 'completed' ? ' • 100%' : ''}
                 </span>
+                {(r.status === 'in_progress' || r.status === 'completed') && (r.progress_pct != null || r.total_products > 0) && (
+                  <div className="space-y-0.5">
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${r.status === 'completed' ? 'bg-green-500' : 'bg-orange-500'}`}
+                        style={{ width: `${Math.min(100, Math.max(0, Number(r.progress_pct) || 0))}%` }}
+                      />
+                    </div>
+                    {r.total_products > 0 && (
+                      <p className="text-[10px] text-muted-foreground">{r.completed_products || 0}/{r.total_products} produtos</p>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
