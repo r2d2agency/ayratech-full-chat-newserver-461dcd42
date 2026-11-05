@@ -2476,10 +2476,14 @@ router.get('/rh/live-map', async (req, res) => {
     const liveLocationSelect = hasLiveLocations
       ? `ll.latitude as live_lat, ll.longitude as live_lng, ll.accuracy_meters as live_accuracy,
           ll.battery_level, ll.is_moving, ll.updated_at as location_updated_at,
-          CASE WHEN ll.updated_at > NOW() - INTERVAL '5 minutes' THEN 'online' ELSE 'offline' END as live_status,`
+          GREATEST(ll.updated_at, (SELECT MAX(tp.punched_at) FROM time_punches tp WHERE tp.employee_id = e.id AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $2)) as last_activity_at,
+          CASE WHEN COALESCE(ll.updated_at, (SELECT MAX(tp.punched_at) FROM time_punches tp WHERE tp.employee_id = e.id AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $2)) > NOW() - INTERVAL '15 minutes' THEN 'online'
+               WHEN (SELECT COUNT(*) FROM time_punches tp WHERE tp.employee_id = e.id AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $2) > 0 THEN 'online_today'
+               ELSE 'offline' END as live_status,`
       : `NULL::numeric as live_lat, NULL::numeric as live_lng, NULL::numeric as live_accuracy,
           NULL::integer as battery_level, false as is_moving, NULL::timestamptz as location_updated_at,
-          'offline' as live_status,`;
+          (SELECT MAX(tp.punched_at) FROM time_punches tp WHERE tp.employee_id = e.id AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $2) as last_activity_at,
+          CASE WHEN (SELECT COUNT(*) FROM time_punches tp WHERE tp.employee_id = e.id AND (tp.punched_at AT TIME ZONE 'America/Sao_Paulo')::date = $2) > 0 THEN 'online_today' ELSE 'offline' END as live_status,`;
 
     const liveLocationJoin = hasLiveLocations
       ? `LEFT JOIN employee_live_locations ll ON ll.employee_id = e.id`
