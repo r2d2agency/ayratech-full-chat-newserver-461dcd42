@@ -479,9 +479,9 @@ function getFrontendBaseUrl(req) {
 
 async function generateSignedPdf(documentId, baseUrl) {
   // 1. Get document info
-  const docResult = await query(`SELECT file_url FROM doc_signature_documents WHERE id = $1`, [documentId]);
+  const docResult = await query(`SELECT file_url, title FROM doc_signature_documents WHERE id = $1`, [documentId]);
   if (!docResult.rows[0]) throw new Error('Document not found');
-  const { file_url } = docResult.rows[0];
+  const { file_url, title: docTitle } = docResult.rows[0];
 
   // 2. Get all signed signers with their positions
   const signersResult = await query(
@@ -781,6 +781,61 @@ async function generateSignedPdf(documentId, baseUrl) {
       });
     }
   }
+
+  // 7b. Add receipt page (comprovante) with signature data, IP, geolocation and images
+  const receiptPage = pdfDoc.addPage([595, 842]); // A4
+  const { width: rW, height: rH } = receiptPage.getSize();
+  let rY = rH - 70;
+  receiptPage.drawText('COMPROVANTE DE ASSINATURA DIGITAL', { x: 50, y: rY, size: 16, font: boldFont, color: rgb(0, 0, 0) });
+  rY -= 26;
+  receiptPage.drawText(`Documento: ${compactText(docTitle || documentId, 60)}`, { x: 50, y: rY, size: 11, font: infoFont });
+  rY -= 24;
+
+  for (const signer of signersResult.rows) {
+    if (rY < 220) break; // avoid overflow; first signers take priority
+    receiptPage.drawText(`Assinado por: ${compactText(signer.name, 60)}`, { x: 50, y: rY, size: 11, font: infoFont });
+    rY -= 18;
+    receiptPage.drawText(`CPF: ${compactText(signer.cpf, 20)}`, { x: 50, y: rY, size: 11, font: infoFont });
+    rY -= 18;
+    receiptPage.drawText(`Data/Hora: ${formatSignedAt(signer.signed_at)}`, { x: 50, y: rY, size: 11, font: infoFont });
+    rY -= 18;
+    receiptPage.drawText(`IP: ${compactText(signer.ip_address, 45)}`, { x: 50, y: rY, size: 11, font: infoFont });
+    rY -= 18;
+    receiptPage.drawText(`Geolocalizacao: ${compactText(signer.geolocation, 65)}`, { x: 50, y: rY, size: 11, font: infoFont });
+    rY -= 22;
+
+    // Signature image on the receipt
+    try {
+      const rSigUrl = String(signer.signature_url || '');
+      let rSigImage = null;
+      if (rSigUrl.startsWith('data:')) {
+        const [, rB64] = rSigUrl.split(',', 2);
+        const rBytes = Buffer.from(rB64 || '', 'base64');
+        try { rSigImage = await pdfDoc.embedPng(rBytes); }
+        catch { rSigImage = await pdfDoc.embedJpg(rBytes); }
+      } else {
+        const rLocal = resolveLocalUploadsPath(rSigUrl);
+        let rBytes = null;
+        if (rLocal) rBytes = fs.readFileSync(rLocal);
+        else if (rSigUrl && HTTP_URL_REGEX.test(rSigUrl)) rBytes = await readRemoteBinary(rSigUrl);
+        if (rBytes) {
+          try { rSigImage = await pdfDoc.embedPng(rBytes); }
+          catch { rSigImage = await pdfDoc.embedJpg(rBytes); }
+        }
+      }
+      if (rSigImage) {
+        const rSigW = Math.min(260, rW * 0.4);
+        const rSigH = (rSigImage.height / rSigImage.width) * rSigW;
+        receiptPage.drawImage(rSigImage, { x: 50, y: rY - rSigH, width: rSigW, height: rSigH });
+        rY -= rSigH + 28;
+      }
+    } catch (rErr) {
+      console.error(`[doc-signatures] Receipt signature image error for signer ${signer.id}:`, rErr.message);
+    }
+  }
+
+  receiptPage.drawText('Este comprovante foi gerado automaticamente pelo sistema.', { x: 50, y: 60, size: 9, font: infoFont, color: rgb(0.4, 0.4, 0.4) });
+  receiptPage.drawText(`Verifique: ${verifyUrl}`, { x: 50, y: 46, size: 9, font: infoFont, color: rgb(0.4, 0.4, 0.4) });
 
   // 8. Save the modified PDF
   const signedPdfBytes = await pdfDoc.save();

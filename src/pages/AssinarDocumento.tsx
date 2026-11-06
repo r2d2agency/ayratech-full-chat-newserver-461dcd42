@@ -256,6 +256,9 @@ export default function AssinarDocumento() {
       });
       setSigned(true);
       toast.success('Documento assinado com sucesso!');
+      if (finalDownloadUrl) {
+        try { window.open(resolveMediaUrl(finalDownloadUrl), '_blank'); } catch { /* popup bloqueado: botão manual abaixo */ }
+      }
     } catch (err: any) { toast.error(err.message); }
   };
 
