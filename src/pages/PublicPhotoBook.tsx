@@ -149,6 +149,16 @@ export default function PublicPhotoBook() {
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 12;
 
+  // Photos per page for PDF
+  const [photosPerPage, setPhotosPerPage] = useState(2);
+
+  const PHOTOS_PER_PAGE_OPTIONS = [
+    { value: 1, label: '1 foto por página' },
+    { value: 2, label: '2 fotos por página' },
+    { value: 4, label: '4 fotos por página' },
+    { value: 6, label: '6 fotos por página' },
+  ];
+
   useEffect(() => {
     if (!token) return;
     const fetchBook = async () => {
@@ -260,8 +270,10 @@ export default function PublicPhotoBook() {
       doc.setTextColor(100, 100, 100);
       doc.text(`${currentPagePhotos.length} fotos`, pageW / 2, pageH - 30, { align: 'center' });
 
-      // Photo pages — compact 4 per page
-      const ppp = 4;
+      // Photo pages — layout conforme escolha do usuário
+      const ppp = photosPerPage;
+      const cols = ppp <= 2 ? 1 : 2;
+      const rows = Math.ceil(ppp / cols);
       for (let i = 0; i < currentPagePhotos.length; i += ppp) {
         doc.addPage();
         doc.setFillColor(255, 255, 255);
@@ -281,11 +293,9 @@ export default function PublicPhotoBook() {
         const contentTop = 20;
         const contentBottom = pageH - 14;
         const availableH = contentBottom - contentTop;
-        const cols = 2;
-        const rows = 2;
         const gap = 4;
-        const cellW = (contentW - gap) / cols;
-        const cellH = (availableH - gap) / rows;
+        const cellW = (contentW - gap * (cols - 1)) / cols;
+        const cellH = (availableH - gap * (rows - 1)) / rows;
 
         for (let j = 0; j < ppp; j++) {
           const photo = currentPagePhotos[i + j];
@@ -311,7 +321,7 @@ export default function PublicPhotoBook() {
       setPdfGenerating(false);
       setPdfProgress(0);
     }
-  }, [data, currentPagePhotos]);
+  }, [data, currentPagePhotos, photosPerPage]);
 
   if (loading) {
     return (
@@ -421,6 +431,21 @@ export default function PublicPhotoBook() {
               <option value="date_asc">Data (mais antiga)</option>
               <option value="pdv">PDV</option>
               <option value="product">Produto</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-zinc-700">Fotos por página (PDF):</label>
+            <select
+              value={photosPerPage}
+              onChange={e => setPhotosPerPage(Number(e.target.value))}
+              className="px-2 py-1.5 rounded border border-zinc-400 text-sm bg-white text-zinc-900 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
+            >
+              {PHOTOS_PER_PAGE_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
             </select>
           </div>
 
