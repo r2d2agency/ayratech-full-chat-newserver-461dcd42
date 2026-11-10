@@ -849,7 +849,7 @@ function compressImage(img: HTMLImageElement, maxDim = 1200, quality = 0.75): st
   return canvas.toDataURL('image/jpeg', quality);
 }
 
-function loadImage(url: string, timeoutMs = 15000): Promise<HTMLImageElement> {
+function loadImage(url: string, timeoutMs = 60000): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     let settled = false;
