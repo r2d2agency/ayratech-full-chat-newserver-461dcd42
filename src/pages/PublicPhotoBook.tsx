@@ -372,7 +372,7 @@ export default function PublicPhotoBook() {
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => setFilterPdv('')}
-                className={`px-3 py-1.5 rounded text-sm border transition ${!filterPdv ? 'bg-orange-100 border-orange-200 text-orange-700' : 'bg-white border-zinc-300 text-zinc-700'}`}
+                className={`px-3 py-1.5 rounded text-sm border font-medium transition ${!filterPdv ? 'bg-orange-100 border-orange-200 text-orange-800' : 'bg-white border-zinc-400 text-zinc-900'}`}
               >
                 Limpar PDV
               </button>
@@ -380,7 +380,7 @@ export default function PublicPhotoBook() {
                 <button
                   key={pdv}
                   onClick={() => setFilterPdv(pdv)}
-                  className={`px-3 py-1.5 rounded text-sm border transition ${filterPdv === pdv ? 'bg-orange-100 border-orange-200 text-orange-700' : 'bg-white border-zinc-300 text-zinc-700'}`}
+                  className={`px-3 py-1.5 rounded text-sm border font-medium transition ${filterPdv === pdv ? 'bg-orange-100 border-orange-300 text-orange-800' : 'bg-white border-zinc-400 text-zinc-900'}`}
                 >
                   {pdv}
                 </button>
@@ -391,19 +391,19 @@ export default function PublicPhotoBook() {
                 type="date"
                 value={filterDateFrom}
                 onChange={e => setFilterDateFrom(e.target.value)}
-                className="px-2 py-1.5 rounded border border-zinc-300 text-sm bg-white"
+                className="px-2 py-1.5 rounded border border-zinc-400 text-sm bg-white text-zinc-900 placeholder:text-zinc-500 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
                 placeholder="De"
               />
               <input
                 type="date"
                 value={filterDateTo}
                 onChange={e => setFilterDateTo(e.target.value)}
-                className="px-2 py-1.5 rounded border border-zinc-300 text-sm bg-white"
+                className="px-2 py-1.5 rounded border border-zinc-400 text-sm bg-white text-zinc-900 placeholder:text-zinc-500 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
                 placeholder="Até"
               />
               <button
                 onClick={() => { setFilterDateFrom(''); setFilterDateTo(''); }}
-                className="px-2 py-1.5 rounded border border-zinc-300 text-xs text-zinc-500 bg-white hover:bg-zinc-50"
+                className="px-2 py-1.5 rounded border border-zinc-400 text-xs text-zinc-700 bg-white hover:bg-zinc-100 hover:text-zinc-900"
               >
                 limpar
               </button>
@@ -411,11 +411,11 @@ export default function PublicPhotoBook() {
           </div>
 
           <div className="flex items-center gap-2">
-            <label className="text-xs text-zinc-500">Ordenar por:</label>
+            <label className="text-xs font-medium text-zinc-700">Ordenar por:</label>
             <select
               value={sortBy}
               onChange={e => setSortBy(e.target.value)}
-              className="px-2 py-1.5 rounded border border-zinc-300 text-sm bg-white"
+              className="px-2 py-1.5 rounded border border-zinc-400 text-sm bg-white text-zinc-900 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
             >
               <option value="date_desc">Data (mais recente)</option>
               <option value="date_asc">Data (mais antiga)</option>
