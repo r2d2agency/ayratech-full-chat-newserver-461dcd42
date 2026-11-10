@@ -112,6 +112,7 @@ export function BookEditorDialog({ open, onOpenChange, photos: initialPhotos, br
     initialPhotos.map(p => ({ ...p, caption: '', photo_url: resolveMediaUrl(p.photo_url) || '' }))
   );
   const [generating, setGenerating] = useState(false);
+  const [genProgress, setGenProgress] = useState(0);
   const [sharing, setSharing] = useState(false);
   const [webLink, setWebLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -189,6 +190,7 @@ export function BookEditorDialog({ open, onOpenChange, photos: initialPhotos, br
   // Generate and download PDF client-side
   const handleDownloadPdf = async () => {
     setGenerating(true);
+    setGenProgress(0);
     try {
       const { default: jsPDF } = await import('jspdf');
       const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -290,7 +292,11 @@ export function BookEditorDialog({ open, onOpenChange, photos: initialPhotos, br
 
       // Photo pages
       const ppp = photosPerPage;
+      const totalSteps = Math.ceil(bookPhotos.length / ppp) + 1;
+      let step = 0;
       for (let i = 0; i < bookPhotos.length; i += ppp) {
+        step++;
+        setGenProgress(Math.round((step / totalSteps) * 100));
         doc.addPage();
         doc.setFillColor(255, 255, 255);
         doc.rect(0, 0, pageW, pageH, 'F');
@@ -354,6 +360,7 @@ export function BookEditorDialog({ open, onOpenChange, photos: initialPhotos, br
         }
       }
 
+      setGenProgress(100);
       doc.save(`book-fotos-${brandName || 'cliente'}-${new Date().toISOString().slice(0, 10)}.pdf`);
       toast({ title: "PDF gerado!", description: "O download do book foi iniciado" });
     } catch (err: any) {
@@ -365,6 +372,7 @@ export function BookEditorDialog({ open, onOpenChange, photos: initialPhotos, br
       toast({ title: "Erro ao gerar PDF", description: err?.message || 'Erro desconhecido', variant: "destructive" });
     } finally {
       setGenerating(false);
+      setGenProgress(0);
     }
   };
 
@@ -707,8 +715,13 @@ export function BookEditorDialog({ open, onOpenChange, photos: initialPhotos, br
                 <h3 className="text-sm font-medium flex items-center gap-2"><Download className="h-4 w-4" /> Download PDF</h3>
                 <p className="text-xs text-muted-foreground">Gere o book em PDF profissional com timbrado ({photosPerPage} fotos/página)</p>
                 <Button onClick={handleDownloadPdf} disabled={generating || bookPhotos.length === 0} className="w-full">
-                  {generating ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Gerando PDF...</> : <><Download className="h-4 w-4 mr-2" /> Baixar PDF</>}
+                  {generating ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Gerando PDF... {genProgress}%</> : <><Download className="h-4 w-4 mr-2" /> Baixar PDF</>}
                 </Button>
+                {generating && (
+                  <div className="w-full h-2 bg-muted rounded overflow-hidden mt-2">
+                    <div className="h-full bg-primary transition-all" style={{ width: `${genProgress}%` }} />
+                  </div>
+                )}
               </CardContent>
             </Card>
 
