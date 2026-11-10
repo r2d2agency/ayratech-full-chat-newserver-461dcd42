@@ -478,6 +478,12 @@ app.use('/api/promotor', promotorRoutes);
 app.use('/api/supervisor', supervisorRoutes);
 app.use('/api/merchandising', merchandisingRoutes);
 app.use('/api/merch', merchRoutesRoutes);
+// Public photo book route (no auth) — mounted separately to bypass any auth middleware
+app.get('/api/public/photo-book/:token', async (req, res, next) => {
+  // delegate to merch router by rewriting url
+  req.url = `/photo-book/public/${req.params.token}`;
+  merchRoutesRoutes(req, res, next);
+});
 app.use('/api/access-control', accessControlRoutes);
 app.use('/api/price-research', priceResearchRoutes);
 app.use('/api/stock-count', stockCountRoutes);

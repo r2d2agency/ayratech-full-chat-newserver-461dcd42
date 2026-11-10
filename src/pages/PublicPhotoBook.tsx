@@ -44,7 +44,7 @@ export default function PublicPhotoBook() {
     if (!token) return;
     const fetchBook = async () => {
       try {
-        const res = await fetch(`${API_URL}/api/merch/photo-book/public/${token}`);
+        const res = await fetch(`${API_URL}/api/public/photo-book/${token}`);
         if (!res.ok) {
           if (res.status === 404) throw new Error('Book não encontrado ou expirado');
           throw new Error('Erro ao carregar book');
