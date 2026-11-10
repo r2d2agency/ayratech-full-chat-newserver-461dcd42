@@ -437,7 +437,7 @@ export default function MerchRelatorios() {
   const filters = useMemo(() => ({
     date_from: dateRange.from,
     date_to: dateRange.to,
-    brand_id: brandFilter || undefined,
+    brand_id: (user?.brand_id || brandFilter) || undefined,
     pdv_id: pdvFilter || undefined,
     promoter_id: promoterFilter || undefined,
     group_pdv: tab === 'produto' && groupPdv ? '1' : undefined,
