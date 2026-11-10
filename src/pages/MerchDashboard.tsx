@@ -28,7 +28,7 @@ import {
 import { useBrands } from "@/hooks/use-merchandising";
 import { format, startOfWeek, endOfWeek, subDays, startOfMonth } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { BrandRecord } from "@/components/merchandising/BrandRecord";
@@ -42,6 +42,7 @@ export default function MerchDashboard() {
   const [searchTerm, setSearchBrand] = useState('');
   const { data: brands = [] } = useBrands();
   const { user } = useAuth();
+  const navigate = useNavigate();
   
   // Se o usuário está restrito a uma marca, força a seleção dela
   useEffect(() => {
@@ -133,8 +134,8 @@ export default function MerchDashboard() {
             {/* Header */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
-                <h1 className="text-2xl font-bold flex items-center gap-2">
-                  <LayoutDashboard className="h-6 w-6 text-primary" />
+                <h1 className="text-2xl font-bold flex items-center gap-2 bg-gradient-to-r from-purple-600 to-indigo-600 bg-clip-text text-transparent">
+                  <LayoutDashboard className="h-6 w-6 text-purple-600" />
                   Dashboard Merchandising
                 </h1>
                 <p className="text-sm text-muted-foreground">Visão consolidada da operação em campo</p>
@@ -282,7 +283,7 @@ export default function MerchDashboard() {
               <CardContent>
                 <div className="h-[300px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={timeline}>
+                    <BarChart data={timeline} onClick={() => navigate('/merch/relatorios?tab=pdv')}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--muted))" />
                       <XAxis 
                         dataKey="date" 
@@ -452,7 +453,7 @@ export default function MerchDashboard() {
             <CardContent>
               <div className="space-y-3">
                 {ranking.slice(0, 5).map((r: any, i: number) => (
-                  <div key={r.pdv_id} className="flex items-center justify-between group cursor-default">
+                  <div key={r.pdv_id} className="flex items-center justify-between group cursor-pointer hover:bg-muted/50 rounded p-1" onClick={() => navigate(`/merch/relatorios?tab=pdv&pdv_id=${r.pdv_id}`)}>
                     <div className="flex items-center gap-2 min-w-0">
                       <div className="h-6 w-6 rounded bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground">
                         {i + 1}
