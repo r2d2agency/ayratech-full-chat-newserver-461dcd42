@@ -437,6 +437,7 @@ app.use('/api/admin', adminRoutes);
 // Público: auto-cadastro de colaborador (token + chave). Deve vir antes de adminRoutes.
 app.use('/api/public/rh-onboarding', rhOnboardingPublicRouter);
 // Mount admin routes also at /api/public for public endpoints (pre-register, branding)
+app.use('/api/public', publicPhotoBookRoutes);
 app.use('/api/public', adminRoutes);
 app.use('/api/uploads', uploadsRoutes);
 app.use('/api/notifications', notificationsRoutes);
