@@ -879,8 +879,16 @@ router.post('/routes', async (req, res) => {
         const entries = brandChecklists[primaryBrandId] || [];
         if (entries.length > 0) {
           singleBrandChecklistIds = checklistsForWeekday(entries, dWeekday).map((c) => c.checklist_id);
-          if (singleBrandChecklistIds.length === 0 && (recurrence_type === 'daily' || recurrence_type === 'weekly')) {
-            continue; // nenhum checklist aplica nesta data
+          if (singleBrandChecklistIds.length === 0) {
+            // Nenhum checklist restrito por dia da semana aplica a esta data.
+            // Em vez de pular a rota (o que impedia a criação da rota e,
+            // consequentemente, a exibição da contagem de saldo), caímos no
+            // checklist efetivo da marca, quando existir, para não perder a rota.
+            if (effectiveChecklistId) {
+              singleBrandChecklistIds = [effectiveChecklistId];
+            } else if (recurrence_type === 'daily' || recurrence_type === 'weekly') {
+              continue; // nenhum checklist aplica nesta data
+            }
           }
         } else if (effectiveChecklistId) {
           singleBrandChecklistIds = [effectiveChecklistId];

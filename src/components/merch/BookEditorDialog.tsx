@@ -358,7 +358,11 @@ export function BookEditorDialog({ open, onOpenChange, photos: initialPhotos, br
       toast({ title: "PDF gerado!", description: "O download do book foi iniciado" });
     } catch (err: any) {
       console.error('PDF generation error:', err);
-      toast({ title: "Erro ao gerar PDF", description: err.message, variant: "destructive" });
+      try {
+        const { logger } = await import('@/lib/logger');
+        logger.error('[BookEditor] PDF generation failed', { error: err?.message, stack: err?.stack });
+      } catch {}
+      toast({ title: "Erro ao gerar PDF", description: err?.message || 'Erro desconhecido', variant: "destructive" });
     } finally {
       setGenerating(false);
     }
@@ -782,7 +786,8 @@ async function drawPhotoBlock(
       imgW = imgH * ratio;
     }
     doc.addImage(img, 'JPEG', x + (w - imgW) / 2, y, imgW, actualH);
-  } catch {
+  } catch (e: any) {
+    console.warn('[BookEditor] foto indisponível:', photo?.id, photo?.photo_url, e?.message);
     doc.setFillColor(240, 240, 240);
     doc.rect(x, y, w, imgH, 'F');
     doc.setTextColor(150, 150, 150);
@@ -818,12 +823,28 @@ async function drawPhotoBlock(
   }
 }
 
-function loadImage(url: string): Promise<HTMLImageElement> {
+function loadImage(url: string, timeoutMs = 15000): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error('Timeout ao carregar imagem'));
+    }, timeoutMs);
     img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = reject;
+    img.onload = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(img);
+    };
+    img.onerror = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error('Falha ao carregar imagem'));
+    };
     img.src = url;
   });
 }
