@@ -434,6 +434,7 @@ export default function MerchRelatorios() {
     return getDateRange(period);
   }, [period, dateFrom, dateTo]);
 
+  const { user } = useAuth();
   const filters = useMemo(() => ({
     date_from: dateRange.from,
     date_to: dateRange.to,
@@ -441,7 +442,7 @@ export default function MerchRelatorios() {
     pdv_id: pdvFilter || undefined,
     promoter_id: promoterFilter || undefined,
     group_pdv: tab === 'produto' && groupPdv ? '1' : undefined,
-  }), [dateRange, brandFilter, pdvFilter, promoterFilter, tab, groupPdv]);
+  }), [dateRange, user?.brand_id, brandFilter, pdvFilter, promoterFilter, tab, groupPdv]);
 
   useEffect(() => {
     if (inactivityConfig) {
