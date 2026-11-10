@@ -378,48 +378,50 @@ export default function PublicPhotoBook() {
             {pdfGenerating ? 'Gerando PDF...' : 'Baixar PDF'}
           </button>
 
-          <div className="flex-1 border border-zinc-200 rounded-lg p-3 flex flex-col sm:flex-row sm:items-center gap-3">
-            <div className="flex flex-wrap gap-2">
+          {/* PDV filter chips */}
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setFilterPdv('')}
+              className={`px-3 py-1.5 rounded text-sm border font-medium transition ${!filterPdv ? 'bg-orange-100 border-orange-200 text-orange-800' : 'bg-white border-zinc-400 text-zinc-900'}`}
+            >
+              Limpar PDV
+            </button>
+            {pdvOptions.map(pdv => (
               <button
-                onClick={() => setFilterPdv('')}
-                className={`px-3 py-1.5 rounded text-sm border font-medium transition ${!filterPdv ? 'bg-orange-100 border-orange-200 text-orange-800' : 'bg-white border-zinc-400 text-zinc-900'}`}
+                key={pdv}
+                onClick={() => setFilterPdv(pdv)}
+                className={`px-3 py-1.5 rounded text-sm border font-medium transition ${filterPdv === pdv ? 'bg-orange-100 border-orange-300 text-orange-800' : 'bg-white border-zinc-400 text-zinc-900'}`}
               >
-                Limpar PDV
+                {pdv}
               </button>
-              {pdvOptions.map(pdv => (
-                <button
-                  key={pdv}
-                  onClick={() => setFilterPdv(pdv)}
-                  className={`px-3 py-1.5 rounded text-sm border font-medium transition ${filterPdv === pdv ? 'bg-orange-100 border-orange-300 text-orange-800' : 'bg-white border-zinc-400 text-zinc-900'}`}
-                >
-                  {pdv}
-                </button>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <input
-                type="date"
-                value={filterDateFrom}
-                onChange={e => setFilterDateFrom(e.target.value)}
-                className="px-2 py-1.5 rounded border border-zinc-400 text-sm bg-white text-zinc-900 placeholder:text-zinc-500 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
-                placeholder="De"
-              />
-              <input
-                type="date"
-                value={filterDateTo}
-                onChange={e => setFilterDateTo(e.target.value)}
-                className="px-2 py-1.5 rounded border border-zinc-400 text-sm bg-white text-zinc-900 placeholder:text-zinc-500 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
-                placeholder="Até"
-              />
-              <button
-                onClick={() => { setFilterDateFrom(''); setFilterDateTo(''); }}
-                className="px-2 py-1.5 rounded border border-zinc-400 text-xs text-zinc-700 bg-white hover:bg-zinc-100 hover:text-zinc-900"
-              >
-                limpar
-              </button>
-            </div>
+            ))}
           </div>
 
+          {/* Date range filters */}
+          <div className="flex gap-2">
+            <input
+              type="date"
+              value={filterDateFrom}
+              onChange={e => setFilterDateFrom(e.target.value)}
+              className="px-2 py-1.5 rounded border border-zinc-400 text-sm bg-white text-zinc-900 placeholder:text-zinc-500 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
+              placeholder="De"
+            />
+            <input
+              type="date"
+              value={filterDateTo}
+              onChange={e => setFilterDateTo(e.target.value)}
+              className="px-2 py-1.5 rounded border border-zinc-400 text-sm bg-white text-zinc-900 placeholder:text-zinc-500 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
+              placeholder="Até"
+            />
+            <button
+              onClick={() => { setFilterDateFrom(''); setFilterDateTo(''); }}
+              className="px-2 py-1.5 rounded border border-zinc-400 text-xs text-zinc-700 bg-white hover:bg-zinc-100 hover:text-zinc-900"
+            >
+              limpar
+            </button>
+          </div>
+
+          {/* Ordering */}
           <div className="flex items-center gap-2">
             <label className="text-xs font-medium text-zinc-700">Ordenar por:</label>
             <select
@@ -434,6 +436,7 @@ export default function PublicPhotoBook() {
             </select>
           </div>
 
+          {/* Photos per page for PDF */}
           <div className="flex items-center gap-2">
             <label className="text-xs font-medium text-zinc-700">Fotos por página (PDF):</label>
             <select
@@ -454,7 +457,7 @@ export default function PublicPhotoBook() {
               onClick={() => { setFilterPdv(''); setFilterDateFrom(''); setFilterDateTo(''); }}
               className="px-3 py-1.5 rounded border border-red-200 text-red-600 text-sm bg-white hover:bg-red-50"
             >
-            Limpar filtros
+              Limpar filtros
             </button>
           )}
         </div>
