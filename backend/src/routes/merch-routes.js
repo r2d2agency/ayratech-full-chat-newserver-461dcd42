@@ -4012,8 +4012,8 @@ router.post('/promotor/routes/:id/checkin', promotorAuth, async (req, res) => {
       `SELECT r.*, bc.require_checkin_photo, r.pdv_id, r.visit_date
        FROM merch_routes r
        LEFT JOIN brand_checklists bc ON bc.id = r.checklist_id
-       WHERE r.id=$1 AND (r.promoter_id=$2 OR EXISTS (SELECT 1 FROM route_person_assignments rpa WHERE rpa.route_id=r.id AND rpa.employee_id=$2 AND COALESCE(rpa.active, true)=true)),
-      [req.params.id, req.employeeId]
+       WHERE r.id=$1 AND (r.promoter_id=$2 OR EXISTS (SELECT 1 FROM route_person_assignments rpa WHERE rpa.route_id=r.id AND rpa.employee_id=$2 AND COALESCE(rpa.active, true)=true))
+      `, [req.params.id, req.employeeId]
     );
     if (!route.rows.length) return res.status(404).json({ error: 'Rota não encontrada' });
     // Rota "in_progress" SEM checkin_at é estado inconsistente (o app chegou a
