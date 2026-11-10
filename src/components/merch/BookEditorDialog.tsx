@@ -250,7 +250,7 @@ export function BookEditorDialog({ open, onOpenChange, photos: initialPhotos, br
           const img = await loadImage(logoToUse);
           const logoH = 20;
           const logoW = (img.width / img.height) * logoH;
-          doc.addImage(img, 'PNG', (pageW - logoW) / 2, coverLogoY, logoW, logoH);
+          doc.addImage(compressImage(img, 400, 0.8), 'JPEG', (pageW - logoW) / 2, coverLogoY, logoW, logoH);
           coverLogoY += logoH + 10;
         } catch { coverLogoY += 10; }
       }
@@ -798,7 +798,8 @@ async function drawPhotoBlock(
     } else {
       imgW = imgH * ratio;
     }
-    doc.addImage(img, 'JPEG', x + (w - imgW) / 2, y, imgW, actualH);
+    const dataUrl = compressImage(img);
+    doc.addImage(dataUrl, 'JPEG', x + (w - imgW) / 2, y, imgW, actualH);
   } catch (e: any) {
     console.warn('[BookEditor] foto indisponível:', photo?.id, photo?.photo_url, e?.message);
     doc.setFillColor(240, 240, 240);
@@ -834,6 +835,18 @@ async function drawPhotoBlock(
     const captionLines = doc.splitTextToSize(photo.caption, w);
     doc.text(captionLines, x, infoY + (compact ? 4 : 9));
   }
+}
+
+function compressImage(img: HTMLImageElement, maxDim = 1200, quality = 0.75): string {
+  const ratio = Math.min(maxDim / img.width, maxDim / img.height, 1);
+  const w = Math.round(img.width * ratio);
+  const h = Math.round(img.height * ratio);
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (ctx) ctx.drawImage(img, 0, 0, w, h);
+  return canvas.toDataURL('image/jpeg', quality);
 }
 
 function loadImage(url: string, timeoutMs = 15000): Promise<HTMLImageElement> {
