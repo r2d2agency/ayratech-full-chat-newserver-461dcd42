@@ -228,8 +228,8 @@ async function computeMergedChecklist(checklistIds) {
     eff_require_extra_point: anyTrue('require_extra_point', false),
     eff_require_category_photos: photoRows.length > 0,
     eff_category_photo_mode: (photoRows.length > 0 ? mergePhotoModes(photoRows.map((r) => r.category_photo_mode || 'both')) : null) || 'both',
-    eff_min_category_photos_before: photoRows.length > 0 ? maxInt(photoRows, 'min_category_photos_before', 1) : 0,
-    eff_min_category_photos_after: photoRows.length > 0 ? maxInt(photoRows, 'min_category_photos_after', 1) : 0,
+    eff_min_category_photos_before: (photoRows.length > 0 && photoRows.map((r) => r.category_photo_mode || 'both').some((m) => m === 'before' || m === 'both')) ? maxInt(photoRows, 'min_category_photos_before', 1) : 0,
+    eff_min_category_photos_after: (photoRows.length > 0 && photoRows.map((r) => r.category_photo_mode || 'both').some((m) => m === 'after' || m === 'both')) ? maxInt(photoRows, 'min_category_photos_after', 1) : 0,
     eff_checklist_type: effChecklistType,
   };
 }
