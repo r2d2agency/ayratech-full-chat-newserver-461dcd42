@@ -480,8 +480,9 @@ export default function MerchRelatorios() {
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <BarChart3 className="h-6 w-6 text-primary" />
-            Relatórios Inteligentes
+            {user?.brand_id ? `Bem-vindo, ${brands.find(b => b.id === user.brand_id)?.name || 'Marca'}` : 'Relatórios Inteligentes'}
           </h1>
+          {!user?.brand_id && (
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => setConfigOpen(true)}>
               <Settings className="h-4 w-4 mr-1" />Configurar Inatividade
@@ -496,6 +497,7 @@ export default function MerchRelatorios() {
               <Sparkles className="h-4 w-4 mr-1" />Análise IA
             </Button>
           </div>
+          )}
         </div>
 
         {/* Filters Bar */}
