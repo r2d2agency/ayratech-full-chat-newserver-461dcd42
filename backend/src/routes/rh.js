@@ -2478,7 +2478,14 @@ router.get('/dashboard-stats', async (req, res) => {
        FROM time_records tr JOIN employees e ON e.id = tr.employee_id
        WHERE tr.organization_id = $1 AND tr.record_date = $2
          AND tr.entry1 IS NOT NULL AND e.work_schedule IS NOT NULL
-         AND tr.entry1 > CAST(SPLIT_PART(e.work_schedule, '-', 1) || ':00' AS TIME) + INTERVAL '5 minutes'
+         AND tr.entry1 > (
+           CAST(
+             COALESCE(
+               NULLIF(e.work_schedule::jsonb->>'entry', ''),
+               SPLIT_PART(e.work_schedule, '-', 1)
+             ) AS TIME
+           ) + INTERVAL '5 minutes'
+         )
        ORDER BY tr.entry1 DESC`, [orgId, today]);
     const absenceRes = await query(
       `SELECT e.id, e.full_name, e.position, d.name as department_name
