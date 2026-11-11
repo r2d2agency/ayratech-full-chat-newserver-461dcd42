@@ -4333,11 +4333,20 @@ router.post('/promotor/executions/:id/damage', promotorAuth, async (req, res) =>
     const e = exec.rows[0];
     const { qty_store, qty_stock, reason, description, photo_url, location } = req.body;
     await query('UPDATE route_product_executions SET has_damage=true WHERE id=$1', [req.params.id]);
+    // Fallback: rotas antigas podem não ter brand_id preenchido — busca na tabela de produtos
+    let resolvedBrandId = e.brand_id;
+    if (!resolvedBrandId && e.product_id) {
+      try {
+        const pb = await query('SELECT brand_id FROM merch_products WHERE id=$1', [e.product_id]);
+        resolvedBrandId = pb.rows[0]?.brand_id || null;
+      } catch (_) {}
+    }
+    if (!resolvedBrandId) return res.status(400).json({ error: 'Não foi possível identificar a marca desta rota. Sincronize a agenda novamente.' });
     const result = await query(
       `INSERT INTO product_damages (organization_id, route_id, product_id, pdv_id, brand_id, execution_id, promoter_id,
        location, qty_store, qty_stock, reason, description, photo_url, kind)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'damage') RETURNING *`,
-      [e.organization_id, e.route_id, e.product_id, e.pdv_id, e.brand_id, req.params.id, req.employeeId,
+      [e.organization_id, e.route_id, e.product_id, e.pdv_id, resolvedBrandId, req.params.id, req.employeeId,
        location||'store', qty_store||0, qty_stock||0, reason, description, photo_url]
     );
     res.json(result.rows[0]);
@@ -4363,11 +4372,19 @@ router.post('/promotor/executions/:id/discard', promotorAuth, async (req, res) =
       [e.route_id, e.product_id, req.params.id, qty_store||0, qty_stock||0, reason, photo_url, observation, req.employeeId]
     );
     // Unified: also create a product_damages row with kind='discard' so it enters the Perdas workflow
+    let resolvedBrandId = e.brand_id;
+    if (!resolvedBrandId && e.product_id) {
+      try {
+        const pb = await query('SELECT brand_id FROM merch_products WHERE id=$1', [e.product_id]);
+        resolvedBrandId = pb.rows[0]?.brand_id || null;
+      } catch (_) {}
+    }
+    if (!resolvedBrandId) return res.status(400).json({ error: 'Não foi possível identificar a marca desta rota. Sincronize a agenda novamente.' });
     const result = await query(
       `INSERT INTO product_damages (organization_id, route_id, product_id, pdv_id, brand_id, execution_id, promoter_id,
         location, qty_store, qty_stock, reason, description, photo_url, kind)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'discard') RETURNING *`,
-      [e.organization_id, e.route_id, e.product_id, e.pdv_id, e.brand_id, req.params.id, req.employeeId,
+      [e.organization_id, e.route_id, e.product_id, e.pdv_id, resolvedBrandId, req.params.id, req.employeeId,
        location||'store', qty_store||0, qty_stock||0, reason, observation, photo_url]
     );
     res.json(result.rows[0]);
