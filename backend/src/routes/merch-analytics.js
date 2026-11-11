@@ -11,6 +11,12 @@ async function getOrgInfo(userId) {
   return r.rows[0];
 }
 
+// Portal da marca: força brand_id do usuário logado nos filtros de analytics
+function withBrandLock(queryParams, orgInfo) {
+  if (orgInfo?.brand_id) return { ...queryParams, lockedBrandId: orgInfo.brand_id };
+  return queryParams;
+}
+
 async function ensureTables() {
   await query(`CREATE TABLE IF NOT EXISTS merchan_kpi_snapshots (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), organization_id UUID NOT NULL,
@@ -89,7 +95,9 @@ function buildDateFilter(params, paramIdx, dateFrom, dateTo, dateCol = 'r.visit_
 }
 
 function buildRouteFiltersFromQuery(queryParams, params, startIdx, routeAlias = 'r') {
-  const { date_from, date_to, brand_id, pdv_id, promoter_id } = queryParams;
+  const { date_from, date_to, pdv_id, promoter_id } = queryParams;
+  // brand_id pode vir da query ou do override do portal da marca (lockedBrandId)
+  const brand_id = queryParams.lockedBrandId || queryParams.brand_id;
   let idx = startIdx;
   let filters = '';
 
@@ -384,12 +392,22 @@ router.get('/report/promoter', async (req, res) => {
     if (!orgInfo?.organization_id) return res.status(403).json({ error: 'Sem organização' });
     const orgId = orgInfo.organization_id;
     const { date_from, date_to, promoter_id } = req.query;
+    const locked = withBrandLock(req.query, orgInfo);
     const params = [orgId];
     let idx = 2;
     let filters = '';
     if (date_from) { filters += ` AND r.visit_date >= $${idx}`; params.push(date_from); idx++; }
     if (date_to) { filters += ` AND r.visit_date <= $${idx}`; params.push(date_to); idx++; }
     if (promoter_id) { filters += ` AND r.promoter_id = $${idx}`; params.push(promoter_id); idx++; }
+    // Portal da marca: só promotores com rotas da marca + só rotas da marca
+    let brandJoin = '';
+    if (locked.lockedBrandId) {
+      filters += ` AND r.brand_id = $${idx}`; params.push(locked.lockedBrandId); idx++;
+      brandJoin = ` AND r2.brand_id = $${idx}`; params.push(locked.lockedBrandId); idx++;
+    } else if (req.query.brand_id) {
+      filters += ` AND r.brand_id = $${idx}`; params.push(req.query.brand_id); idx++;
+      brandJoin = ` AND r2.brand_id = $${idx}`; params.push(req.query.brand_id); idx++;
+    }
 
     const rows = (await query(`
       SELECT e.id as promoter_id, e.full_name as promoter_name,
@@ -408,12 +426,15 @@ router.get('/report/promoter', async (req, res) => {
 
     for (const row of rows) {
       try {
+        const enrichParams = [row.promoter_id, orgId];
+        let enrichExtra = '';
+        if (locked.lockedBrandId) { enrichExtra = ` AND r2.brand_id = $${enrichParams.length + 1}`; enrichParams.push(locked.lockedBrandId); }
         const stats = (await query(`
-          SELECT 
-            (SELECT COUNT(*) FROM route_product_executions rpe JOIN merch_routes r2 ON r2.id = rpe.route_id WHERE r2.promoter_id = $1 AND r2.organization_id = $2) as executed,
-            (SELECT COALESCE(SUM(qty_store + qty_stock), 0) FROM product_damages pd JOIN merch_routes r2 ON r2.id = pd.route_id WHERE r2.promoter_id = $1 AND r2.organization_id = $2) as damages,
-            (SELECT COALESCE(SUM(qty_store + qty_stock), 0) FROM product_ruptures pr JOIN merch_routes r2 ON r2.id = pr.route_id WHERE r2.promoter_id = $1 AND r2.organization_id = $2) as stockouts
-        `, [row.promoter_id, orgId])).rows[0];
+          SELECT
+            (SELECT COUNT(*) FROM route_product_executions rpe JOIN merch_routes r2 ON r2.id = rpe.route_id WHERE r2.promoter_id = $1 AND r2.organization_id = $2${enrichExtra.replace(/r2\./g, 'r2.')}) as executed,
+            (SELECT COALESCE(SUM(qty_store + qty_stock), 0) FROM product_damages pd JOIN merch_routes r2 ON r2.id = pd.route_id WHERE r2.promoter_id = $1 AND r2.organization_id = $2${enrichExtra}) as damages,
+            (SELECT COALESCE(SUM(qty_store + qty_stock), 0) FROM product_ruptures pr JOIN merch_routes r2 ON r2.id = pr.route_id WHERE r2.promoter_id = $1 AND r2.organization_id = $2${enrichExtra}) as stockouts
+        `, enrichParams)).rows[0];
         
         row.products_executed = parseInt(stats?.executed) || 0;
         row.damages = parseInt(stats?.damages) || 0;
@@ -425,7 +446,10 @@ router.get('/report/promoter', async (req, res) => {
 
       // Photos
       try {
-        const ph = (await query(`SELECT COUNT(*) as cnt FROM route_photos rp JOIN merch_routes r ON r.id = rp.route_id WHERE r.promoter_id=$1 AND r.organization_id=$2`, [row.promoter_id, orgId])).rows[0];
+        const phParams = [row.promoter_id, orgId];
+        let phExtra = '';
+        if (locked.lockedBrandId) { phExtra = ` AND r.brand_id = $${phParams.length + 1}`; phParams.push(locked.lockedBrandId); }
+        const ph = (await query(`SELECT COUNT(*) as cnt FROM route_photos rp JOIN merch_routes r ON r.id = rp.route_id WHERE r.promoter_id=$1 AND r.organization_id=$2${phExtra}`, phParams)).rows[0];
         row.photos = parseInt(ph?.cnt) || 0;
       } catch { row.photos = 0; }
 
@@ -445,7 +469,7 @@ router.get('/report/product', authenticate, async (req, res) => {
     const groupPdv = ['1', 'true', 'yes'].includes(String(req.query.group_pdv || '').toLowerCase());
 
     const routeParams = [orgId];
-    const { filters: routeFilters } = buildRouteFiltersFromQuery(req.query, routeParams, 2);
+    const { filters: routeFilters } = buildRouteFiltersFromQuery(withBrandLock(req.query, orgInfo), routeParams, 2);
 
     const productParams = [...routeParams];
     let productFilter = '';
@@ -621,11 +645,19 @@ router.get('/report/category', authenticate, async (req, res) => {
     const orgId = orgInfo?.organization_id;
     if (!orgId) return res.status(403).json({ error: 'Sem organização' });
     const { date_from, date_to } = req.query;
+    const locked = withBrandLock(req.query, orgInfo);
     const params = [orgId];
     let idx = 2;
     let filters = '';
     if (date_from) { filters += ` AND r.visit_date >= $${idx}`; params.push(date_from); idx++; }
     if (date_to) { filters += ` AND r.visit_date <= $${idx}`; params.push(date_to); idx++; }
+    // Portal da marca: categorias só entram via produtos da marca (JOIN merch_products p);
+    // força também r.brand_id para rotas legadas
+    if (locked.lockedBrandId) {
+      filters += ` AND (p.brand_id = $${idx} OR r.brand_id = $${idx})`; params.push(locked.lockedBrandId); idx++;
+    } else if (locked.brand_id) {
+      filters += ` AND (p.brand_id = $${idx} OR r.brand_id = $${idx})`; params.push(locked.brand_id); idx++;
+    }
 
     const rows = (await query(`
       SELECT c.id as category_id, c.name as category_name,
@@ -657,7 +689,7 @@ router.get('/report/stockouts', async (req, res) => {
     if (!orgId) return res.status(403).json({ error: 'Sem organização' });
     
     const params = [orgId];
-    const { filters } = buildRouteFiltersFromQuery(req.query, params, 2);
+    const { filters } = buildRouteFiltersFromQuery(withBrandLock(req.query, orgInfo), params, 2);
 
     const rows = (await query(`
       SELECT 
@@ -697,11 +729,14 @@ router.get('/charts/routes-timeline', authenticate, async (req, res) => {
     const orgId = orgInfo?.organization_id;
     if (!orgId) return res.status(403).json({ error: 'Sem organização' });
     const { date_from, date_to } = req.query;
+    const locked = withBrandLock(req.query, orgInfo);
     const params = [orgId];
     let idx = 2;
     let filters = '';
     if (date_from) { filters += ` AND r.visit_date >= $${idx}`; params.push(date_from); idx++; }
     if (date_to) { filters += ` AND r.visit_date <= $${idx}`; params.push(date_to); idx++; }
+    if (locked.lockedBrandId) { filters += ` AND r.brand_id = $${idx}`; params.push(locked.lockedBrandId); idx++; }
+    else if (locked.brand_id) { filters += ` AND r.brand_id = $${idx}`; params.push(locked.brand_id); idx++; }
 
     const rows = (await query(`
       SELECT r.visit_date::text as date,
@@ -882,7 +917,7 @@ router.get('/analytical', async (req, res) => {
     if (!orgId) return res.status(403).json({ error: 'Sem organização' });
 
     const params = [orgId];
-    const { filters } = buildRouteFiltersFromQuery(req.query, params, 2);
+    const { filters } = buildRouteFiltersFromQuery(withBrandLock(req.query, orgInfo), params, 2);
 
     // Summary
     const summaryQ = `
@@ -968,7 +1003,7 @@ router.get('/ranking/issues', authenticate, async (req, res) => {
     const orgId = orgInfo?.organization_id;
     if (!orgId) return res.status(403).json({ error: 'Sem organização' });
     const params = [orgId];
-    const { filters } = buildRouteFiltersFromQuery(req.query, params, 2);
+    const { filters } = buildRouteFiltersFromQuery(withBrandLock(req.query, orgInfo), params, 2);
 
     const rows = (await query(`
       WITH filtered_pdvs AS (

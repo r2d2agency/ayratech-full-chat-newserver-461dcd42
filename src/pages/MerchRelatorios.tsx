@@ -435,14 +435,19 @@ export default function MerchRelatorios() {
   }, [period, dateFrom, dateTo]);
 
   const { user } = useAuth();
+  // Portal da marca: brand_id travado no do usuário — esconde o seletor e força o filtro
+  const lockedBrandId = (user as any)?.brand_id || '';
+  useEffect(() => {
+    if (lockedBrandId && brandFilter !== lockedBrandId) setBrandFilter(lockedBrandId);
+  }, [lockedBrandId]);
   const filters = useMemo(() => ({
     date_from: dateRange.from,
     date_to: dateRange.to,
-    brand_id: (user?.brand_id || brandFilter) || undefined,
+    brand_id: (lockedBrandId || brandFilter) || undefined,
     pdv_id: pdvFilter || undefined,
     promoter_id: promoterFilter || undefined,
     group_pdv: tab === 'produto' && groupPdv ? '1' : undefined,
-  }), [dateRange, user?.brand_id, brandFilter, pdvFilter, promoterFilter, tab, groupPdv]);
+  }), [dateRange, lockedBrandId, brandFilter, pdvFilter, promoterFilter, tab, groupPdv]);
 
   useEffect(() => {
     if (inactivityConfig) {
@@ -523,6 +528,7 @@ export default function MerchRelatorios() {
                 </div>
               </>
             )}
+            {!lockedBrandId && (
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Marca</label>
               <SearchableSelect
@@ -534,6 +540,7 @@ export default function MerchRelatorios() {
                 placeholder="Todas"
               />
             </div>
+            )}
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">PDV</label>
               <SearchableSelect
@@ -565,24 +572,32 @@ export default function MerchRelatorios() {
             <TabsTrigger value="dashboard"><Target className="h-4 w-4 mr-1" />Dashboard</TabsTrigger>
             <TabsTrigger value="analitico"><FileText className="h-4 w-4 mr-1" />Analítico</TabsTrigger>
             <TabsTrigger value="pdv"><Store className="h-4 w-4 mr-1" />PDV</TabsTrigger>
+            {!lockedBrandId && (
             <TabsTrigger value="marca"><Building2 className="h-4 w-4 mr-1" />Marca</TabsTrigger>
+            )}
             <TabsTrigger value="promotor"><User className="h-4 w-4 mr-1" />Promotor</TabsTrigger>
             <TabsTrigger value="produto"><Package className="h-4 w-4 mr-1" />Produto</TabsTrigger>
             <TabsTrigger value="categoria"><Layers className="h-4 w-4 mr-1" />Categoria</TabsTrigger>
+            {!lockedBrandId && (
             <TabsTrigger value="inatividade"><TimerReset className="h-4 w-4 mr-1" />Inatividade</TabsTrigger>
+            )}
             <TabsTrigger value="avarias"><AlertTriangle className="h-4 w-4 mr-1" />Avarias/Rupturas</TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard"><DashboardTab filters={filters} /></TabsContent>
           <TabsContent value="analitico"><AnaliticoTab filters={filters} /></TabsContent>
           <TabsContent value="pdv"><PDVTab filters={filters} /></TabsContent>
+          {!lockedBrandId && (
           <TabsContent value="marca"><MarcaTab filters={filters} /></TabsContent>
+          )}
           <TabsContent value="promotor"><PromotorTab filters={filters} /></TabsContent>
           <TabsContent value="produto">
             <ProdutoTab filters={filters} groupPdv={groupPdv} onGroupPdvChange={setGroupPdv} />
           </TabsContent>
           <TabsContent value="categoria"><CategoriaTab filters={filters} /></TabsContent>
+          {!lockedBrandId && (
           <TabsContent value="inatividade"><InatividadeTab filters={filters} onOpenConfig={() => setConfigOpen(true)} /></TabsContent>
+          )}
           <TabsContent value="avarias"><AvariasTab filters={filters} /></TabsContent>
         </Tabs>
       </div>
