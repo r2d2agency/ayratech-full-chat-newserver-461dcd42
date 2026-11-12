@@ -425,13 +425,13 @@ export default function MerchRelatorios() {
 
   const { toast } = useToast();
   const qc = useQueryClient();
+  const { user } = useAuth();
+  // Portal da marca: brand_id travado no do usuário — esconde o seletor e força o filtro
+  const lockedBrandId = (user as any)?.brand_id || '';
   const { data: brands = [] } = useBrands();
   const brandRecord = (brands as any[]).find((b: any) => b.id === lockedBrandId) as any;
   // Aba Fotos: liberada quando NÃO é portal de marca, ou quando a marca tem show_photos ativo
   const photosEnabled = !lockedBrandId || brandRecord?.show_photos !== false;
-  const { user } = useAuth();
-  // Portal da marca: brand_id travado no do usuário — esconde o seletor e força o filtro
-  const lockedBrandId = (user as any)?.brand_id || '';
   const { data: employees = [] } = useEmployees({ brand_id: lockedBrandId || undefined });
   const { data: pdvs = [] } = useQuery({ queryKey: ['rh-pdvs-list'], queryFn: () => api<any[]>('/api/promotor/rh/pdvs') });
   const { data: inactivityConfig } = useMerchInactivityConfig();
