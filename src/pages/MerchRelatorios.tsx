@@ -28,6 +28,7 @@ import {
   useMerchRoutesTimeline, useMerchRankingIssues, useMerchAnalytical,
   useMerchInactivityReport, useMerchInactivityConfig,
 } from "@/hooks/use-merch-analytics";
+import { usePhotoBook } from "@/hooks/use-merch-routes";
 import { useToast } from "@/hooks/use-toast";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell,
@@ -425,6 +426,9 @@ export default function MerchRelatorios() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const { data: brands = [] } = useBrands();
+  const brandRecord = (brands as any[]).find((b: any) => b.id === lockedBrandId) as any;
+  // Aba Fotos: liberada quando NÃO é portal de marca, ou quando a marca tem show_photos ativo
+  const photosEnabled = !lockedBrandId || brandRecord?.show_photos !== false;
   const { user } = useAuth();
   // Portal da marca: brand_id travado no do usuário — esconde o seletor e força o filtro
   const lockedBrandId = (user as any)?.brand_id || '';
@@ -577,13 +581,16 @@ export default function MerchRelatorios() {
             <TabsTrigger value="promotor"><User className="h-4 w-4 mr-1" />Promotor</TabsTrigger>
             <TabsTrigger value="produto"><Package className="h-4 w-4 mr-1" />Produto</TabsTrigger>
             <TabsTrigger value="categoria"><Layers className="h-4 w-4 mr-1" />Categoria</TabsTrigger>
+            {photosEnabled && (
+            <TabsTrigger value="fotos"><Camera className="h-4 w-4 mr-1" />Fotos</TabsTrigger>
+            )}
             {!lockedBrandId && (
             <TabsTrigger value="inatividade"><TimerReset className="h-4 w-4 mr-1" />Inatividade</TabsTrigger>
             )}
             <TabsTrigger value="avarias"><AlertTriangle className="h-4 w-4 mr-1" />Avarias/Rupturas</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="dashboard"><DashboardTab filters={filters} onNavigate={setTab} /></TabsContent>
+          <TabsContent value="dashboard"><DashboardTab filters={filters} onNavigate={setTab} showFotos={photosEnabled} /></TabsContent>
           <TabsContent value="analitico"><AnaliticoTab filters={filters} /></TabsContent>
           <TabsContent value="pdv"><PDVTab filters={filters} /></TabsContent>
           {!lockedBrandId && (
@@ -594,6 +601,9 @@ export default function MerchRelatorios() {
             <ProdutoTab filters={filters} groupPdv={groupPdv} onGroupPdvChange={setGroupPdv} />
           </TabsContent>
           <TabsContent value="categoria"><CategoriaTab filters={filters} /></TabsContent>
+          {photosEnabled && (
+          <TabsContent value="fotos"><FotosTab filters={filters} /></TabsContent>
+          )}
           {!lockedBrandId && (
           <TabsContent value="inatividade"><InatividadeTab filters={filters} onOpenConfig={() => setConfigOpen(true)} /></TabsContent>
           )}
@@ -692,7 +702,7 @@ function ScoreRing({ score, label }: { score: number; label: string }) {
 }
 
 // ===== Dashboard Tab =====
-function DashboardTab({ filters, onNavigate }: { filters: any; onNavigate?: (tab: string) => void }) {
+function DashboardTab({ filters, onNavigate, showFotos }: { filters: any; onNavigate?: (tab: string) => void; showFotos?: boolean }) {
   const { data, isLoading } = useMerchDashboard(filters);
   const { data: timeline = [] } = useMerchRoutesTimeline(filters);
   const { data: ranking = [] } = useMerchRankingIssues(filters);
@@ -713,7 +723,7 @@ function DashboardTab({ filters, onNavigate }: { filters: any; onNavigate?: (tab
 
       {/* Secondary KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-        <KPICard title="Fotos" value={k.photos_captured || 0} icon={Camera} />
+        <KPICard title="Fotos" value={k.photos_captured || 0} icon={Camera} onClick={showFotos ? () => onNavigate?.('fotos') : undefined} />
         <KPICard title="Avarias" value={k.damages_registered || 0} icon={AlertTriangle} color="destructive" onClick={() => onNavigate?.('avarias')} />
         <KPICard title="Rupturas" value={k.stockouts_registered || 0} icon={ShoppingCart} color="destructive" onClick={() => onNavigate?.('avarias')} />
         <KPICard title="Pesq. Preço Concluídas" value={k.price_research_completed || 0} icon={DollarSign} />
@@ -1222,6 +1232,154 @@ function InatividadeTab({ filters, onOpenConfig }: { filters: any; onOpenConfig:
           </Table>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+// ===== Fotos Tab (book de fotos somente leitura: filtros + visualização + download) =====
+const PHOTO_TYPE_LABELS: Record<string, string> = {
+  checkin: 'Check-in', checkout: 'Check-out', before: 'Antes', after: 'Depois',
+  category_before: 'Antes (Categoria)', category_after: 'Depois (Categoria)',
+  stock: 'Estoque', shelf: 'Prateleira', extra_point: 'Ponto Extra',
+  damage: 'Avaria', expiry: 'Validade', contingency: 'Contingência',
+};
+
+async function downloadPhoto(url: string, filename: string) {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } catch {
+    window.open(url, '_blank');
+  }
+}
+
+// ===== Fotos Tab (book de fotos somente leitura: filtros + visualização + download) =====
+function FotosTab({ filters }: { filters: any }) {
+  const [typeFilter, setTypeFilter] = useState('');
+  const [viewPhoto, setViewPhoto] = useState<any | null>(null);
+  const { data: photos = [], isLoading } = usePhotoBook({
+    brand_id: filters.brand_id,
+    pdv_id: filters.pdv_id,
+    promoter_id: filters.promoter_id,
+    date_from: filters.date_from,
+    date_to: filters.date_to,
+    photo_type: typeFilter || undefined,
+  });
+
+  const typeOptions = useMemo(() => {
+    const seen = new Map<string, number>();
+    photos.forEach((p: any) => { if (p.photo_type) seen.set(p.photo_type, (seen.get(p.photo_type) || 0) + 1); });
+    return [...seen.entries()].map(([value, count]) => ({ value, count }));
+  }, [photos]);
+
+  if (isLoading) return <p className="text-center text-sm text-muted-foreground py-8">Carregando fotos...</p>;
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-3">
+        <div className="flex gap-3 flex-wrap items-end">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Tipo de foto</label>
+            <Select value={typeFilter || ALL_VALUE} onValueChange={v => setTypeFilter(v === ALL_VALUE ? '' : v)}>
+              <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_VALUE}>Todos ({photos.length})</SelectItem>
+                {typeOptions.map(o => (
+                  <SelectItem key={o.value} value={o.value}>{PHOTO_TYPE_LABELS[o.value] || o.value} ({o.count})</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="text-xs text-muted-foreground pb-2">{photos.length} foto(s) — filtros de período, PDV e promotor seguem a barra acima.</p>
+        </div>
+      </Card>
+
+      {photos.length === 0 && (
+        <p className="text-center text-sm text-muted-foreground py-8">Nenhuma foto encontrada para os filtros selecionados.</p>
+      )}
+
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+        {photos.map((p: any) => {
+          const src = resolveMediaUrl(p.photo_url);
+          return (
+            <Card key={p.id} className="overflow-hidden">
+              {src ? (
+                <img
+                  src={src}
+                  alt=""
+                  loading="lazy"
+                  onClick={() => setViewPhoto(p)}
+                  className="w-full h-40 object-cover cursor-pointer hover:opacity-90"
+                  style={p.rotation ? { transform: `rotate(${p.rotation}deg)` } : undefined}
+                />
+              ) : (
+                <div className="w-full h-40 bg-muted flex items-center justify-center">
+                  <Camera className="h-8 w-8 text-muted-foreground" />
+                </div>
+              )}
+              <CardContent className="p-2 space-y-0.5">
+                <p className="text-xs font-medium truncate">{p.pdv_name || 'PDV'}</p>
+                <p className="text-[11px] text-muted-foreground truncate">
+                  {PHOTO_TYPE_LABELS[p.photo_type] || p.photo_type || 'Foto'}
+                  {p.product_name ? ` — ${p.product_name}` : p.category_name ? ` — ${p.category_name}` : ''}
+                </p>
+                <p className="text-[11px] text-muted-foreground truncate">
+                  {p.promoter_name || ''}
+                  {p.captured_at ? ` • ${new Date(p.captured_at).toLocaleDateString('pt-BR')}` : ''}
+                </p>
+                <div className="flex gap-1 pt-1">
+                  <Button variant="outline" size="sm" className="h-7 text-[11px] flex-1" onClick={() => setViewPhoto(p)}>Ver</Button>
+                  <Button
+                    variant="outline" size="sm" className="h-7 text-[11px] flex-1"
+                    onClick={() => src && downloadPhoto(src, `foto-${p.pdv_name || 'pdv'}-${p.id}.jpg`)}
+                  >
+                    <Download className="h-3 w-3 mr-1" />Baixar
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
+      {viewPhoto && (
+        <Dialog open={!!viewPhoto} onOpenChange={v => !v && setViewPhoto(null)}>
+          <DialogContent className="sm:max-w-3xl">
+            <DialogHeader>
+              <DialogTitle className="text-sm">
+                {PHOTO_TYPE_LABELS[viewPhoto.photo_type] || viewPhoto.photo_type || 'Foto'} — {viewPhoto.pdv_name || ''}
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                {[viewPhoto.product_name || viewPhoto.category_name, viewPhoto.promoter_name,
+                  viewPhoto.captured_at ? new Date(viewPhoto.captured_at).toLocaleString('pt-BR') : ''].filter(Boolean).join(' • ')}
+              </DialogDescription>
+            </DialogHeader>
+            {resolveMediaUrl(viewPhoto.photo_url) && (
+              <img
+                src={resolveMediaUrl(viewPhoto.photo_url)!}
+                alt=""
+                className="w-full max-h-[65vh] object-contain rounded-lg bg-muted"
+                style={viewPhoto.rotation ? { transform: `rotate(${viewPhoto.rotation}deg)` } : undefined}
+              />
+            )}
+            <DialogFooter>
+              <Button
+                variant="outline" size="sm"
+                onClick={() => resolveMediaUrl(viewPhoto.photo_url) && downloadPhoto(resolveMediaUrl(viewPhoto.photo_url)!, `foto-${viewPhoto.pdv_name || 'pdv'}-${viewPhoto.id}.jpg`)}
+              >
+                <Download className="h-4 w-4 mr-1" />Baixar foto
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

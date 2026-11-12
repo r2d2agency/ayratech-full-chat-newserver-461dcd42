@@ -2504,9 +2504,21 @@ router.get('/routes/:id/assignment-history', authenticate, async (req, res) => {
 // ===== LIVE PHOTO BOOK =====
 router.get('/photo-book', authenticate, async (req, res) => {
   try {
-    const orgRes = await query('SELECT organization_id FROM organization_members WHERE user_id=$1 LIMIT 1', [req.userId]);
+    const orgRes = await query('SELECT organization_id, brand_id FROM organization_members WHERE user_id=$1 LIMIT 1', [req.userId]);
+    if (!orgRes.rows.length) return res.status(403).json({ error: 'Sem organização' });
     const orgId = orgRes.rows[0].organization_id;
-    const { brand_id, pdv_id, date_from, date_to, promoter_id, category_id, photo_type, supervisor_id, rede_id, city } = req.query;
+    // Portal da marca: trava na marca do usuário logado e exige flag show_photos ativa
+    const lockedBrandId = orgRes.rows[0].brand_id || null;
+    let { brand_id, pdv_id, date_from, date_to, promoter_id, category_id, photo_type, supervisor_id, rede_id, city } = req.query;
+    if (lockedBrandId) {
+      brand_id = lockedBrandId;
+      try {
+        const flagRes = await query('SELECT show_photos FROM merch_brands WHERE id=$1 AND organization_id=$2 LIMIT 1', [lockedBrandId, orgId]);
+        if (flagRes.rows.length && flagRes.rows[0].show_photos === false) {
+          return res.status(403).json({ error: 'Visualização de fotos desativada para esta marca' });
+        }
+      } catch (e) { /* sem coluna/flag -> permite */ }
+    }
 
     // Ensure live_photo_books has upload_source column
     try { await query(`ALTER TABLE live_photo_books ADD COLUMN IF NOT EXISTS upload_source VARCHAR(20) DEFAULT 'app'`); } catch(e) {}
