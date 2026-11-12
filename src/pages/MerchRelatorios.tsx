@@ -425,7 +425,7 @@ export default function MerchRelatorios() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const { data: brands = [] } = useBrands();
-  const { data: employees = [] } = useEmployees();
+  const { data: employees = [] } = useEmployees({ brand_id: lockedBrandId || undefined });
   const { data: pdvs = [] } = useQuery({ queryKey: ['rh-pdvs-list'], queryFn: () => api<any[]>('/api/promotor/rh/pdvs') });
   const { data: inactivityConfig } = useMerchInactivityConfig();
 

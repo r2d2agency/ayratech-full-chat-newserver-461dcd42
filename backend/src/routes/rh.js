@@ -465,7 +465,7 @@ router.get('/employees', async (req, res) => {
     const orgId = req.query.org_id || await getUserOrgId(req.userId);
     if (!orgId) return res.json([]);
 
-    const { status, search, department_id, branch_id } = req.query;
+    const { status, search, department_id, branch_id, brand_id } = req.query;
     let sql = `SELECT e.*, d.name as department_name, b.name as branch_name,
                CASE WHEN caa.access_status IN ('liberado','aguardando_login','ativo') THEN true ELSE false END as promotor_access,
                COALESCE(caa.access_status, 'sem_acesso') as app_access_status,
@@ -481,6 +481,7 @@ router.get('/employees', async (req, res) => {
     if (status) { sql += ` AND e.status = $${idx++}`; params.push(status); }
     if (department_id) { sql += ` AND e.department_id = $${idx++}`; params.push(department_id); }
     if (branch_id) { sql += ` AND e.branch_id = $${idx++}`; params.push(branch_id); }
+    if (brand_id) { sql += ` AND EXISTS (SELECT 1 FROM merch_routes r WHERE r.promoter_id = e.id AND r.brand_id = $${idx})`; params.push(brand_id); idx++; }
     if (search) { sql += ` AND (e.full_name ILIKE $${idx} OR e.cpf ILIKE $${idx} OR e.email ILIKE $${idx})`; params.push(`%${search}%`); idx++; }
 
     sql += ` ORDER BY e.full_name`;
