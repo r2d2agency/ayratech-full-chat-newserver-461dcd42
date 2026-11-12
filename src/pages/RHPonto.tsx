@@ -71,12 +71,28 @@ function statusLabel(day: CartaoDay): string {
 // diferente do real, fazendo batidas somem/apareçam no dia errado. Essas
 // duas funções forçam América/São Paulo independente do fuso do navegador.
 function nowSaoPaulo(): Date {
-  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(new Date());
+  const get = (t: string) => parts.find(p => p.type === t)?.value || '0';
+  const y = get('year'); const m = get('month'); const d = get('day');
+  const h = get('hour'); const min = get('minute'); const s = get('second');
+  return new Date(`${y}-${m}-${d}T${h}:${min}:${s}`);
 }
 
 function toSaoPauloDate(d: Date): Date | null {
   if (!(d instanceof Date) || Number.isNaN(d.getTime())) return null;
-  const converted = new Date(d.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find(p => p.type === t)?.value || '0';
+  const y = get('year'); const m = get('month'); const dd = get('day');
+  const h = get('hour'); const min = get('minute'); const s = get('second');
+  const converted = new Date(`${y}-${m}-${dd}T${h}:${min}:${s}`);
   return Number.isNaN(converted.getTime()) ? null : converted;
 }
 
