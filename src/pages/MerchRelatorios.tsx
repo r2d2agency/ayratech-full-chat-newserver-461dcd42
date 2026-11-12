@@ -425,6 +425,9 @@ export default function MerchRelatorios() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const { data: brands = [] } = useBrands();
+  const { user } = useAuth();
+  // Portal da marca: brand_id travado no do usuário — esconde o seletor e força o filtro
+  const lockedBrandId = (user as any)?.brand_id || '';
   const { data: employees = [] } = useEmployees({ brand_id: lockedBrandId || undefined });
   const { data: pdvs = [] } = useQuery({ queryKey: ['rh-pdvs-list'], queryFn: () => api<any[]>('/api/promotor/rh/pdvs') });
   const { data: inactivityConfig } = useMerchInactivityConfig();
@@ -433,10 +436,6 @@ export default function MerchRelatorios() {
     if (period === 'custom' && dateFrom && dateTo) return { from: dateFrom, to: dateTo };
     return getDateRange(period);
   }, [period, dateFrom, dateTo]);
-
-  const { user } = useAuth();
-  // Portal da marca: brand_id travado no do usuário — esconde o seletor e força o filtro
-  const lockedBrandId = (user as any)?.brand_id || '';
   useEffect(() => {
     if (lockedBrandId && brandFilter !== lockedBrandId) setBrandFilter(lockedBrandId);
   }, [lockedBrandId]);
