@@ -36,7 +36,7 @@ export function BrandAccessDialog({ open, onOpenChange, brand }: Props) {
   const [lastCreds, setLastCreds] = useState<{ email: string; password: string } | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const portalUrl = `https://access.ayratech.app/portal/marca?m=${brand?.id || ""}&n=${encodeURIComponent(brand?.name || "")}`;
+  const portalUrl = `https://access.ayratech.app/marca?m=${brand?.id || ""}&n=${encodeURIComponent(brand?.name || "")}`;
 
   const load = async () => {
     if (!orgId || !brand) return;

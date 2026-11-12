@@ -257,9 +257,11 @@ const App = () => (
         <AuthProvider>
           <Routes>
             <Route path="/login" element={<Login />} />
-            <Route path="/portal/marca" element={<PortalMarcaLogin />} />
-            <Route path="/portal/marca/dashboard" element={<ProtectedRoute><MerchRelatorios /></ProtectedRoute>} />
-            <Route path="/portal" element={<Navigate to="/portal/marca" replace />} />
+            <Route path="/marca" element={<PortalMarcaLogin />} />
+            <Route path="/marca/dashboard" element={<ProtectedRoute><MerchRelatorios /></ProtectedRoute>} />
+            <Route path="/portal/marca" element={<Navigate to="/marca" replace />} />
+            <Route path="/portal/marca/dashboard" element={<Navigate to="/marca/dashboard" replace />} />
+            <Route path="/portal" element={<Navigate to="/marca" replace />} />
 
             <Route path="/cadastro" element={<Cadastro />} />
             <Route path="/" element={<SmartRedirect />} />

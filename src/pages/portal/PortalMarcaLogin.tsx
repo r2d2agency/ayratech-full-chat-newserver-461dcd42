@@ -28,7 +28,7 @@ export default function PortalMarcaLogin() {
         toast.error("Este acesso não pertence a nenhuma marca. Fale com o seu gestor.");
         return;
       }
-      window.location.href = "/portal/marca/dashboard";
+      window.location.href = "/marca/dashboard";
     } catch (err: any) {
       toast.error(err?.message || "E-mail ou chave de acesso inválidos");
     } finally {
