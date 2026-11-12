@@ -403,10 +403,8 @@ router.get('/report/promoter', async (req, res) => {
     let brandJoin = '';
     if (locked.lockedBrandId) {
       filters += ` AND r.brand_id = $${idx}`; params.push(locked.lockedBrandId); idx++;
-      brandJoin = ` AND r2.brand_id = $${idx}`; params.push(locked.lockedBrandId); idx++;
     } else if (req.query.brand_id) {
       filters += ` AND r.brand_id = $${idx}`; params.push(req.query.brand_id); idx++;
-      brandJoin = ` AND r2.brand_id = $${idx}`; params.push(req.query.brand_id); idx++;
     }
 
     const rows = (await query(`
