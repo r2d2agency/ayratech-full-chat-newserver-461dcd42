@@ -8,7 +8,7 @@ import type { CartaoPonto, CartaoDay } from '@/hooks/use-rh';
 const DOW_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
 function dayLabel(day: CartaoDay) {
-  const dow = day.isoDow ? DOW_LABELS[day.isoDow - 1] : '';
+  const dow = day.isoDow ? DOW_LABELS[day.isoDow % 7] : '';
   const [, m, d] = day.date.split('-');
   return `${dow} ${d}/${m}`;
 }

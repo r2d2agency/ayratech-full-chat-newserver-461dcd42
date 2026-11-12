@@ -54,7 +54,7 @@ const CARTAO_DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 // sem passar por date-fns, evita que o fuso do navegador empurre a linha um dia.
 function dayLabel(day: CartaoDay): string {
   const [, m, d] = day.date.split('-');
-  const dow = day.isoDow ? CARTAO_DOW[day.isoDow - 1] : '';
+  const dow = day.isoDow ? CARTAO_DOW[day.isoDow % 7] : '';
   return `${dow} ${d}/${m}`;
 }
 
