@@ -180,7 +180,7 @@ async function resolveOrganizationId(req) {
   if (!req.userId) return null;
 
   const orgResult = await query(
-    `SELECT organization_id FROM organization_members WHERE user_id = $1 LIMIT 1`,
+    `SELECT organization_id, brand_id FROM organization_members WHERE user_id = $1 LIMIT 1`,
     [req.userId]
   );
 
@@ -1968,15 +1968,27 @@ router.get('/rh/app-access', async (req, res) => {
 // =============================================
 router.get('/rh/pdvs', async (req, res) => {
   try {
-    const orgId = req.query.org_id || (await query(`SELECT organization_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
-    const result = await query(`SELECT p.*, e.full_name as supervisor_name FROM pdvs p LEFT JOIN employees e ON e.id = p.supervisor_id WHERE p.organization_id = $1 ORDER BY p.name`, [orgId]);
+    const orgInfo = (await query(`SELECT organization_id, brand_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0];
+    const orgId = req.query.org_id || orgInfo?.organization_id;
+    let pdvsSql = `SELECT p.*, e.full_name as supervisor_name FROM pdvs p LEFT JOIN employees e ON e.id = p.supervisor_id WHERE p.organization_id = $1`;
+    const params = [orgId];
+    let idx = 2;
+    if (orgInfo?.brand_id) {
+      pdvsSql = `SELECT p.*, e.full_name as supervisor_name FROM pdvs p
+        LEFT JOIN employees e ON e.id = p.supervisor_id
+        WHERE p.organization_id = $1 AND EXISTS (
+          SELECT 1 FROM merch_routes r WHERE r.pdv_id = p.id AND r.brand_id = $2
+        )`;
+      params.push(orgInfo.brand_id);
+    }
+    const result = await query(pdvsSql + ` ORDER BY p.name`, params);
     res.json(result.rows);
   } catch (err) { logError('promotor.pdvs.list', err); res.status(500).json({ error: 'Erro' }); }
 });
 
 router.post('/rh/pdvs', async (req, res) => {
   try {
-    const orgId = req.body.organization_id || (await query(`SELECT organization_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
+    const orgId = req.body.organization_id || (await query(`SELECT organization_id, brand_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
     const d = req.body;
     // Auto-geocode if no lat/lng provided but address exists
     let lat = d.latitude, lng = d.longitude;
@@ -2265,7 +2277,7 @@ router.post('/rh/collaborator-pdvs', async (req, res) => {
 // =============================================
 router.post('/rh/document-deliveries', async (req, res) => {
   try {
-    const orgId = req.body.organization_id || (await query(`SELECT organization_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
+    const orgId = req.body.organization_id || (await query(`SELECT organization_id, brand_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
     const d = req.body;
     const batch_id = d.employee_ids?.length > 1 ? crypto.randomUUID() : null;
     const employees = d.employee_ids || [d.employee_id];
@@ -2295,7 +2307,7 @@ router.post('/rh/document-deliveries', async (req, res) => {
 // =============================================
 router.post('/rh/send-notice', async (req, res) => {
   try {
-    const orgId = req.body.organization_id || (await query(`SELECT organization_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
+    const orgId = req.body.organization_id || (await query(`SELECT organization_id, brand_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
     const { title, message, employee_ids, type } = req.body;
     if (!title || !employee_ids?.length) return res.status(400).json({ error: 'Título e colaboradores obrigatórios' });
 
@@ -2317,7 +2329,7 @@ router.post('/rh/send-notice', async (req, res) => {
 
 router.get('/rh/document-deliveries', async (req, res) => {
   try {
-    const orgId = req.query.org_id || (await query(`SELECT organization_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
+    const orgId = req.query.org_id || (await query(`SELECT organization_id, brand_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
     const { employee_id, status } = req.query;
     let sql = `SELECT dd.*, e.full_name as employee_name, dt.name as type_name FROM rh_document_deliveries dd JOIN employees e ON e.id = dd.employee_id LEFT JOIN rh_document_types dt ON dt.id = dd.document_type_id WHERE dd.organization_id = $1`;
     const params = [orgId]; let idx = 2;
@@ -2386,7 +2398,7 @@ router.get('/rh/document-deliveries/:id', async (req, res) => {
 // =============================================
 router.get('/rh/inbound-documents', async (req, res) => {
   try {
-    const orgId = req.query.org_id || (await query(`SELECT organization_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
+    const orgId = req.query.org_id || (await query(`SELECT organization_id, brand_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
     const { status, employee_id } = req.query;
     let sql = `SELECT ib.*, e.full_name as employee_name FROM rh_inbound_documents ib JOIN employees e ON e.id = ib.employee_id WHERE ib.organization_id = $1`;
     const params = [orgId]; let idx = 2;
@@ -2454,7 +2466,7 @@ router.get('/rh/punch-monitor', async (req, res) => {
 // =============================================
 router.get('/rh/document-types', async (req, res) => {
   try {
-    const orgId = req.query.org_id || (await query(`SELECT organization_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
+    const orgId = req.query.org_id || (await query(`SELECT organization_id, brand_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
     const result = await query(`SELECT * FROM rh_document_types WHERE organization_id = $1 ORDER BY name`, [orgId]);
     res.json(result.rows);
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
@@ -2462,7 +2474,7 @@ router.get('/rh/document-types', async (req, res) => {
 
 router.post('/rh/document-types', async (req, res) => {
   try {
-    const orgId = req.body.organization_id || (await query(`SELECT organization_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
+    const orgId = req.body.organization_id || (await query(`SELECT organization_id, brand_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
     const d = req.body;
     const result = await query(
       `INSERT INTO rh_document_types (organization_id, name, slug, requires_signature, requires_confirmation, category) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
@@ -2477,7 +2489,7 @@ router.post('/rh/document-types', async (req, res) => {
 // =============================================
 router.get('/rh/timesheets', async (req, res) => {
   try {
-    const orgId = req.query.org_id || (await query(`SELECT organization_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
+    const orgId = req.query.org_id || (await query(`SELECT organization_id, brand_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
     const { employee_id, reference_month, status } = req.query;
     let sql = `SELECT te.*, e.full_name as employee_name FROM timesheet_exports te JOIN employees e ON e.id = te.employee_id WHERE te.organization_id = $1`;
     const params = [orgId]; let idx = 2;
@@ -2491,7 +2503,7 @@ router.get('/rh/timesheets', async (req, res) => {
 
 router.post('/rh/timesheets', async (req, res) => {
   try {
-    const orgId = req.body.organization_id || (await query(`SELECT organization_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
+    const orgId = req.body.organization_id || (await query(`SELECT organization_id, brand_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
     const d = req.body;
     const result = await query(
       `INSERT INTO timesheet_exports (organization_id, employee_id, reference_month, status, total_hours, overtime_hours, absences, lates, requires_signature, generated_by)
@@ -2527,7 +2539,7 @@ router.put('/rh/timesheets/:id', async (req, res) => {
 // =============================================
 router.get('/rh/notification-rules', async (req, res) => {
   try {
-    const orgId = req.query.org_id || (await query(`SELECT organization_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
+    const orgId = req.query.org_id || (await query(`SELECT organization_id, brand_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
     const result = await query(`SELECT * FROM rh_notification_rules WHERE organization_id = $1 ORDER BY event_type`, [orgId]);
     res.json(result.rows);
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
@@ -2535,7 +2547,7 @@ router.get('/rh/notification-rules', async (req, res) => {
 
 router.post('/rh/notification-rules', async (req, res) => {
   try {
-    const orgId = req.body.organization_id || (await query(`SELECT organization_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
+    const orgId = req.body.organization_id || (await query(`SELECT organization_id, brand_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
     const d = req.body;
     const result = await query(
       `INSERT INTO rh_notification_rules (organization_id, event_type, notify_rh, notify_supervisor, notify_collaborator, channel_system, channel_push, channel_email, channel_whatsapp)
@@ -2551,7 +2563,7 @@ router.post('/rh/notification-rules', async (req, res) => {
 // =============================================
 router.get('/rh/time-rules', async (req, res) => {
   try {
-    const orgId = req.query.org_id || (await query(`SELECT organization_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
+    const orgId = req.query.org_id || (await query(`SELECT organization_id, brand_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
     const result = await query(`SELECT tr.*, e.full_name as employee_name FROM time_rules tr LEFT JOIN employees e ON e.id = tr.employee_id WHERE tr.organization_id = $1 ORDER BY tr.employee_id NULLS FIRST`, [orgId]);
     res.json(result.rows);
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
@@ -2559,7 +2571,7 @@ router.get('/rh/time-rules', async (req, res) => {
 
 router.post('/rh/time-rules', async (req, res) => {
   try {
-    const orgId = req.body.organization_id || (await query(`SELECT organization_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
+    const orgId = req.body.organization_id || (await query(`SELECT organization_id, brand_id FROM organization_members WHERE user_id = $1 LIMIT 1`, [req.userId])).rows[0]?.organization_id;
     const d = req.body;
     const result = await query(
       `INSERT INTO time_rules (organization_id, employee_id, name, late_tolerance_minutes, early_leave_tolerance, break_tolerance, max_late_minutes, require_justification, absence_on_no_punch, punch_window_minutes, allow_manual_adjustment, require_geo, allow_offline_punch, allow_exception_punch)
