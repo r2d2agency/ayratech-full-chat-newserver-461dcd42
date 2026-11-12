@@ -583,7 +583,7 @@ export default function MerchRelatorios() {
             <TabsTrigger value="avarias"><AlertTriangle className="h-4 w-4 mr-1" />Avarias/Rupturas</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="dashboard"><DashboardTab filters={filters} /></TabsContent>
+          <TabsContent value="dashboard"><DashboardTab filters={filters} onNavigate={setTab} /></TabsContent>
           <TabsContent value="analitico"><AnaliticoTab filters={filters} /></TabsContent>
           <TabsContent value="pdv"><PDVTab filters={filters} /></TabsContent>
           {!lockedBrandId && (
@@ -646,11 +646,11 @@ export default function MerchRelatorios() {
 }
 
 // ===== KPI Card =====
-function KPICard({ title, value, icon: Icon, subtitle, trend, color = 'primary' }: {
-  title: string; value: string | number; icon: any; subtitle?: string; trend?: number; color?: string;
+function KPICard({ title, value, icon: Icon, subtitle, trend, color = 'primary', onClick }: {
+  title: string; value: string | number; icon: any; subtitle?: string; trend?: number; color?: string; onClick?: () => void;
 }) {
   return (
-    <Card>
+    <Card className={onClick ? "cursor-pointer hover:shadow-md transition-shadow" : ""} onClick={onClick}>
       <CardContent className="pt-4 pb-3">
         <div className="flex items-start justify-between">
           <div>
@@ -692,7 +692,7 @@ function ScoreRing({ score, label }: { score: number; label: string }) {
 }
 
 // ===== Dashboard Tab =====
-function DashboardTab({ filters }: { filters: any }) {
+function DashboardTab({ filters, onNavigate }: { filters: any; onNavigate?: (tab: string) => void }) {
   const { data, isLoading } = useMerchDashboard(filters);
   const { data: timeline = [] } = useMerchRoutesTimeline(filters);
   const { data: ranking = [] } = useMerchRankingIssues(filters);
@@ -704,21 +704,21 @@ function DashboardTab({ filters }: { filters: any }) {
     <div className="space-y-4">
       {/* Primary KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
-        <KPICard title="Rotas Totais" value={k.total_routes || 0} icon={Route} subtitle={`${k.completed_routes || 0} concluídas`} />
-        <KPICard title="Produtos Auditados" value={k.executed_products || 0} icon={Package} subtitle={`de ${k.total_products || 0} no total`} />
-        <KPICard title="Marcas Atendidas" value={k.brands_served || 0} icon={Building2} />
-        <KPICard title="PDVs Atendidos" value={k.pdvs_served || 0} icon={Store} />
-        <KPICard title="Promotores Ativos" value={k.active_promoters || 0} icon={User} />
+        <KPICard title="Rotas Totais" value={k.total_routes || 0} icon={Route} subtitle={`${k.completed_routes || 0} concluídas`} onClick={() => onNavigate?.('analitico')} />
+        <KPICard title="Produtos Auditados" value={k.executed_products || 0} icon={Package} subtitle={`de ${k.total_products || 0} no total`} onClick={() => onNavigate?.('produto')} />
+        <KPICard title="Marcas Atendidas" value={k.brands_served || 0} icon={Building2} onClick={() => onNavigate?.('marca')} />
+        <KPICard title="PDVs Atendidos" value={k.pdvs_served || 0} icon={Store} onClick={() => onNavigate?.('pdv')} />
+        <KPICard title="Promotores Ativos" value={k.active_promoters || 0} icon={User} onClick={() => onNavigate?.('promotor')} />
       </div>
 
       {/* Secondary KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
         <KPICard title="Fotos" value={k.photos_captured || 0} icon={Camera} />
-        <KPICard title="Avarias" value={k.damages_registered || 0} icon={AlertTriangle} color="destructive" />
-        <KPICard title="Rupturas" value={k.stockouts_registered || 0} icon={ShoppingCart} color="destructive" />
+        <KPICard title="Avarias" value={k.damages_registered || 0} icon={AlertTriangle} color="destructive" onClick={() => onNavigate?.('avarias')} />
+        <KPICard title="Rupturas" value={k.stockouts_registered || 0} icon={ShoppingCart} color="destructive" onClick={() => onNavigate?.('avarias')} />
         <KPICard title="Pesq. Preço Concluídas" value={k.price_research_completed || 0} icon={DollarSign} />
-        <KPICard title="Contagens Estoque" value={k.stock_counts || 0} icon={Package} />
-        <KPICard title="Contagens Validade" value={k.expiry_counts || 0} icon={Clock} />
+        <KPICard title="Contagens Estoque" value={k.stock_counts || 0} icon={Package} onClick={() => onNavigate?.('produto')} />
+        <KPICard title="Contagens Validade" value={k.expiry_counts || 0} icon={Clock} onClick={() => onNavigate?.('produto')} />
       </div>
 
       {/* Scores & Derived */}
@@ -758,7 +758,10 @@ function DashboardTab({ filters }: { filters: any }) {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card
+          className={onNavigate ? "cursor-pointer hover:shadow-md transition-shadow" : ""}
+          onClick={() => onNavigate?.('avarias')}
+        >
           <CardHeader className="pb-2"><CardTitle className="text-sm">Top PDVs com Problemas</CardTitle></CardHeader>
           <CardContent className="space-y-2 max-h-48 overflow-y-auto">
             {ranking.map((r: any, i: number) => (

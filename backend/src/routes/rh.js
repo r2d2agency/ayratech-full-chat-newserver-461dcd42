@@ -465,7 +465,12 @@ router.get('/employees', async (req, res) => {
     const orgId = req.query.org_id || await getUserOrgId(req.userId);
     if (!orgId) return res.json([]);
 
-    const { status, search, department_id, branch_id, brand_id } = req.query;
+    // Portal da marca: trava a listagem de colaboradores à marca do usuário logado
+    const member = await query('SELECT brand_id FROM organization_members WHERE user_id=$1 AND organization_id=$2 LIMIT 1', [req.userId, orgId]);
+    const lockedBrandId = member.rows[0]?.brand_id || null;
+
+    const { status, search, department_id, branch_id } = req.query;
+    const brand_id = lockedBrandId || req.query.brand_id;
     let sql = `SELECT e.*, d.name as department_name, b.name as branch_name,
                CASE WHEN caa.access_status IN ('liberado','aguardando_login','ativo') THEN true ELSE false END as promotor_access,
                COALESCE(caa.access_status, 'sem_acesso') as app_access_status,

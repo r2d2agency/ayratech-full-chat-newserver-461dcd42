@@ -2,12 +2,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
 // ===== EMPLOYEES =====
-export function useEmployees(filters?: { status?: string; search?: string; department_id?: string; branch_id?: string }) {
+export function useEmployees(filters?: { status?: string; search?: string; department_id?: string; branch_id?: string; brand_id?: string }) {
   const params = new URLSearchParams();
   if (filters?.status) params.set('status', filters.status);
   if (filters?.search) params.set('search', filters.search);
   if (filters?.department_id) params.set('department_id', filters.department_id);
   if (filters?.branch_id) params.set('branch_id', filters.branch_id);
+  if (filters?.brand_id) params.set('brand_id', filters.brand_id);
   const qs = params.toString();
   return useQuery({
     queryKey: ['rh-employees', qs],
