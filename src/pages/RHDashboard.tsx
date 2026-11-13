@@ -82,6 +82,10 @@ export default function RHDashboard() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [empSearchVac, setEmpSearchVac] = useState("");
   const [empSearchCert, setEmpSearchCert] = useState("");
+  const [certFilterEmp, setCertFilterEmp] = useState("all");
+  const [certFilterStart, setCertFilterStart] = useState("");
+  const [certFilterEnd, setCertFilterEnd] = useState("");
+  const [certFilterStatus, setCertFilterStatus] = useState("all");
   const [dragOver, setDragOver] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [crmValidation, setCrmValidation] = useState<any>(null);
@@ -117,6 +121,22 @@ export default function RHDashboard() {
     if (!certForm.employee_id) return [];
     return inboundDocs.filter((d: any) => d.employee_id === certForm.employee_id);
   }, [inboundDocs, certForm.employee_id]);
+
+  // Atestados filtrados por colaborador, período (sobrepõe o período do
+  // atestado) e status de validação
+  const filteredCerts = useMemo(() => {
+    return (allCerts as any[]).filter((c: any) => {
+      if (certFilterEmp !== "all" && c.employee_id !== certFilterEmp) return false;
+      if (certFilterStatus === "validado" && !c.validated) return false;
+      if (certFilterStatus === "reprovado" && (c.validated || !c.rejection_reason)) return false;
+      if (certFilterStatus === "pendente" && (c.validated || c.rejection_reason)) return false;
+      const s = String(c.absence_start || "").slice(0, 10);
+      const e = String(c.absence_end || "").slice(0, 10);
+      if (certFilterStart && e < certFilterStart) return false;
+      if (certFilterEnd && s > certFilterEnd) return false;
+      return true;
+    });
+  }, [allCerts, certFilterEmp, certFilterStart, certFilterEnd, certFilterStatus]);
 
   const analyzeWithAI = useCallback(async (docUrl: string) => {
     setIsAnalyzing(true);
@@ -649,10 +669,49 @@ export default function RHDashboard() {
 
           {/* CERTIFICATES TAB */}
           <TabsContent value="certificates" className="space-y-4 mt-4">
-            <div className="flex justify-end">
-              <Button onClick={() => { setCertForm({ ...CERT_EMPTY }); setCertDialog(true); }} className="gap-2">
-                <Plus className="h-4 w-4" /> Registrar Atestado
-              </Button>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="min-w-44 flex-1">
+                <Label>Colaborador</Label>
+                <Select value={certFilterEmp} onValueChange={setCertFilterEmp}>
+                  <SelectTrigger><SelectValue placeholder="Todos" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    {employees.map((e: any) => (
+                      <SelectItem key={e.id} value={e.id}>{e.full_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>De</Label>
+                <Input type="date" value={certFilterStart} onChange={e => setCertFilterStart(e.target.value)} />
+              </div>
+              <div>
+                <Label>Até</Label>
+                <Input type="date" value={certFilterEnd} onChange={e => setCertFilterEnd(e.target.value)} />
+              </div>
+              <div className="min-w-32">
+                <Label>Status</Label>
+                <Select value={certFilterStatus} onValueChange={setCertFilterStatus}>
+                  <SelectTrigger><SelectValue placeholder="Todos" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    <SelectItem value="pendente">Pendente</SelectItem>
+                    <SelectItem value="validado">Validado</SelectItem>
+                    <SelectItem value="reprovado">Reprovado</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {(certFilterEmp !== "all" || certFilterStart || certFilterEnd || certFilterStatus !== "all") && (
+                <Button variant="ghost" onClick={() => { setCertFilterEmp("all"); setCertFilterStart(""); setCertFilterEnd(""); setCertFilterStatus("all"); }}>
+                  Limpar
+                </Button>
+              )}
+              <div className="ml-auto">
+                <Button onClick={() => { setCertForm({ ...CERT_EMPTY }); setCertDialog(true); }} className="gap-2">
+                  <Plus className="h-4 w-4" /> Registrar Atestado
+                </Button>
+              </div>
             </div>
             <Card>
               <CardContent className="p-0">
@@ -670,9 +729,9 @@ export default function RHDashboard() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {allCerts.length === 0 ? (
-                      <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Nenhum atestado registrado</TableCell></TableRow>
-                    ) : allCerts.map((c: any) => (
+                    {filteredCerts.length === 0 ? (
+                      <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Nenhum atestado encontrado</TableCell></TableRow>
+                    ) : filteredCerts.map((c: any) => (
                       <TableRow key={c.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setCertValidateDialog(c)}>
                         <TableCell className="font-medium">{c.employee_name}</TableCell>
                         <TableCell><Badge variant="outline">{c.cid_code || "N/I"}</Badge></TableCell>
