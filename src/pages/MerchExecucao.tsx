@@ -459,7 +459,7 @@ export default function MerchExecucao() {
                     <div>
                       <div className="font-semibold text-sm">{d.product_name}</div>
                       <div className="text-xs text-muted-foreground">
-                        {d.pdv_name} • {d.brand_name} • {d.promoter_name}
+                        {d.pdv_name} • {d.brand_name} • {d.promoter_name}{d.created_at ? ` • ${new Date(d.created_at).toLocaleDateString('pt-BR')}` : (d.execution_date ? ` • ${new Date(d.execution_date).toLocaleDateString('pt-BR')}` : '')}
                       </div>
                       <div className="text-xs mt-1">
                         Loja: {d.qty_store} | Estoque: {d.qty_stock} | <strong>Total: {d.qty_total}</strong>
