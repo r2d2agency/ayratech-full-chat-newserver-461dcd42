@@ -42,6 +42,25 @@ const safeFormat = (v: any, fmt: string, fallback = "—"): string => {
   return d ? format(d, fmt) : fallback;
 };
 
+const DOW_PT = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+function formatWorkSchedule(v: any): string {
+  if (!v) return "—";
+  let s = v;
+  if (typeof s === "string") {
+    const t = s.trim();
+    if (!t.startsWith("{") && !t.startsWith("[")) return t;
+    try { s = JSON.parse(t); } catch { return t; }
+  }
+  if (!s || typeof s !== "object") return String(v);
+  const dowIdx = new Date().getDay();
+  const dow = DOW_PT[dowIdx];
+  const dc = s.dayConfig?.[dow] || s.dayConfig?.[String(dowIdx)] || s.dayConfig?.[String(dowIdx === 0 ? 7 : dowIdx)] || null;
+  const entry = dc?.entry || dc?.start || s.entry || s.start || "—";
+  const exit = dc?.exit || dc?.end || s.exit || s.end || "—";
+  if (entry === "—" && exit === "—") return "—";
+  return `${entry} - ${exit}`;
+}
+
 const VACATION_EMPTY = {
   employee_id: "", vacation_type: "completa", start_date: "", end_date: "",
   days_total: 30, days_taken: 0, abono_pecuniario: false, abono_days: 0,
@@ -359,7 +378,7 @@ export default function RHDashboard() {
                         <div key={r.id} className="flex items-center justify-between p-2 rounded bg-orange-50 dark:bg-orange-950/20">
                           <div>
                             <p className="text-sm font-medium">{r.full_name}</p>
-                            <p className="text-xs text-muted-foreground">Jornada: {r.work_schedule}</p>
+                            <p className="text-xs text-muted-foreground">Jornada: {formatWorkSchedule(r.work_schedule)}</p>
                           </div>
                           <Badge variant="outline" className="text-orange-600 border-orange-300">{r.entry1}</Badge>
                         </div>
