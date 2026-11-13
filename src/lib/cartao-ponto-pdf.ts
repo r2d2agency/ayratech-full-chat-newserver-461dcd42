@@ -26,11 +26,17 @@ function typeMarker(day: CartaoDay) {
 }
 
 function statusCell(day: CartaoDay) {
-  if (day.dayType === 'feriado') return day.holidayName || 'Feriado';
-  if (day.dayType === 'ausencia') return day.absenceType || 'Afastado';
-  if (day.dayType === 'folga') return 'Folga';
-  if (day.closed) return 'Período fechado';
-  return '';
+  let s = '';
+  if (day.dayType === 'feriado') s = day.holidayName || 'Feriado';
+  else if (day.dayType === 'ausencia') s = day.absenceType || 'Afastado';
+  else if (day.dayType === 'folga') s = 'Folga';
+  else if (day.dayType === 'atestado') {
+    s = day.medicalCid
+      ? `Atestado (CID ${day.medicalCid})${day.medicalHours ? ` - ${day.medicalHours}` : ''}`
+      : 'Atestado';
+  }
+  if (day.closed) s = s ? `${s} (fechado)` : 'Período fechado';
+  return s;
 }
 
 // Minutos com sinal, em HH:MM. O sinal é explícito porque "00:15" ao lado de
@@ -191,8 +197,8 @@ export function exportCartaoPontoPdf(data: CartaoPonto) {
         m.saldo,
         m.status === 'banco' ? 'Banco de horas' : m.status === 'deficit' ? 'Déficit' : 'Em nível',
       ]),
-      styles: { fontSize: 7.5, halign: 'center' },
-      headStyles: { fillColor: [240, 240, 246], fontStyle: 'bold' },
+      styles: { fontSize: 7.5, halign: 'center', textColor: [30, 30, 46] },
+      headStyles: { fillColor: [240, 240, 246], textColor: [30, 30, 46], fontStyle: 'bold' },
       columnStyles: { 0: { halign: 'left' }, 5: { halign: 'left' } },
     });
     y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 5;
