@@ -500,7 +500,7 @@ export default function MerchExecucao() {
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="font-semibold text-sm">{r.pdv_name} - {r.brand_name}</div>
-                      <div className="text-xs text-muted-foreground">{r.promoter_name} • {r.item_count} item(s)</div>
+                      <div className="text-xs text-muted-foreground">{r.promoter_name} • {r.item_count} item(s){r.created_at ? ` • ${new Date(r.created_at).toLocaleDateString('pt-BR')}` : (r.execution_date ? ` • ${new Date(r.execution_date).toLocaleDateString('pt-BR')}` : '')}</div>
                     </div>
                     <Badge>{DAMAGE_STATUS[r.status] || r.status}</Badge>
                   </div>
