@@ -406,6 +406,7 @@ export default function MerchExecucao() {
                         <div className="text-xs text-muted-foreground">{r.promoter_name} • {r.brand_name}{r.visit_date ? ` • ${new Date(`${String(r.visit_date).slice(0, 10)}T12:00:00`).toLocaleDateString('pt-BR')}` : ''}</div>
                         <div className="text-[10px] text-muted-foreground mt-0.5">
                           {r.not_done_reason && `Motivo: ${r.not_done_reason}`}
+                          {!r.not_done_reason && (r.justification || r.reason || r.not_done_justification) && `Motivo: ${r.justification || r.reason || r.not_done_justification}`}
                         </div>
                       </div>
                       <ChevronRight className="h-4 w-4 text-muted-foreground" />
@@ -547,7 +548,10 @@ export default function MerchExecucao() {
                 </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
-                  {(viewRoute.visit_date || viewRoute.scheduled_date) && (
+                  {(viewRoute.not_done_reason || viewRoute.justification || viewRoute.reason) && (
+    <div className="text-sm text-red-600 font-medium">Motivo: {viewRoute.not_done_reason || viewRoute.justification || viewRoute.reason}</div>
+  )}
+  {(viewRoute.visit_date || viewRoute.scheduled_date) && (
                     <div>
                       <div className="text-[10px] text-muted-foreground uppercase font-bold">Data de execução</div>
                       <div className="font-medium flex items-center gap-1"><Calendar className="h-3.5 w-3.5" /> {new Date(`${String(viewRoute.visit_date || viewRoute.scheduled_date).slice(0, 10)}T12:00:00`).toLocaleDateString('pt-BR')}</div>
