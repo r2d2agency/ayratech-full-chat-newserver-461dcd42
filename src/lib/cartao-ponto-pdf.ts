@@ -45,6 +45,7 @@ function formatSigned(minutes: number | null | undefined) {
 function typeStyles(day: CartaoDay) {
   if (day.dayType === 'feriado') return [250, 245, 255] as [number, number, number];
   if (day.dayType === 'ausencia') return [239, 246, 255] as [number, number, number];
+  if (day.dayType === 'atestado') return [236, 253, 245] as [number, number, number];
   if (day.dayType === 'folga') return [243, 244, 246] as [number, number, number];
   return null;
 }
