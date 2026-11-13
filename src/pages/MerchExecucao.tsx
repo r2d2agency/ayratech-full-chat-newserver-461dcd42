@@ -414,6 +414,7 @@ export default function MerchExecucao() {
                 ))}
               </div>
             )}
+            {scheduled.length > 0 && (
               <div className="space-y-2">
                 <h3 className="text-sm font-semibold text-blue-600">📅 Aguardando ({scheduled.length})</h3>
                 {scheduled.map((r: any) => (
