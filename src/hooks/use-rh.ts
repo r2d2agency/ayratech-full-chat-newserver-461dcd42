@@ -560,7 +560,7 @@ export function useValidateMedicalCertificate() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...data }: any) => api<any>(`/api/rh/medical-certificates/${id}/validate`, { method: 'PUT', body: data }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['rh-medical-certs'] }); qc.invalidateQueries({ queryKey: ['rh-dashboard'] }); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['rh-medical-certs'] }); qc.invalidateQueries({ queryKey: ['rh-dashboard'] }); qc.invalidateQueries({ queryKey: ['rh-cartao-ponto'] }); qc.invalidateQueries({ queryKey: ['rh-time-records'] }); },
   });
 }
 

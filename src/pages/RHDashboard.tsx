@@ -673,19 +673,21 @@ export default function RHDashboard() {
                     {allCerts.length === 0 ? (
                       <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Nenhum atestado registrado</TableCell></TableRow>
                     ) : allCerts.map((c: any) => (
-                      <TableRow key={c.id} className="cursor-pointer hover:bg-muted/50" onClick={() => !c.validated && setCertValidateDialog(c)}>
+                      <TableRow key={c.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setCertValidateDialog(c)}>
                         <TableCell className="font-medium">{c.employee_name}</TableCell>
                         <TableCell><Badge variant="outline">{c.cid_code || "N/I"}</Badge></TableCell>
                         <TableCell>{c.doctor_name || "N/I"}</TableCell>
                         <TableCell className="hidden md:table-cell">{c.doctor_crm || "N/I"}</TableCell>
                         <TableCell className="hidden md:table-cell">{c.healthcare_unit || "N/I"}</TableCell>
                         <TableCell className="text-xs">
-                          {safeFormat(c.absence_start, "dd/MM", "")} - {safeFormat(c.absence_end, "dd/MM", "")}
+                          {safeFormat(c.absence_start, "dd/MM/yyyy", "")} - {safeFormat(c.absence_end, "dd/MM/yyyy", "")}
                         </TableCell>
                         <TableCell>{c.absence_days || "—"}</TableCell>
                         <TableCell>
                           {c.validated ? (
                             <Badge className="bg-green-500/10 text-green-700">Validado</Badge>
+                          ) : c.rejection_reason ? (
+                            <Badge variant="destructive">Reprovado</Badge>
                           ) : (
                             <Badge className="bg-yellow-500/10 text-yellow-700">Pendente</Badge>
                           )}
@@ -917,12 +919,24 @@ export default function RHDashboard() {
         </DialogContent>
       </Dialog>
 
-      {/* VALIDATE CERTIFICATE DIALOG */}
+      {/* CERTIFICATE DETAILS / VALIDATE DIALOG */}
       <Dialog open={!!certValidateDialog} onOpenChange={() => setCertValidateDialog(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Validar Atestado Médico</DialogTitle></DialogHeader>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Detalhes do Atestado</DialogTitle></DialogHeader>
           {certValidateDialog && (
             <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                {certValidateDialog.validated ? (
+                  <Badge className="bg-green-500/10 text-green-700">Validado</Badge>
+                ) : certValidateDialog.rejection_reason ? (
+                  <Badge variant="destructive">Reprovado</Badge>
+                ) : (
+                  <Badge className="bg-yellow-500/10 text-yellow-700">Pendente</Badge>
+                )}
+                {certValidateDialog.is_partial && (
+                  <Badge variant="outline">Parcial{certValidateDialog.absence_hours ? ` • ${certValidateDialog.absence_hours}` : ""}</Badge>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div><strong>Colaborador:</strong> {certValidateDialog.full_name || certValidateDialog.employee_name}</div>
                 <div><strong>CID:</strong> {certValidateDialog.cid_code || "N/I"}</div>
@@ -930,19 +944,38 @@ export default function RHDashboard() {
                 <div><strong>CRM:</strong> {certValidateDialog.doctor_crm || "N/I"}</div>
                 <div><strong>Local:</strong> {certValidateDialog.healthcare_unit || "N/I"}</div>
                 <div><strong>Dias:</strong> {certValidateDialog.absence_days || "N/I"}</div>
-                <div><strong>Período:</strong> {certValidateDialog.absence_start} a {certValidateDialog.absence_end}</div>
+                <div className="col-span-2">
+                  <strong>Período no ponto:</strong>{" "}
+                  {safeFormat(certValidateDialog.absence_start, "dd/MM/yyyy", "")} a {safeFormat(certValidateDialog.absence_end, "dd/MM/yyyy", "")}
+                </div>
+                {certValidateDialog.absence_hours && (
+                  <div><strong>Horário parcial:</strong> {certValidateDialog.absence_hours}</div>
+                )}
+                {certValidateDialog.rejection_reason && (
+                  <div className="col-span-2"><strong>Motivo da reprovação:</strong> {certValidateDialog.rejection_reason}</div>
+                )}
+                {certValidateDialog.notes && (
+                  <div className="col-span-2"><strong>Observações:</strong> {certValidateDialog.notes}</div>
+                )}
+                {certValidateDialog.validated_at && (
+                  <div className="col-span-2 text-xs text-muted-foreground">
+                    Validado em {safeFormat(certValidateDialog.validated_at, "dd/MM/yyyy HH:mm", "")}
+                  </div>
+                )}
               </div>
               {certValidateDialog.document_url && (
-                <a href={certValidateDialog.document_url} target="_blank" rel="noreferrer" className="text-sm text-primary underline">Ver documento</a>
+                <a href={resolveMediaUrl(certValidateDialog.document_url) || certValidateDialog.document_url} target="_blank" rel="noreferrer" className="text-sm text-primary underline">Ver documento</a>
               )}
-              <div className="flex justify-end gap-2 mt-4">
-                <Button variant="destructive" onClick={() => handleValidateCert(false)} disabled={validateCert.isPending}>
-                  <XCircle className="h-4 w-4 mr-1" /> Reprovar
-                </Button>
-                <Button onClick={() => handleValidateCert(true)} disabled={validateCert.isPending}>
-                  <CheckCircle className="h-4 w-4 mr-1" /> Aprovar
-                </Button>
-              </div>
+              {!certValidateDialog.validated && !certValidateDialog.rejection_reason && (
+                <div className="flex justify-end gap-2 mt-4">
+                  <Button variant="destructive" onClick={() => handleValidateCert(false)} disabled={validateCert.isPending}>
+                    <XCircle className="h-4 w-4 mr-1" /> Reprovar
+                  </Button>
+                  <Button onClick={() => handleValidateCert(true)} disabled={validateCert.isPending}>
+                    <CheckCircle className="h-4 w-4 mr-1" /> Aprovar
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </DialogContent>

@@ -2644,7 +2644,9 @@ router.get('/medical-certificates', async (req, res) => {
     const orgId = req.query.org_id || await getUserOrgId(req.userId);
     if (!orgId) return res.json([]);
     const { employee_id, validated } = req.query;
-    let sql = `SELECT mc.*, e.full_name as employee_name FROM rh_medical_certificates mc JOIN employees e ON e.id = mc.employee_id WHERE mc.organization_id = $1`;
+    // Datas DATE são serializadas como calendário 'YYYY-MM-DD' para o
+    // frontend nunca deslocar o período por fuso horário.
+    let sql = `SELECT mc.*, to_char(mc.absence_start, 'YYYY-MM-DD') AS absence_start, to_char(mc.absence_end, 'YYYY-MM-DD') AS absence_end, e.full_name as employee_name FROM rh_medical_certificates mc JOIN employees e ON e.id = mc.employee_id WHERE mc.organization_id = $1`;
     const params = [orgId]; let idx = 2;
     if (employee_id) { sql += ` AND mc.employee_id = $${idx++}`; params.push(employee_id); }
     if (validated !== undefined) { sql += ` AND mc.validated = $${idx++}`; params.push(validated === 'true'); }
@@ -2657,27 +2659,38 @@ router.post('/medical-certificates', async (req, res) => {
   try {
     const orgId = req.body.organization_id || await getUserOrgId(req.userId);
     const d = req.body;
+    const toYmd = (v) => {
+      if (!v) return null;
+      const s = String(v).trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+      const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+      return m ? m[1] : null;
+    };
+    const startYmd = toYmd(d.absence_start);
+    const endYmd = toYmd(d.absence_end);
+    if (!startYmd || !endYmd) return res.status(400).json({ error: 'Período de afastamento inválido' });
+    const startD = new Date(`${startYmd}T12:00:00Z`);
+    const endD = new Date(`${endYmd}T12:00:00Z`);
+    const daysCount = Math.max(1, Math.round((endD - startD) / 86400000) + 1);
     const result = await query(
       `INSERT INTO rh_medical_certificates (organization_id, employee_id, doctor_name, doctor_crm, cid_code,
         healthcare_unit, absence_start, absence_end, absence_days, absence_hours, is_partial,
         document_url, ai_extracted_data, ai_confidence, notes, uploaded_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
       [orgId, d.employee_id, d.doctor_name, d.doctor_crm, d.cid_code, d.healthcare_unit,
-        d.absence_start, d.absence_end, d.absence_days, d.absence_hours, d.is_partial || false,
+        startYmd, endYmd, daysCount, d.absence_hours, d.is_partial || false,
         d.document_url, d.ai_extracted_data ? JSON.stringify(d.ai_extracted_data) : null,
         d.ai_confidence, d.notes, req.userId]);
     // Auto-justify time records
-    if (d.absence_start && d.absence_end) {
-      const days = Math.ceil((new Date(d.absence_end) - new Date(d.absence_start)) / 86400000) + 1;
-      for (let i = 0; i < days; i++) {
-        const dt = new Date(d.absence_start); dt.setDate(dt.getDate() + i);
-        const dateStr = dt.toISOString().slice(0, 10);
-        await query(
-          `INSERT INTO time_records (organization_id, employee_id, record_date, status, justification, total_hours, overtime_hours)
-           VALUES ($1, $2, $3, 'atestado', $4, 0, 0)
-           ON CONFLICT (employee_id, record_date) DO UPDATE SET status = 'atestado', justification = EXCLUDED.justification, updated_at = NOW()`,
-          [orgId, d.employee_id, dateStr, `Atestado: CID ${d.cid_code || 'N/I'} - Dr. ${d.doctor_name || 'N/I'}`]);
-      }
+    for (let i = 0; i < daysCount; i++) {
+      const dt = new Date(`${startYmd}T12:00:00Z`);
+      dt.setUTCDate(dt.getUTCDate() + i);
+      const dateStr = dt.toISOString().slice(0, 10);
+      await query(
+        `INSERT INTO time_records (organization_id, employee_id, record_date, status, justification, total_hours, overtime_hours)
+         VALUES ($1, $2, $3, 'atestado', $4, 0, 0)
+         ON CONFLICT (employee_id, record_date) DO UPDATE SET status = 'atestado', justification = EXCLUDED.justification, updated_at = NOW()`,
+        [orgId, d.employee_id, dateStr, `Atestado: CID ${d.cid_code || 'N/I'} - Dr. ${d.doctor_name || 'N/I'}`]);
     }
     await auditLog(orgId, 'medical_certificate', result.rows[0].id, 'create',
       [{ field: 'certificate', oldVal: null, newVal: `CID: ${d.cid_code}, Dr: ${d.doctor_name}` }], req.userId);
@@ -2691,7 +2704,45 @@ router.put('/medical-certificates/:id/validate', async (req, res) => {
     const result = await query(
       `UPDATE rh_medical_certificates SET validated = $2, validated_by = $3, validated_at = NOW(), rejection_reason = $4, updated_at = NOW() WHERE id = $1 RETURNING *`,
       [req.params.id, validated, req.userId, rejection_reason || null]);
-    res.json(result.rows[0]);
+    const cert = result.rows[0];
+    if (cert) {
+      // Sincroniza o ponto com o período exato do atestado aprovado, para que
+      // nenhum dia fora do intervalo fique marcado como atestado.
+      const startYmd = cert.absence_start instanceof Date ? cert.absence_start.toISOString().slice(0, 10) : String(cert.absence_start || '').slice(0, 10);
+      const endYmd = cert.absence_end instanceof Date ? cert.absence_end.toISOString().slice(0, 10) : String(cert.absence_end || '').slice(0, 10);
+      if (validated && startYmd && endYmd) {
+        const startD = new Date(`${startYmd}T12:00:00Z`);
+        const endD = new Date(`${endYmd}T12:00:00Z`);
+        const days = Math.max(1, Math.round((endD - startD) / 86400000) + 1);
+        for (let i = 0; i < days; i++) {
+          const dt = new Date(`${startYmd}T12:00:00Z`);
+          dt.setUTCDate(dt.getUTCDate() + i);
+          const dateStr = dt.toISOString().slice(0, 10);
+          await query(
+            `INSERT INTO time_records (organization_id, employee_id, record_date, status, justification, total_hours, overtime_hours)
+             VALUES ($1, $2, $3, 'atestado', $4, 0, 0)
+             ON CONFLICT (employee_id, record_date) DO UPDATE SET status = 'atestado', justification = EXCLUDED.justification, updated_at = NOW()`,
+            [cert.organization_id, cert.employee_id, dateStr, `Atestado: CID ${cert.cid_code || 'N/I'} - Dr. ${cert.doctor_name || 'N/I'}`]);
+        }
+      } else if (validated === false) {
+        // Ao reprovar, remove a marcação de atestado apenas dos dias deste
+        // certificado que não pertençam a outro atestado validado.
+        await query(
+          `DELETE FROM time_records tr
+            WHERE tr.employee_id = $1
+              AND tr.status = 'atestado'
+              AND tr.record_date >= $2::date AND tr.record_date <= $3::date
+              AND NOT EXISTS (
+                SELECT 1 FROM rh_medical_certificates mc
+                 WHERE mc.employee_id = $1
+                   AND mc.id <> $4
+                   AND COALESCE(mc.validated, false) = true
+                   AND tr.record_date BETWEEN mc.absence_start AND mc.absence_end
+              )`,
+          [cert.employee_id, startYmd, endYmd, cert.id]);
+      }
+    }
+    res.json(cert);
   } catch (err) { logError('rh.medical.validate', err); res.status(500).json({ error: 'Erro' }); }
 });
 
