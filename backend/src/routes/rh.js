@@ -1319,8 +1319,62 @@ function buildCartaoDay(row, { employee, organizationSchedule, tolerance, closur
     isHoliday: Boolean(row.holiday_name),
     isWorkday: sched.isWorkday,
   });
+  function parseMedicalHours(v) {
+    if (!v) return 0;
+    const s = String(v).trim();
+    if (s.includes('-')) {
+      const [a, b] = s.split('-').map((x) => x.trim());
+      const toMin = (t) => { const [h, m] = t.split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+      const d = toMin(b) - toMin(a);
+      return d > 0 ? d : 0;
+    }
+    const n = Number(s.replace(',', '.'));
+    if (!isNaN(n) && n > 0) return Math.round(n * 60);
+    return 0;
+  }
   if (row.medical_cid) {
-    if (!punches.length) {
+    const partial = Boolean(row.medical_partial);
+    const justifiedMinutes = partial ? parseMedicalHours(row.medical_hours) : 0;
+    // Full-day atestado: no punches expected, no debit.
+    if (!partial || !justifiedMinutes) {
+      if (!punches.length) {
+        return {
+          date,
+          isoDow,
+          dayType: 'atestado',
+          absenceType: 'atestado',
+          medicalCid: row.medical_cid,
+          medicalHours: row.medical_hours || null,
+          medicalPartial: false,
+          punches: [],
+          workedMinutes: 0,
+          creditMinutes: 0,
+          debitMinutes: 0,
+          worked: '--',
+          credit: '--',
+          debit: '--',
+          expected: formatHHMM(subtractBreak(exit > entry ? exit - entry : 0, sched.breakMinutes)),
+          expectedMinutes: 0,
+          schedule: { entry: formatHHMM(entry), exit: formatHHMM(exit), name: row.schedule_name || null, source: sched.source },
+          closed: Boolean(closure?.closed),
+        };
+      }
+    }
+    // Partial-day atestado with punches: credit the justified absence hours so
+    // they are not debited against the day's expectation. Expected time is
+    // reduced by the justified minutes so the balance stays neutral.
+    if (partial && justifiedMinutes) {
+      const breakMin = sched.breakMinutes;
+      const expMin = exit > entry ? subtractBreak(exit - entry, breakMin) : 0;
+      const bal = dayBalance({
+        punches,
+        schedule: { entryMinutes: entry, exitMinutes: exit, expectedMinutes: expMin, breakMinutes: breakMin },
+        dayType,
+        tolerance,
+      });
+      const workedCompat = bal.workedMinutes + justifiedMinutes;
+      const delta = workedCompat - expMin;
+      const creditMinutes = delta > 0 ? delta : 0;
       return {
         date,
         isoDow,
@@ -1328,15 +1382,22 @@ function buildCartaoDay(row, { employee, organizationSchedule, tolerance, closur
         absenceType: 'atestado',
         medicalCid: row.medical_cid,
         medicalHours: row.medical_hours || null,
-        medicalPartial: Boolean(row.medical_partial),
-        punches: [],
-        workedMinutes: 0,
-        creditMinutes: 0,
+        medicalPartial: true,
+        punches: punches.map((p) => ({
+          id: p.id,
+          punch_type: p.punch_type,
+          punched_at: p.punched_at,
+          time: instantToSaoPauloClock(p.punched_at),
+          source: p.source || 'app',
+          adjustment_reason: p.adjustment_reason || null,
+        })),
+        workedMinutes: workedCompat,
+        creditMinutes,
         debitMinutes: 0,
-        worked: '--',
-        credit: '--',
+        worked: formatHHMM(workedCompat),
+        credit: creditMinutes ? formatHHMM(creditMinutes) : '--',
         debit: '--',
-        expected: formatHHMM(subtractBreak(exit > entry ? exit - entry : 0, sched.breakMinutes)),
+        expected: expMin ? formatHHMM(expMin) : '--',
         expectedMinutes: 0,
         schedule: { entry: formatHHMM(entry), exit: formatHHMM(exit), name: row.schedule_name || null, source: sched.source },
         closed: Boolean(closure?.closed),

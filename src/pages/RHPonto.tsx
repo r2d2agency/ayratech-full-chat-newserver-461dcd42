@@ -62,6 +62,7 @@ function statusLabel(day: CartaoDay): string {
   if (day.dayType === 'feriado') return day.holidayName || 'Feriado';
   if (day.dayType === 'ausencia') return day.absenceType || 'Afastado';
   if (day.dayType === 'folga') return 'Folga';
+  if (day.dayType === 'atestado') return day.medicalCid ? `Atestado (CID ${day.medicalCid})${day.medicalHours ? ` • ${day.medicalHours}` : ''}` : 'Atestado';
   return '';
 }
 
@@ -742,6 +743,7 @@ export default function RHPonto() {
                         const rowBg = day.dayType === 'feriado' ? 'bg-purple-500/5'
                           : day.dayType === 'folga' ? 'bg-muted/30'
                           : day.dayType === 'ausencia' ? 'bg-sky-500/5'
+                          : day.dayType === 'atestado' ? 'bg-emerald-500/5'
                           : today ? 'bg-primary/5' : '';
                         const editada = day.punches.some((p) => p.source === 'manual');
                         return (

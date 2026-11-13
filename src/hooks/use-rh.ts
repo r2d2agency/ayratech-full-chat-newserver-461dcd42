@@ -339,9 +339,12 @@ export type CartaoPunch = {
 export type CartaoDay = {
   date: string;                 // sempre 'YYYY-MM-DD', nunca Date
   isoDow: number | null;        // 1 = segunda ... 7 = domingo
-  dayType: 'util' | 'folga' | 'feriado' | 'ausencia';
+  dayType: 'util' | 'folga' | 'feriado' | 'ausencia' | 'atestado';
   holidayName: string | null;
   absenceType: string | null;
+  medicalCid?: string | null;
+  medicalHours?: string | null;
+  medicalPartial?: boolean;
   schedule: { entry: string; exit: string; name: string | null };
   expected: string;
   punches: CartaoPunch[];
