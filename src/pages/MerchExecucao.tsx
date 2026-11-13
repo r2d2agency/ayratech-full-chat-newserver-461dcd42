@@ -205,6 +205,7 @@ export default function MerchExecucao() {
   const inProgress = liveRoutes.filter((r: any) => r.status === 'in_progress');
   const completed = liveRoutes.filter((r: any) => r.status === 'completed');
   const scheduled = liveRoutes.filter((r: any) => r.status === 'scheduled' || r.status === 'confirmed');
+  const notDone = liveRoutes.filter((r: any) => r.status === 'not_done' || r.status === 'justified');
 
   const totalProducts = liveRoutes.reduce((sum: number, r: any) => sum + (parseInt(r.total_products) || 0), 0);
   const completedProducts = liveRoutes.reduce((sum: number, r: any) => sum + (parseInt(r.completed_products) || 0), 0);
@@ -392,8 +393,27 @@ export default function MerchExecucao() {
               </div>
             )}
 
-            {/* Scheduled */}
-            {scheduled.length > 0 && (
+            {/* Not done / justified */}
+            {notDone.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold text-red-600">⛔ Não Realizadas ({notDone.length})</h3>
+                {notDone.map((r: any) => (
+                  <Card key={r.id} className="border-red-500/20 cursor-pointer hover:border-red-500/40 transition-colors"
+                    onClick={() => setViewRouteId(r.id)}>
+                    <CardContent className="p-3 flex items-center justify-between">
+                      <div>
+                        <div className="font-semibold text-sm">{r.pdv_name}</div>
+                        <div className="text-xs text-muted-foreground">{r.promoter_name} • {r.brand_name}{r.visit_date ? ` • ${new Date(`${String(r.visit_date).slice(0, 10)}T12:00:00`).toLocaleDateString('pt-BR')}` : ''}</div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5">
+                          {r.not_done_reason && `Motivo: ${r.not_done_reason}`}
+                        </div>
+                      </div>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
               <div className="space-y-2">
                 <h3 className="text-sm font-semibold text-blue-600">📅 Aguardando ({scheduled.length})</h3>
                 {scheduled.map((r: any) => (
