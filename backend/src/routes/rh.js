@@ -1308,7 +1308,7 @@ function buildCartaoDay(row, { employee, organizationSchedule, tolerance, closur
   const isoDow = row.iso_dow || isoDowOf(row.date);
 
   const sched = resolveDaySchedule({
-    scale: { entry_time: row.entry_time, exit_time: row.exit_time, break_minutes: row.break_minutes },
+    scale: { entry_time: row.entry_time, exit_time: row.exit_time, break_minutes: row.break_minutes, workdays: row.workdays },
     employee: employee?.work_schedule,
     organizationSchedule,
     isoDow,
