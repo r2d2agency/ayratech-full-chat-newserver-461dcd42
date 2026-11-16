@@ -1623,7 +1623,7 @@ async function queryCartaoDays({ employeeId, orgId, start, end, capabilities }) 
 
   const schedSql = capabilities.schedules ? `
        LEFT JOIN LATERAL (
-         SELECT ${sc('entry_time')}, ${sc('exit_time')}, ${sc('break_minutes')}, ws.name AS schedule_name
+         SELECT ${sc('entry_time')}, ${sc('exit_time')}, ${sc('break_minutes')}, ${sc('workdays')}, ws.name AS schedule_name
            FROM employee_schedules es
            JOIN work_schedules ws ON ws.id = es.schedule_id
           WHERE es.employee_id = $1
