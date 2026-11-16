@@ -200,6 +200,11 @@ export function resolveDaySchedule({
     out.entry = scaleEntry;
     out.exit = scaleExit;
     out.breakMinutes = scaleBreak;
+    if (Array.isArray(scale.workdays) && isoDow != null) {
+      const dow = normalizeDow(isoDow);
+      const pgDow = dow === 7 ? 0 : dow;
+      out.isWorkday = scale.workdays.map(Number).includes(dow) || scale.workdays.map(Number).includes(pgDow);
+    }
     out.source = 'ESCALA';
     return out;
   }
