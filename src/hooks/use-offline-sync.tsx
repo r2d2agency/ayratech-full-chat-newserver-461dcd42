@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
-import { db, type PendingApiCall, type PendingUpload } from '@/lib/offline-db';
+import { db, type PendingApiCall, type PendingUpload, reopenOfflineDb } from '@/lib/offline-db';
 import { api, API_URL, getAuthToken } from '@/lib/api';
 
 import { logger } from '@/lib/logger';
@@ -775,6 +775,26 @@ function useOfflineSyncState() {
         localId
       });
     } catch (error: any) {
+      // iOS Safari pode fechar a conexão do IndexedDB (memória/bateria/app em
+      // segundo plano). Tentamos reabrir e repetir uma vez antes de falhar.
+      if (error?.name === 'DatabaseClosedError' || /Connection to Indexed Database server lost/i.test(error?.message || '')) {
+        try {
+          const fresh = reopenOfflineDb();
+          await fresh.pending_uploads.add({
+            fileData,
+            fileName: file.name,
+            fileType: file.type,
+            timestamp: Date.now(),
+            token,
+            accountKey: getCurrentOfflineAccountKey(),
+            status: 'pending',
+            localId
+          });
+          return;
+        } catch (retryErr: any) {
+          error = retryErr;
+        }
+      }
       await logger.error('photo_queue_failed', {
         event_name: 'photo_queue_failed',
         local_id: localId,

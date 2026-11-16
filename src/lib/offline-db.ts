@@ -102,3 +102,12 @@ export class OfflineDatabase extends Dexie {
 }
 
 export const db = new OfflineDatabase();
+
+// Reabre o IndexedDB quando a conexão é perdida (comum no iOS Safari sob
+// pressão de memória / app em segundo plano). O Dexie guarda a conexão aberta;
+// se o SO a fechar, chamadas subsequentes falham com DatabaseClosedError.
+// Recriar a instância força uma nova abertura.
+export function reopenOfflineDb(): OfflineDatabase {
+  try { db.close(); } catch { /* ignore */ }
+  return new OfflineDatabase();
+}
