@@ -32,11 +32,32 @@ function isAutoFilledJornada(raw) {
   }
   if (!parsed || typeof parsed !== 'object') return true;
   const isDefaultWindow = (c) => (c?.entry ?? c?.start) === '08:00' && (c?.exit ?? c?.end) === '17:00';
+  const defaultDays = { seg: true, ter: true, qua: true, qui: true, sex: true, sab: false, dom: false };
+  // A change in which days are workdays is real intent even when the hours
+  // themselves are the default 08:00-17:00 (e.g. enabling Saturday while keeping
+  // default hours). Otherwise a customized "folga só no domingo" schedule is
+  // mistaken for the auto-filled default and the point falls back to the org
+  // default, which rests on Saturday.
+  if (parsed.days && typeof parsed.days === 'object') {
+    for (const k of Object.keys(defaultDays)) {
+      if (parsed.days[k] !== undefined && Boolean(parsed.days[k]) !== defaultDays[k]) return false;
+    }
+  }
+  if (parsed.days && typeof parsed.days === 'object') {
+    for (const k of Object.keys(defaultDays)) {
+      if (parsed.days[k] !== undefined && Boolean(parsed.days[k]) !== defaultDays[k]) return false;
+    }
+  }
   const dayConfig = parsed.dayConfig;
   const anyFilledDay = dayConfig && typeof dayConfig === 'object'
     ? Object.values(dayConfig).some((d) => d && (d.entry || d.start) && (d.exit || d.end) && !isDefaultWindow(d))
     : false;
-  if (anyFilledDay) return false;
+  // A dayConfig block on a day that is off by default (sab/dom) is also intent,
+  // even with default hours.
+  const hasNonDefaultDayConfig = dayConfig && typeof dayConfig === 'object'
+    ? Object.keys(dayConfig).some((k) => !defaultDays[k] && dayConfig[k] && (dayConfig[k].entry || dayConfig[k].start) && (dayConfig[k].exit || dayConfig[k].end))
+    : false;
+  if (anyFilledDay || hasNonDefaultDayConfig) return false;
   // No dayConfig at all, or every day is 08:00-17:00: only the top-level window
   // decides, and it counts as intent only if it is not the default.
   if (isDefaultWindow(parsed)) return true;
