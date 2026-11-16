@@ -354,11 +354,12 @@ function useOfflineSyncState() {
         }
         const authToken = upload.token;
 
-        // Telemetria de duração — nada aqui lança exceção quando fica lento
-        // (só quando falha de vez), então sem isso um travamento de rede/
-        // aparelho fraco nunca aparecia nos logs. "warn" acima de 8s fica
-        // persistido e visível na Central de Logs, com o aparelho identificado.
         const uploadStartedAt = Date.now();
+        // Upload com timeout: o Safari/iOS encerra a conexão silenciosamente
+        // (Load failed, sem resposta HTTP) quando demora demais ou muda de rede.
+        // Sem timeout o fetch ficaria travado para sempre no pending.
+        const controller = new AbortController();
+        const uploadTimeout = setTimeout(() => controller.abort(), 120_000);
         const response = await fetch(`${API_URL}/api/uploads`, {
           method: 'POST',
           headers: {
@@ -368,8 +369,10 @@ function useOfflineSyncState() {
             // opcionalmente honrar para deduplicar server-side.
             'X-Idempotency-Key': upload.localId,
           },
-          body: formData
+          body: formData,
+          signal: controller.signal,
         });
+        clearTimeout(uploadTimeout);
         const uploadDurationMs = Date.now() - uploadStartedAt;
         if (uploadDurationMs > 8000) {
           logger.warn('[OfflineSync] Upload demorou mais que o esperado', {
