@@ -508,6 +508,11 @@ router.get('/routes', async (req, res) => {
       params.push(date_to);
     }
 
+    // Antes de listar, alinha rotas que o app já executou (fotos/categorias/
+    // produtos gravados) mas que ficaram `scheduled` por falha parcial no
+    // check-in. Sem isso o painel mostra "Agendada" enquanto a execução existe.
+    await reconcileExecutedRoutes(orgId, date_from, date_to);
+
     sql += ' ORDER BY r.visit_date DESC, r.scheduled_time';
     const result = await query(sql, params);
     const rows = result.rows;
@@ -1888,6 +1893,14 @@ router.post('/routes/:id/duplicate', async (req, res) => {
 // Get route detail with executions
 router.get('/routes/:id', authenticate, async (req, res) => {
   try {
+    try {
+      const meta = await query('SELECT organization_id, visit_date::text AS visit_date FROM merch_routes WHERE id=$1', [req.params.id]);
+      if (meta.rows.length) {
+        await reconcileExecutedRoutes(meta.rows[0].organization_id, meta.rows[0].visit_date, meta.rows[0].visit_date, req.params.id);
+      }
+    } catch (metaErr) {
+      logWarn('routes.detail.reconcile_failed', metaErr);
+    }
     const route = await query(
       `SELECT r.*, e.full_name as promoter_name, p.name as pdv_name, b.name as brand_name,
        sv.full_name as supervisor_name,
@@ -1966,6 +1979,10 @@ router.get('/routes/live', async (req, res) => {
     const orgRes = await query('SELECT organization_id FROM organization_members WHERE user_id=$1 LIMIT 1', [req.userId]);
     if (!orgRes.rows.length) return res.json([]);
     const orgId = orgRes.rows[0].organization_id;
+
+    // O painel de execução em tempo real usa esta lista. Reconcilia antes de
+    // ler para que uma rota com fotos de categoria não continue "Agendada".
+    await reconcileExecutedRoutes(orgId, req.query.date_from || null, req.query.date_to || null);
 
     // Check if supporting tables/columns exist to avoid schema drift crashes
     let hasExecCategories = false;
@@ -3270,6 +3287,117 @@ async function refreshRouteProgress(routeId, routeBrandId = null, refreshAllBran
 // O check-in é por PDV, não por rota: a visita é do promotor no PDV. Por isso
 // o que vale é "este promotor fez check-in neste PDV, neste horário" — e não
 // "esta rota tem checkin_at".
+// Reconcilia rotas que estão sendo executadas no app mas ficaram como
+// `scheduled` no banco. Isso acontece quando o check-in principal não conclui
+// (ex.: falha depois de gravar a visita no PDV) mas as fotos/categorias entram
+// na fila offline e são sincronizadas depois. A guarda de execução aceita a
+// visita do PDV como check-in válido; o painel, porém, lê só `merch_routes.status`.
+// Aqui usamos exatamente as mesmas provas aceitas pela guarda para alinhar o status.
+let reconcileExecutedRoutesReady = null;
+async function reconcileExecutedRoutes(orgId, dateFrom = null, dateTo = null, routeId = null) {
+  if (!orgId) return;
+  reconcileExecutedRoutesReady = reconcileExecutedRoutesReady || (async () => {
+    const [visits, photos, categories, products, stockCounts] = await Promise.all([
+      hasTable('pdv_visits').catch(() => false),
+      hasTable('route_photos').catch(() => false),
+      hasTable('merch_execution_categories').catch(() => false),
+      hasTable('route_product_executions').catch(() => false),
+      hasTable('stock_count_executions').catch(() => false),
+    ]);
+    return { visits, photos, categories, products, stockCounts };
+  })();
+  const tables = await reconcileExecutedRoutesReady;
+
+  const checks = [];
+  if (tables.visits) {
+    checks.push(`EXISTS (
+      SELECT 1 FROM pdv_visits v
+       WHERE v.promoter_id = r.promoter_id
+         AND v.pdv_id = r.pdv_id
+         AND v.visit_date = r.visit_date
+         AND v.checkin_at IS NOT NULL
+         AND (
+           COALESCE(r.window_start, r.scheduled_time, '00:00'::time) = '00:00'::time
+           OR v.slot_time = COALESCE(r.window_start, r.scheduled_time, '00:00'::time)
+         )
+    )`);
+  }
+  if (tables.photos) {
+    checks.push(`EXISTS (
+      SELECT 1 FROM route_photos rp
+       WHERE rp.route_id = r.id
+         AND rp.photo_url IS NOT NULL
+         AND rp.photo_url NOT LIKE 'blob:%'
+         AND rp.photo_url NOT LIKE 'local-file:%'
+    )`);
+  }
+  if (tables.categories) {
+    checks.push(`EXISTS (
+      SELECT 1 FROM merch_execution_categories mec
+       WHERE mec.route_id = r.id
+         AND (mec.point_type IS NOT NULL OR mec.category_before_photo IS NOT NULL OR mec.category_after_photo IS NOT NULL OR COALESCE(mec.completed, false) = true)
+    )`);
+  }
+  if (tables.products) {
+    checks.push(`EXISTS (
+      SELECT 1 FROM route_product_executions rpe
+       WHERE rpe.route_id = r.id
+         AND (rpe.status = 'completed' OR COALESCE(rpe.checked, false) = true OR rpe.executed_at IS NOT NULL)
+    )`);
+  }
+  if (tables.stockCounts) {
+    checks.push(`EXISTS (
+      SELECT 1 FROM stock_count_executions sce
+       WHERE sce.route_id = r.id
+         AND sce.status IN ('in_progress', 'completed')
+    )`);
+  }
+  if (!checks.length) return;
+
+  const where = [
+    'r.organization_id = $1',
+    `r.status IN ('scheduled', 'confirmed', 'pending')`,
+    `(${checks.join(' OR ')})`,
+  ];
+  const params = [orgId];
+  if (dateFrom) { params.push(dateFrom); where.push(`r.visit_date >= $${params.length}`); }
+  if (dateTo) { params.push(dateTo); where.push(`r.visit_date <= $${params.length}`); }
+  if (routeId) { params.push(routeId); where.push(`r.id = $${params.length}`); }
+
+  const checkinAtExpr = tables.visits
+    ? `COALESCE(r.checkin_at, (
+        SELECT MIN(v.checkin_at) FROM pdv_visits v
+         WHERE v.promoter_id = r.promoter_id AND v.pdv_id = r.pdv_id AND v.visit_date = r.visit_date
+           AND v.checkin_at IS NOT NULL
+           AND (COALESCE(r.window_start, r.scheduled_time, '00:00'::time) = '00:00'::time
+                OR v.slot_time = COALESCE(r.window_start, r.scheduled_time, '00:00'::time))
+      ), NOW())`
+    : `COALESCE(r.checkin_at, NOW())`;
+
+  try {
+    const result = await query(
+      `UPDATE merch_routes r
+          SET status = 'in_progress',
+              checkin_at = ${checkinAtExpr},
+              updated_at = NOW()
+        WHERE ${where.join(' AND ')}
+        RETURNING r.id`,
+      params
+    );
+    if (result.rowCount > 0) {
+      logInfo('routes.reconciled_in_progress', {
+        org_id: orgId,
+        count: result.rowCount,
+        route_ids: result.rows.slice(0, 20).map((r) => r.id),
+      });
+    }
+  } catch (err) {
+    if (err?.code !== '42P01' && err?.code !== '42703') {
+      logWarn('routes.reconcile_failed', err);
+    }
+  }
+}
+
 async function requireRouteCheckin(req, res, routeId) {
   const routeRes = await query(
     `SELECT r.id, r.pdv_id, r.promoter_id, r.status, r.checkin_at, r.visit_date,
@@ -3479,6 +3607,14 @@ router.get('/promotor/agenda', promotorAuth, async (req, res) => {
 // Promotor: Route detail with products
 router.get('/promotor/routes/:id', promotorAuth, async (req, res) => {
   try {
+    try {
+      const meta = await query('SELECT organization_id, visit_date::text AS visit_date FROM merch_routes WHERE id=$1', [req.params.id]);
+      if (meta.rows.length) {
+        await reconcileExecutedRoutes(meta.rows[0].organization_id, meta.rows[0].visit_date, meta.rows[0].visit_date, req.params.id);
+      }
+    } catch (metaErr) {
+      logWarn('promotor.route_detail.reconcile_failed', metaErr);
+    }
     await ensureAllRouteDetailColumns();
 
     let routeRes;
