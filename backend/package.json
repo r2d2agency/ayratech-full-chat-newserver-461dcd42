@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "compress-uploads": "node scripts/compress-uploads.mjs ../uploads 300"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -20,6 +21,7 @@
     "pdf-parse": "^1.1.1",
     "pg": "^8.23.0",
     "qrcode": "^1.5.4",
+    "sharp": "^0.34.5",
     "web-push": "^3.6.7"
   }
 }

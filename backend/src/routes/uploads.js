@@ -3,9 +3,16 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import sharp from 'sharp';
 import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
+
+// Limite rígido para fotos enviadas por celular ou PC. O compress do navegador
+// é best-effort (Safari nem sempre honra target de tamanho), então o servidor
+// precisa garantir o tamanho final.
+const IMAGE_TARGET_MAX_BYTES = 300 * 1024;
+const IMAGE_MAX_DIMENSION = 1920;
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(process.cwd(), 'uploads');
@@ -72,6 +79,68 @@ const storage = multer.diskStorage({
     cb(null, uniqueName);
   }
 });
+
+function isRasterImage(file) {
+  const mime = String(file?.mimetype || '').toLowerCase();
+  const ext = path.extname(file?.originalname || '').toLowerCase();
+  return [
+    'image/jpeg', 'image/png', 'image/webp', 'image/bmp', 'image/tiff', 'image/avif', 'image/jfif',
+  ].includes(mime) || ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff', '.avif', '.jfif'].includes(ext);
+}
+
+// Comprime qualquer imagem raster para WebP, reduzindo qualidade e resolução
+// até caber no limite. Nunca altera documentos/áudios/vídeos/SVG (que podem
+// ter semântica própria e não devem virar WebP).
+async function normalizeUploadedImage(req, res, next) {
+  if (!req.file || !isRasterImage(req.file)) return next();
+
+  try {
+    const inputPath = req.file.path;
+    const outputPath = path.join(uploadsDir, `${Date.now()}-${crypto.randomBytes(8).toString('hex')}.webp`);
+
+    let created = false;
+    let bestPath = null;
+    let bestSize = Infinity;
+
+    for (const quality of [72, 62, 52, 42, 32, 22, 12]) {
+      for (const maxDim of [IMAGE_MAX_DIMENSION, 1440, 1200, 960, 800, 640]) {
+        const candidate = `${outputPath}.${quality}-${maxDim}.tmp.webp`;
+        await sharp(inputPath)
+          .rotate()
+          .resize({ width: maxDim, height: maxDim, fit: 'inside', withoutEnlargement: true })
+          .webp({ quality, effort: 4 })
+          .toFile(candidate);
+        const size = fs.statSync(candidate).size;
+        if (size < bestSize) {
+          if (bestPath && fs.existsSync(bestPath)) fs.unlinkSync(bestPath);
+          bestPath = candidate;
+          bestSize = size;
+        } else {
+          fs.unlinkSync(candidate);
+        }
+        if (size <= IMAGE_TARGET_MAX_BYTES) {
+          created = true;
+          break;
+        }
+      }
+      if (created) break;
+    }
+
+    if (!bestPath) throw new Error('Falha ao comprimir imagem');
+    fs.unlinkSync(inputPath);
+    fs.renameSync(bestPath, outputPath);
+
+    req.file.path = outputPath;
+    req.file.filename = path.basename(outputPath);
+    req.file.mimetype = 'image/webp';
+    req.file.size = bestSize;
+    return next();
+  } catch (err) {
+    // Se a imagem estiver corrompida, rejeita em vez de salvar um arquivo grande.
+    if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    return res.status(400).json({ error: 'Não foi possível processar a imagem enviada' });
+  }
+}
 
 // File filter for allowed types
 const fileFilter = (req, file, cb) => {
@@ -154,36 +223,37 @@ const upload = multer({
 // Upload single file
 router.post('/', authenticate, (req, res) => {
   upload.single('file')(req, res, (err) => {
-    try {
-      if (err) {
-        const msg = err?.message || 'Erro ao fazer upload';
-        return res.status(400).json({ error: msg });
-      }
-
-      if (!req.file) {
-        return res.status(400).json({ error: 'Nenhum arquivo enviado' });
-      }
-
-      // Build the public URL - use backend domain, not frontend
-      const baseUrl = String(process.env.API_BASE_URL || '').trim().replace(/\/+$/, '');
-      const fileUrl = baseUrl
-        ? `${baseUrl}/uploads/${req.file.filename}`
-        : `/uploads/${req.file.filename}`;
-
-      res.json({
-        success: true,
-        file: {
-          filename: req.file.filename,
-          originalName: req.file.originalname,
-          mimetype: req.file.mimetype,
-          size: req.file.size,
-          url: fileUrl,
-        }
-      });
-    } catch (error) {
-      console.error('Upload error:', error);
-      res.status(500).json({ error: 'Erro ao fazer upload' });
+    if (err) {
+      return res.status(400).json({ error: err?.message || 'Erro ao fazer upload' });
     }
+
+    normalizeUploadedImage(req, res, () => {
+      try {
+        if (!req.file) {
+          return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+        }
+
+        // Build the public URL - use backend domain, not frontend
+        const baseUrl = String(process.env.API_BASE_URL || '').trim().replace(/\/+$/, '');
+        const fileUrl = baseUrl
+          ? `${baseUrl}/uploads/${req.file.filename}`
+          : `/uploads/${req.file.filename}`;
+
+        res.json({
+          success: true,
+          file: {
+            filename: req.file.filename,
+            originalName: req.file.originalname,
+            mimetype: req.file.mimetype,
+            size: req.file.size,
+            url: fileUrl,
+          }
+        });
+      } catch (error) {
+        console.error('Upload error:', error);
+        res.status(500).json({ error: 'Erro ao fazer upload' });
+      }
+    });
   });
 });
 

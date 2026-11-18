@@ -25,7 +25,7 @@ const DEFAULTS: PhotoQualityConfig = {
   min_resolution_w: 640,
   min_resolution_h: 480,
   compression_quality: 0.7,
-  max_file_size_kb: 1024,
+  max_file_size_kb: 300,
 };
 
 export function PhotoQualityConfigPanel() {

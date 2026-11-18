@@ -5839,7 +5839,7 @@ router.get('/photo-quality-config', async (req, res) => {
   const defaults = {
     blur_tolerance: 30, min_brightness: 40, max_brightness: 220,
     min_resolution_w: 640, min_resolution_h: 480,
-    compression_quality: 0.7, max_file_size_kb: 1024,
+    compression_quality: 0.7, max_file_size_kb: 300,
   };
   try {
     // Accept either main user token or promotor token; fall back to defaults on auth/lookup failure.

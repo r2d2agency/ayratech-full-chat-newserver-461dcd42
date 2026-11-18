@@ -57,7 +57,7 @@ const DEFAULT_QUALITY_CONFIG: PhotoQualityConfig = {
   min_resolution_w: 640,
   min_resolution_h: 480,
   compression_quality: 0.6,    // Reduced from 0.7 for better initial compression
-  max_file_size_kb: 500,        // Reduced from 1024 to save server storage
+  max_file_size_kb: 300,        // Novas fotos devem chegar em até 300KB; backend também garante.
 };
 
 interface ValidationResult {
