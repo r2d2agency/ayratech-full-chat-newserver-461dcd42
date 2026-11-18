@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import sharp from 'sharp';
 
 // Compressão em massa da pasta uploads. Mantém o MESMO nome do arquivo para
@@ -14,7 +15,14 @@ import sharp from 'sharp';
 
 const args = process.argv.slice(2);
 const positional = args.filter((a) => !a.startsWith('--'));
-const uploadsDir = path.resolve(positional[0] || '../uploads');
+// Default: pasta "uploads" dentro do backend, independente de onde o comando é rodado.
+// Aceita caminho relativo ou absoluto como primeiro argumento.
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const backendDir = path.resolve(scriptDir, '..');
+const defaultUploadsDir = path.join(backendDir, 'uploads');
+const uploadsDir = positional[0]
+  ? (path.isAbsolute(positional[0]) ? positional[0] : path.resolve(backendDir, positional[0]))
+  : (process.env.UPLOADS_DIR ? path.resolve(process.env.UPLOADS_DIR) : defaultUploadsDir);
 const targetKb = Number(positional[1] || 300);
 const targetBytes = targetKb * 1024;
 const dryRun = args.includes('--dry-run');

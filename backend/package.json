@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "compress-uploads": "node scripts/compress-uploads.mjs ../uploads 300"
+    "compress-uploads": "node scripts/compress-uploads.mjs uploads 300"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
