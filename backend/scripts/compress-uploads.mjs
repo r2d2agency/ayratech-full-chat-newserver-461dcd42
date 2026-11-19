@@ -13,6 +13,15 @@ import sharp from 'sharp';
 //   node scripts/compress-uploads.mjs ../uploads 300 --dry-run
 //   node scripts/compress-uploads.mjs ../uploads 300 --limit 1000
 
+// Última rede de segurança: se algum stream do sharp emitir 'error' de forma
+// assíncrona, registra e segue em vez de derrubar o batch inteiro.
+process.on('uncaughtException', (err) => {
+  console.error(`uncaught          ${err?.message || err}`);
+});
+process.on('unhandledRejection', (err) => {
+  console.error(`unhandled         ${err?.message || err}`);
+});
+
 const args = process.argv.slice(2);
 const positional = args.filter((a) => !a.startsWith('--'));
 // Default: pasta "uploads" dentro do backend, independente de onde o comando é rodado.
@@ -38,10 +47,10 @@ const QUALITIES_BY_EXT = {
   '.png': [85, 75, 65, 55, 45, 35],
 };
 
-function encoderFor(ext, quality) {
-  if (ext === '.webp') return sharp().webp({ quality, effort: 4 });
-  if (ext === '.jpg' || ext === '.jpeg') return sharp().jpeg({ quality, mozjpeg: true });
-  return sharp().png({ quality, compressionLevel: 9, palette: true });
+function applyEncoder(pipeline, ext, quality) {
+  if (ext === '.webp') return pipeline.webp({ quality, effort: 4 });
+  if (ext === '.jpg' || ext === '.jpeg') return pipeline.jpeg({ quality, mozjpeg: true });
+  return pipeline.png({ quality, compressionLevel: 9, palette: true });
 }
 
 async function walk(dir) {
@@ -81,11 +90,13 @@ async function compressOne(file) {
       try {
         // Sempre decodifica de novo a partir do buffer original para que um
         // erro de pipe não deixe streams órfãos emitindo 'error' depois.
-        output = await sharp(input, { failOn: 'error' })
-          .rotate()
-          .resize({ width: maxDim, height: maxDim, fit: 'inside', withoutEnlargement: true })
-          .pipe(encoderFor(ext, quality))
-          .toBuffer();
+        output = await applyEncoder(
+          sharp(input, { failOn: 'error' })
+            .rotate()
+            .resize({ width: maxDim, height: maxDim, fit: 'inside', withoutEnlargement: true }),
+          ext,
+          quality,
+        ).toBuffer();
       } catch (err) {
         return { status: 'invalid', before, after: before, error: err?.message || String(err) };
       }
