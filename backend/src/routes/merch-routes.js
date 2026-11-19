@@ -4827,11 +4827,42 @@ router.post('/promotor/routes/:routeId/categories/:catId/after-photo', promotorA
       requireValidityCheck = minRes.rows[0]?.require_validity_check === true;
     } catch {}
 
-    if (!cat.rows[0].products_unlocked && categoryPhotoMode !== 'after') {
+    const hasRouteBrandColumn = await hasColumn('route_photos', 'route_brand_id');
+
+    // A fila offline pode entregar o after-photo antes do before-photo quando
+    // um dos uploads demora mais. Se o ANTES já está gravado, não devemos
+    // rejeitar o DEPOIS só porque o flag products_unlocked ainda não foi
+    // atualizado/flushado — isso transformava um atraso de sincronização em
+    // 400 permanente (a fila não reenvia 4xx).
+    let beforePhotoExists = false;
+    try {
+      const beforeCheck = await query(
+        hasRouteBrandColumn
+          ? `SELECT 1 FROM route_photos
+              WHERE route_id=$1 AND category_id IS NOT DISTINCT FROM $2
+                AND route_brand_id IS NOT DISTINCT FROM $3
+                AND photo_type='category_before'
+              LIMIT 1`
+          : `SELECT 1 FROM route_photos
+              WHERE route_id=$1 AND category_id IS NOT DISTINCT FROM $2
+                AND photo_type='category_before'
+              LIMIT 1`,
+        hasRouteBrandColumn ? [req.params.routeId, catId, route_brand_id || null] : [req.params.routeId, catId]
+      );
+      beforePhotoExists = beforeCheck.rows.length > 0;
+    } catch {}
+
+    if (!cat.rows[0].products_unlocked && !beforePhotoExists && categoryPhotoMode !== 'after') {
       return res.status(400).json({ error: 'Produtos ainda não foram liberados (foto do ANTES necessária)' });
     }
-
-    const hasRouteBrandColumn = await hasColumn('route_photos', 'route_brand_id');
+    if (beforePhotoExists && !cat.rows[0].products_unlocked) {
+      await query(
+        `UPDATE merch_execution_categories
+            SET products_unlocked=true, unlocked_at=COALESCE(unlocked_at, NOW()), updated_at=NOW()
+          WHERE route_id=$1 AND category_id IS NOT DISTINCT FROM $2 AND route_brand_id IS NOT DISTINCT FROM $3`,
+        [req.params.routeId, catId, route_brand_id || null]
+      );
+    }
     const prevCount = (await query(
       hasRouteBrandColumn
         ? `SELECT COUNT(*)::int as n FROM route_photos

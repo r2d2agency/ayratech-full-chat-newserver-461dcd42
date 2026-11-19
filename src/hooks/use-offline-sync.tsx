@@ -476,6 +476,22 @@ function useOfflineSyncState() {
     // 2. Process API Calls
     for (const call of updatedPendingCalls) {
       try {
+        // A foto DEPOIS só pode sincronizar depois da foto ANTES da MESMA
+        // categoria. Sem essa barreira, o after-photo chega primeiro, o backend
+        // vê products_unlocked=false e devolve 400 (que a fila não reenvia).
+        const afterMatch = call.url.match(/\/promotor\/routes\/([^/]+)\/categories\/([^/]+)\/after-photo$/);
+        if (afterMatch) {
+          const [, afterRouteId, afterCatId] = afterMatch;
+          const pendingBefore = await db.pending_api_calls
+            .where('status').anyOf('pending', 'processing')
+            .filter(other =>
+              other.id !== call.id &&
+              new RegExp(`/promotor/routes/${afterRouteId}/categories/${afterCatId}/photo$`).test(other.url)
+            )
+            .count();
+          if (pendingBefore > 0) continue;
+        }
+
         // O checkout da rota só pode ser enviado depois das atualizações de
         // categoria da mesma rota. Sem essa barreira, o servidor pode receber
         // o checkout enquanto as fotos ainda estão subindo e rejeitar a rota.
