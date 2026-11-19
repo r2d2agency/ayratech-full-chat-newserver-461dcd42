@@ -61,16 +61,34 @@ async function compressOne(file) {
   if (before <= targetBytes) return { status: 'skipped-small', before, after: before };
 
   const input = await fs.promises.readFile(file);
+
+  // Valida o decode antes de iniciar os pipes. PNG corrompido (libspng read
+  // error) não pode derrubar o processo inteiro — ele vira `invalid` no resumo.
+  let metadata = null;
+  try {
+    metadata = await sharp(input, { failOn: 'error' }).metadata();
+    if (!metadata?.width || !metadata?.height) throw new Error('dimensões inválidas');
+  } catch (err) {
+    return { status: 'invalid', before, after: before, error: err?.message || String(err) };
+  }
+
   let best = null;
   let bestSize = Infinity;
 
   for (const quality of QUALITIES_BY_EXT[ext]) {
     for (const maxDim of DIMENSIONS) {
-      const output = await sharp(input)
-        .rotate()
-        .resize({ width: maxDim, height: maxDim, fit: 'inside', withoutEnlargement: true })
-        .pipe(encoderFor(ext, quality))
-        .toBuffer();
+      let output;
+      try {
+        // Sempre decodifica de novo a partir do buffer original para que um
+        // erro de pipe não deixe streams órfãos emitindo 'error' depois.
+        output = await sharp(input, { failOn: 'error' })
+          .rotate()
+          .resize({ width: maxDim, height: maxDim, fit: 'inside', withoutEnlargement: true })
+          .pipe(encoderFor(ext, quality))
+          .toBuffer();
+      } catch (err) {
+        return { status: 'invalid', before, after: before, error: err?.message || String(err) };
+      }
       if (output.length < bestSize) {
         best = output;
         bestSize = output.length;
@@ -103,6 +121,7 @@ async function main() {
   let totalAfter = 0;
   let processed = 0;
   let errors = 0;
+  let invalid = 0;
 
   for (const file of files) {
     try {
@@ -110,9 +129,10 @@ async function main() {
       totalBefore += result.before;
       totalAfter += result.after;
       if (result.status === 'compressed' || result.status === 'would-compress') processed++;
-      if (processed <= 30 || result.status === 'compressed' || result.status === 'would-compress') {
+      if (result.status === 'invalid') invalid++;
+      if (processed <= 30 || ['compressed', 'would-compress', 'invalid', 'no-gain'].includes(result.status)) {
         console.log(
-          `${result.status.padEnd(15)} ${((result.before - result.after) / 1024).toFixed(0).padStart(8)} KB  ${path.relative(uploadsDir, file)}`,
+          `${result.status.padEnd(15)} ${((result.before - result.after) / 1024).toFixed(0).padStart(8)} KB  ${path.relative(uploadsDir, file)}${result.error ? ` — ${result.error}` : ''}`,
         );
       }
     } catch (err) {
@@ -125,6 +145,7 @@ async function main() {
   console.log(`Arquivos encontrados: ${files.length}`);
   console.log(`Comprimidos: ${processed}${dryRun ? ' (dry-run, nada foi alterado)' : ''}`);
   console.log(`Erros: ${errors}`);
+  console.log(`Imagens inválidas/corrompidas (puladas): ${invalid}`);
   console.log(`Antes: ${(totalBefore / 1024 / 1024).toFixed(2)} MB`);
   console.log(`Depois: ${(totalAfter / 1024 / 1024).toFixed(2)} MB`);
   console.log(`Economia: ${((totalBefore - totalAfter) / 1024 / 1024).toFixed(2)} MB`);
