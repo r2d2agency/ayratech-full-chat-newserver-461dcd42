@@ -1091,10 +1091,58 @@ router.post('/pdv-brands/by-network', async (req, res) => {
 });
 
 router.delete('/pdv-brands/:id', async (req, res) => {
+  const client = await pool.connect();
   try {
-    await query('DELETE FROM merch_pdv_brands WHERE id=$1 AND organization_id=$2', [req.params.id, req.orgId]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    await client.query('BEGIN');
+
+    // Lê o vínculo antes de apagar, para saber qual loja/marca limpar nas rotas.
+    const linkRes = await client.query(
+      `SELECT pdv_id, brand_id FROM merch_pdv_brands WHERE id=$1 AND organization_id=$2`,
+      [req.params.id, req.orgId]
+    );
+    const link = linkRes.rows[0];
+    if (!link) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Vínculo não encontrado' });
+    }
+
+    await client.query('DELETE FROM merch_pdv_brands WHERE id=$1 AND organization_id=$2', [req.params.id, req.orgId]);
+
+    // Rotas futuras já criadas não somem sozinhas quando o vínculo é excluído.
+    //Remove agendadas/confirmadas daquela loja+marca (rotas de um dia futuro).
+    // Em rotas multi-marca, exclui a rota inteira se ela contém a marca
+    // desvinculada — o promotor não deve mais visitar aquela loja por ela.
+    const hasRouteBrands = await client.query(`SELECT to_regclass($1) AS ref`, ['public.route_brands']).then(r => Boolean(r.rows[0]?.ref)).catch(() => false);
+    // Data civil de São Paulo, para "futuras" significar o que o usuário vê
+    // como amanhã em diante, não o dia UTC do servidor.
+    const futureSql = hasRouteBrands
+      ? `DELETE FROM merch_routes r
+           WHERE r.organization_id=$1 AND r.pdv_id=$2
+             AND r.visit_date > (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+             AND r.status IN ('scheduled','confirmed')
+             AND (r.brand_id = $3 OR EXISTS (
+               SELECT 1 FROM route_brands rb WHERE rb.route_id = r.id AND rb.brand_id = $3
+             ))
+           RETURNING r.id`
+      : `DELETE FROM merch_routes r
+           WHERE r.organization_id=$1 AND r.pdv_id=$2
+             AND r.visit_date > (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+             AND r.status IN ('scheduled','confirmed')
+             AND r.brand_id = $3
+           RETURNING r.id`;
+    const del = await client.query(futureSql, [req.orgId, link.pdv_id, link.brand_id]);
+
+    await client.query('COMMIT');
+    logInfo('merch.pdv_brand_unlink', {
+      pdv_id: link.pdv_id, brand_id: link.brand_id, future_routes_removed: del.rowCount || 0,
+    });
+    res.json({ ok: true, future_routes_removed: del.rowCount || 0 });
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch {}
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
 });
 
 // ==================== MIX (PDV BRAND PRODUCTS) ====================

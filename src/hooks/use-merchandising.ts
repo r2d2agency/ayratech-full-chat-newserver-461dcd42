@@ -237,7 +237,14 @@ export function useRemovePdvBrand() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api<any>(`/api/merchandising/pdv-brands/${id}`, { method: 'DELETE' }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['merch-pdv-brands'] }); qc.invalidateQueries({ queryKey: ['merch-brand-pdvs'] }); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['merch-pdv-brands'] });
+      qc.invalidateQueries({ queryKey: ['merch-brand-pdvs'] });
+      // O unlink também remove rotas futuras; garante que agenda/roteiro
+      // recarreguem em vez de continuarem mostrando a loja excluída.
+      qc.invalidateQueries({ queryKey: ['merch-routes'] });
+      qc.invalidateQueries({ queryKey: ['merch-routes-live'] });
+    },
   });
 }
 
