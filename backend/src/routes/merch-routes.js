@@ -2623,10 +2623,18 @@ router.get('/photo-book', authenticate, async (req, res) => {
 
     // Deduplica no SQL (mesma URL na mesma rota pode existir nas duas tabelas)
     // antes de contar/paginar, para total e páginas serem consistentes.
+    // ROW_NUMBER evita a restrição do DISTINCT ON, que exige ORDER BY começando
+    // pelas colunas do DISTINCT ON e não permite ordenar por captured_at aqui.
     const dedupSql = `
-      SELECT DISTINCT ON (route_id, photo_url) *
-      FROM (${sql}) combined_all
-      ORDER BY route_id, photo_url, captured_at DESC
+      SELECT * FROM (
+        SELECT combined_all.*,
+               ROW_NUMBER() OVER (
+                 PARTITION BY route_id, photo_url
+                 ORDER BY captured_at DESC
+               ) AS dedup_rank
+        FROM (${sql}) combined_all
+      ) ranked
+      WHERE dedup_rank = 1
     `;
     const countResult = await query(
       `SELECT COUNT(*)::int AS total FROM (${dedupSql}) dedup`,
