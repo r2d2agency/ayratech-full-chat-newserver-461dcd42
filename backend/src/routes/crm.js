@@ -3808,19 +3808,36 @@ router.get('/intelligence/win-loss-analysis', async (req, res) => {
       );
     } catch (error) {
       if (!isMissingSchemaError(error)) throw error;
-      bySegment = await query(
-        `SELECT 
-          COALESCE(NULLIF(BTRIM(c.custom_fields->>'segment'), ''), 'Sem segmento') as segment,
-          COUNT(*) FILTER (WHERE d.status = 'won') as won_count,
-          COUNT(*) FILTER (WHERE d.status = 'lost') as lost_count,
-          COALESCE(SUM(d.value) FILTER (WHERE d.status = 'won'), 0) as won_value
-         FROM crm_deals d
-         LEFT JOIN crm_companies c ON c.id = d.company_id
-         WHERE d.organization_id = $1 AND d.status IN ('won', 'lost') ${dateFilter} ${funnelFilter}
-         GROUP BY COALESCE(NULLIF(BTRIM(c.custom_fields->>'segment'), ''), 'Sem segmento')
-         ORDER BY won_count DESC`,
-        params
-      );
+      // crm_companies pode não ter `segment` e também pode não ter `custom_fields`.
+      // Nesse caso, agrupa tudo como "Sem segmento" em vez de derrubar o dashboard.
+      try {
+        bySegment = await query(
+          `SELECT
+            COALESCE(NULLIF(BTRIM(c.custom_fields->>'segment'), ''), 'Sem segmento') as segment,
+            COUNT(*) FILTER (WHERE d.status = 'won') as won_count,
+            COUNT(*) FILTER (WHERE d.status = 'lost') as lost_count,
+            COALESCE(SUM(d.value) FILTER (WHERE d.status = 'won'), 0) as won_value
+           FROM crm_deals d
+           LEFT JOIN crm_companies c ON c.id = d.company_id
+           WHERE d.organization_id = $1 AND d.status IN ('won', 'lost') ${dateFilter} ${funnelFilter}
+           GROUP BY COALESCE(NULLIF(BTRIM(c.custom_fields->>'segment'), ''), 'Sem segmento')
+           ORDER BY won_count DESC`,
+          params
+        );
+      } catch (fallbackError) {
+        if (!isMissingSchemaError(fallbackError)) throw fallbackError;
+        bySegment = await query(
+          `SELECT
+            'Sem segmento' as segment,
+            COUNT(*) FILTER (WHERE d.status = 'won') as won_count,
+            COUNT(*) FILTER (WHERE d.status = 'lost') as lost_count,
+            COALESCE(SUM(d.value) FILTER (WHERE d.status = 'won'), 0) as won_value
+           FROM crm_deals d
+           WHERE d.organization_id = $1 AND d.status IN ('won', 'lost') ${dateFilter} ${funnelFilter}
+           ORDER BY won_count DESC`,
+          params
+        );
+      }
     }
 
     // Win/Loss trend by month

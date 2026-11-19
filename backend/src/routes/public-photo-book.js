@@ -46,7 +46,11 @@ router.get('/photo-book/:token', async (req, res) => {
     }
 
     let photosRows = [];
-    const placeholders = photoIds.map((_,i) => `$${i+1}`).join(',');
+    // Cada IN(...) precisa de placeholders próprios: reutilizar $1..$N nas
+    // duas metades do UNION ALL fazia o driver receber 2*N parâmetros para
+    // N placeholders distintos (erro 08P01).
+    const placeholdersA = photoIds.map((_, i) => `$${i + 1}`).join(',');
+    const placeholdersB = photoIds.map((_, i) => `$${photoIds.length + i + 1}`).join(',');
 
     try {
       const photosRes = await query(`
@@ -60,7 +64,7 @@ router.get('/photo-book/:token', async (req, res) => {
           LEFT JOIN pdvs p ON p.id=lpb.pdv_id
           LEFT JOIN merch_brands b ON b.id=lpb.brand_id
           LEFT JOIN employees e ON e.id=lpb.promoter_id
-          WHERE lpb.id IN (${placeholders})
+          WHERE lpb.id IN (${placeholdersA})
           UNION ALL
           SELECT rp.id, rp.photo_url, rp.photo_type, COALESCE(rp.captured_at, rp.created_at) as captured_at,
                  pr2.name as product_name, pc2.name as category_name, p2.name as pdv_name,
@@ -72,7 +76,7 @@ router.get('/photo-book/:token', async (req, res) => {
           LEFT JOIN pdvs p2 ON p2.id=r.pdv_id
           LEFT JOIN merch_brands b2 ON b2.id=r.brand_id
           LEFT JOIN employees e2 ON e2.id=r.promoter_id
-          WHERE rp.id IN (${placeholders})
+          WHERE rp.id IN (${placeholdersB})
         ) combined
       `, [...photoIds, ...photoIds]);
       photosRows = photosRes.rows;
@@ -88,7 +92,7 @@ router.get('/photo-book/:token', async (req, res) => {
           LEFT JOIN pdvs p ON p.id=lpb.pdv_id
           LEFT JOIN merch_brands b ON b.id=lpb.brand_id
           LEFT JOIN employees e ON e.id=lpb.promoter_id
-          WHERE lpb.id IN (${placeholders})`, photoIds);
+          WHERE lpb.id IN (${placeholdersA})`, photoIds);
         photosRows = r1.rows;
       } catch(_) {}
       try {
@@ -102,7 +106,7 @@ router.get('/photo-book/:token', async (req, res) => {
           LEFT JOIN pdvs p2 ON p2.id=r.pdv_id
           LEFT JOIN merch_brands b2 ON b2.id=r.brand_id
           LEFT JOIN employees e2 ON e2.id=r.promoter_id
-          WHERE rp.id IN (${placeholders})`, photoIds);
+          WHERE rp.id IN (${placeholdersA})`, photoIds);
         photosRows = [...photosRows, ...r2.rows];
       } catch(_) {}
     }

@@ -30,6 +30,23 @@ async function ensureScoreInfra() {
     score NUMERIC(5,2) NOT NULL,
     calculated_at TIMESTAMPTZ DEFAULT NOW()
   )`);
+  // Snapshots de atividade usados pelo cálculo de presença/pontualidade/permanência.
+  // Antes não eram criados aqui e o cron falhava com 42P01 em toda execução.
+  await query(`CREATE TABLE IF NOT EXISTS promoter_activity_snapshots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    agency_promoter_id UUID NOT NULL REFERENCES agency_promoters(id) ON DELETE CASCADE,
+    visit_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    status VARCHAR(30) DEFAULT 'active',
+    entry_at TIMESTAMPTZ,
+    exit_at TIMESTAMPTZ,
+    source VARCHAR(30) DEFAULT 'auto',
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  )`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_promoter_activity_snapshots_promoter_date
+    ON promoter_activity_snapshots(agency_promoter_id, visit_date DESC)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_promoter_scores_org ON promoter_scores(organization_id, score DESC)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_score_history ON score_history(promoter_score_id, calculated_at DESC)`);
 }
