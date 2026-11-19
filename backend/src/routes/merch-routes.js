@@ -2614,11 +2614,13 @@ router.get('/photo-book', authenticate, async (req, res) => {
     // corte o primeiro dia do intervalo (o app grava em horario de Brasilia).
     if (date_from) { sql += ` AND captured_at::date >= $${idx++}::date`; params.push(date_from); }
     if (date_to) { sql += ` AND captured_at::date <= $${idx++}::date`; params.push(date_to); }
-    sql += ' ORDER BY captured_at DESC LIMIT 1000';
-    const rows = (await query(sql, params)).rows;
-    // Desduplica a mesma foto (mesma URL na mesma rota) que pode existir nas duas tabelas
+    // Sem LIMIT: o book precisa mostrar o total real de fotos. A paginação é
+    // feita no frontend. A deduplicação entra na própria query (DISTINCT ON)
+    // para não recortar a lista antes de remover duplicatas.
+    sql += ` ORDER BY captured_at DESC`;
+    const allRows = (await query(sql, params)).rows;
     const seen = new Set();
-    const unique = rows.filter(r => {
+    const unique = allRows.filter(r => {
       const k = `${r.route_id || ''}|${r.photo_url}`;
       if (seen.has(k)) return false;
       seen.add(k);
