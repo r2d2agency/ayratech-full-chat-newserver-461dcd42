@@ -181,7 +181,8 @@ export function useLiveRoutes(filters?: { date_from?: string; date_to?: string }
       if (!isLiveRoutesScreenActive()) return [];
       const url = `/api/merch/routes${qs ? `?${qs}` : ''}`;
       try {
-        return await api<any[]>(url, { silent: true });
+        const data = await api<any>(url, { silent: true });
+        return Array.isArray(data) ? data : (Array.isArray(data?.routes) ? data.routes : []);
       } catch (err) {
         console.error('Live routes fallback failed:', err);
         return [];

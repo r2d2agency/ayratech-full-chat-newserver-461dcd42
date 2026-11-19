@@ -508,10 +508,10 @@ router.get('/routes', async (req, res) => {
       params.push(date_to);
     }
 
-    // Antes de listar, alinha rotas que o app já executou (fotos/categorias/
-    // produtos gravados) mas que ficaram `scheduled` por falha parcial no
-    // check-in. Sem isso o painel mostra "Agendada" enquanto a execução existe.
-    await reconcileExecutedRoutes(orgId, date_from, date_to);
+    // A reconciliação é best-effort e NÃO pode bloquear/quebrar a listagem.
+    // Ela roda em paralelo à leitura; se falhar, simplesmente não corrige o
+    // status agora, mas a tela continua mostrando as rotas do dia.
+    void reconcileExecutedRoutes(orgId, date_from, date_to);
 
     sql += ' ORDER BY r.visit_date DESC, r.scheduled_time';
     const result = await query(sql, params);
@@ -1980,9 +1980,8 @@ router.get('/routes/live', async (req, res) => {
     if (!orgRes.rows.length) return res.json([]);
     const orgId = orgRes.rows[0].organization_id;
 
-    // O painel de execução em tempo real usa esta lista. Reconcilia antes de
-    // ler para que uma rota com fotos de categoria não continue "Agendada".
-    await reconcileExecutedRoutes(orgId, req.query.date_from || null, req.query.date_to || null);
+    // Best-effort: nunca deixa o painel vazio por falha na reconciliação.
+    void reconcileExecutedRoutes(orgId, req.query.date_from || null, req.query.date_to || null);
 
     // Check if supporting tables/columns exist to avoid schema drift crashes
     let hasExecCategories = false;
