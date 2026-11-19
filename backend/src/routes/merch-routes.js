@@ -721,6 +721,16 @@ router.post('/routes', async (req, res) => {
             recurrence_type, recurrence_interval, recurrence_until, recurrence_weekdays,
             brands: multiBrands } = req.body;
 
+    // Lojas inativas não podem receber rotas novas. A listagem da tela já
+    // esconde, mas a validação no backend impede criação por API/chamada antiga.
+    if (pdv_id) {
+      const pdvRes = await query(`SELECT active FROM pdvs WHERE id=$1`, [pdv_id]);
+      if (!pdvRes.rows.length) return res.status(400).json({ error: 'PDV não encontrado.' });
+      if (pdvRes.rows[0].active === false) {
+        return res.status(400).json({ error: 'Este PDV está desativado e não pode receber novas rotas.' });
+      }
+    }
+
     // Determine if truly multi-brand. The frontend also sends `brands` for a
     // single selected brand, but old databases still require merch_routes.brand_id.
     const isMultiBrand = Array.isArray(multiBrands) && multiBrands.length > 1;

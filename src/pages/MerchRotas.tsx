@@ -20,7 +20,7 @@ import { useMerchRoutes, useCreateMerchRoute, useUpdateMerchRoute, useDeleteMerc
 import { useSuperadmin } from "@/hooks/use-superadmin";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBrands, useBrandPdvs, usePdvBrands } from "@/hooks/use-merchandising";
-import { usePDVs } from "@/hooks/use-promotor";
+import { useActivePDVs } from "@/hooks/use-promotor";
 import { useEmployees } from "@/hooks/use-rh";
 import { toast } from "sonner";
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addMonths, subMonths, addWeeks, subWeeks, addDays, subDays, eachDayOfInterval, isSameDay, isSameMonth, parseISO } from "date-fns";
@@ -89,7 +89,7 @@ export default function MerchRotas() {
     brand_id: filterBrand || undefined,
     status: filterStatus || undefined,
   });
-  const { data: pdvs = [] } = usePDVs();
+  const { data: pdvs = [] } = useActivePDVs();
   const { data: employees = [] } = useEmployees();
   // A API de RH nao filtra por perfil, entao separamos os promotores aqui.
   const promoterOptions = useMemo(() => {

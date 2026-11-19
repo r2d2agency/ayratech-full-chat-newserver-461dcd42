@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Loader2, MapPin, Clock, User, Search, UserPlus, Image, CheckCircle, Store } from 'lucide-react';
 import { useSupervisorRoutes, useSupervisorUpdateRoute, useSupervisorAddSupport, useSupervisorRoutePhotos, useSupervisorRouteExecutions } from '@/hooks/use-supervisor';
 import { useSupervisorTeam } from '@/hooks/use-promotor';
-import { usePDVs } from '@/hooks/use-promotor';
+import { useActivePDVs } from '@/hooks/use-promotor';
 import { toast } from 'sonner';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -32,7 +32,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 export default function SupervisorRotas() {
   const { data: team = [] } = useSupervisorTeam();
-  const { data: pdvs = [] } = usePDVs();
+  const { data: pdvs = [] } = useActivePDVs();
   const supervisorEmployee = (() => {
     try {
       return JSON.parse(localStorage.getItem('supervisor_employee') || '{}');

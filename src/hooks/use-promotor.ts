@@ -280,6 +280,16 @@ export function usePDVs() {
   return useQuery({ queryKey: ['rh-pdvs'], queryFn: () => api<any[]>('/api/promotor/rh/pdvs') });
 }
 
+// Somente lojas ativas, para select de criação/edição de rotas. Relatórios,
+// book de fotos e cadastro devem continuar usando usePDVs() (todos os status).
+export function useActivePDVs() {
+  const { data, ...rest } = usePDVs();
+  return {
+    ...rest,
+    data: (data as any[] | undefined)?.filter((p: any) => p?.active !== false) || [],
+  };
+}
+
 export function useCreatePDV() {
   const qc = useQueryClient();
   return useMutation({
