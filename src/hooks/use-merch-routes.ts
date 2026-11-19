@@ -334,7 +334,23 @@ export function usePhotoBook(filters?: { brand_id?: string; pdv_id?: string; dat
   const qs = params.toString();
   return useQuery({
     queryKey: ['photo-book', qs],
-    queryFn: () => api<{ photos: any[]; total: number; page: number; pageSize: number; totalPages: number }>(`/api/merch/photo-book${qs ? `?${qs}` : ''}`),
+    queryFn: async () => {
+      const response = await api<any>(`/api/merch/photo-book${qs ? `?${qs}` : ''}`);
+      // Normaliza respostas antigas (array) e evita que um objeto inesperado
+      // chegue às telas como se fosse array (TypeError: W.filter is not a function).
+      const photos = Array.isArray(response)
+        ? response
+        : (Array.isArray(response?.photos) ? response.photos : []);
+      const total = Number(response?.total ?? photos.length) || 0;
+      const pageSize = Number(response?.pageSize || filters?.pageSize || 50) || 50;
+      return {
+        photos,
+        total,
+        page: Number(response?.page || filters?.page || 1) || 1,
+        pageSize,
+        totalPages: Number(response?.totalPages || Math.ceil(total / pageSize)) || 1,
+      };
+    },
   });
 }
 
