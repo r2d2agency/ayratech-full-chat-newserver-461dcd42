@@ -416,22 +416,49 @@ export default function PromotorHome() {
       // nenhuma estiver na janela, usamos a primeira pendente do PDV e deixamos
       // o servidor explicar o motivo (resposta 409 outside_time_window).
       const routesForPdv = todayRoutes.filter((r: any) => r.pdv_id === pdvId);
-      const pendingForPdv = routesForPdv.filter((r: any) => r.status !== 'completed');
+      // O backend só aceita check-in em scheduled/confirmed, ou em in_progress
+      // órfão (sem checkin_at). Escolher completed/not_done/cancelled aqui
+      // gerava o erro genérico "status não permite check-in".
+      const eligibleForPdv = routesForPdv.filter((r: any) =>
+        r.status === 'scheduled' ||
+        r.status === 'confirmed' ||
+        (r.status === 'in_progress' && !r.checkin_at)
+      );
       const nowMinutes = currentSaoPauloMinutes();
+      const inWindow = (r: any) => {
+        const w = r.time_window;
+        const opensAt = hhmmToMinutes(w?.opens_at);
+        const closesAt = hhmmToMinutes(w?.closes_at);
+        if (opensAt === null || closesAt === null) return true;
+        return nowMinutes >= opensAt && nowMinutes <= closesAt;
+      };
       const routeForPdv =
-        pendingForPdv.find((r: any) => {
-          const w = r.time_window;
-          const opensAt = hhmmToMinutes(w?.opens_at);
-          const closesAt = hhmmToMinutes(w?.closes_at);
-          if (opensAt === null || closesAt === null) return true;
-          return nowMinutes >= opensAt && nowMinutes <= closesAt;
-        })
-        || pendingForPdv[0]
-        || routesForPdv[routesForPdv.length - 1];
+        eligibleForPdv.find(inWindow) ||
+        eligibleForPdv[0];
       if (!routeForPdv?.id) {
-        logger.warn('[handlePdvCheckin] Nenhuma rota encontrada para este PDV', { pdvId, routesForPdv });
-        throw new Error('Nenhuma rota encontrada para este PDV. Fale com o supervisor para liberar sua rota.');
+        const summary = routesForPdv.map((r: any) => ({
+          id: r.id,
+          status: r.status,
+          checkin_at: r.checkin_at || null,
+          scheduled_time: r.scheduled_time || null,
+        }));
+        logger.warn('[handlePdvCheckin] Nenhuma rota elegível para check-in neste PDV', { pdvId, routes: summary });
+        const concluded = routesForPdv.length > 0 && routesForPdv.every((r: any) =>
+          r.status === 'completed' || r.status === 'not_done' || r.status === 'justified' || r.status === 'cancelled' || !!r.checkin_at
+        );
+        throw new Error(concluded
+          ? 'Todas as rotas deste PDV já foram iniciadas ou encerradas. Verifique se existe outra rota pendente para este horário.'
+          : 'Nenhuma rota elegível encontrada para este PDV. Fale com o supervisor para liberar uma rota.');
       }
+
+      logger.info('[handlePdvCheckin] Rota selecionada para check-in', {
+        pdvId,
+        routeId: routeForPdv.id,
+        status: routeForPdv.status,
+        visit_date: routeForPdv.visit_date,
+        scheduled_time: routeForPdv.scheduled_time,
+        eligibleRoutes: eligibleForPdv.length,
+      });
 
       // Segunda barreira: se a rota escolhida estiver fora da janela, não
       // tentamos o check-in (o servidor devolveria 409). A mensagem é em
@@ -526,6 +553,19 @@ export default function PromotorHome() {
         logger.warn('[handlePdvCheckin] API retornou erro', { result, pdvId, status: response.status });
         const errorCode = result?.error_code || result?.error || '';
         const details = result?.details || {};
+        if (errorCode === 'ROUTE_STATUS_NOT_ALLOWED') {
+          const routeInfo = [
+            details.route_id ? `rota ${String(details.route_id).slice(0, 8)}` : null,
+            details.status ? `status ${details.status}` : null,
+            details.scheduled_time ? `horário ${String(details.scheduled_time).slice(0, 5)}` : null,
+          ].filter(Boolean).join(' • ');
+          const msg = result?.message || 'Esta rota não aceita mais check-in.';
+          logger.error('[handlePdvCheckin] Status da rota não permite check-in', { pdvId, details, result });
+          toast({ title: 'Check-in não disponível', description: routeInfo ? `${msg} (${routeInfo})` : msg, variant: 'destructive', duration: 12000 });
+          const explicit = new Error(routeInfo ? `${msg} (${routeInfo})` : msg);
+          (explicit as any)._geoHandled = true;
+          throw explicit;
+        }
         if (result?.error === 'location_required' || errorCode === 'LOCATION_REQUIRED') {
           // Sem coordenadas não dá para confirmar a presença no PDV.
           const msg = result?.message || 'Não foi possível validar sua localização para o check-in. Ative o GPS e tente novamente.';

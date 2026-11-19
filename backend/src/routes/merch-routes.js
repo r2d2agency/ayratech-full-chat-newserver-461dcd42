@@ -4206,7 +4206,28 @@ router.post('/promotor/routes/:id/checkin', promotorAuth, async (req, res) => {
     const recoverableInProgress =
       route.rows[0].status === 'in_progress' && !route.rows[0].checkin_at;
     if (route.rows[0].status !== 'scheduled' && route.rows[0].status !== 'confirmed' && !recoverableInProgress) {
-      return res.status(400).json({ error: 'Rota não pode receber check-in neste status' });
+      const r = route.rows[0];
+      const reason = r.checkin_at
+        ? 'Esta rota já possui check-in registrado. Se precisar abrir outro horário no mesmo PDV, selecione a rota daquele horário.'
+        : r.status === 'completed'
+          ? 'Esta rota já foi concluída e não aceita novo check-in.'
+          : r.status === 'not_done' || r.status === 'justified' || r.status === 'cancelled'
+            ? 'Esta rota foi encerrada/cancelada e não aceita check-in.'
+            : 'O status atual desta rota não permite check-in.';
+      return res.status(400).json({
+        error: 'Rota não pode receber check-in neste status',
+        message: reason,
+        error_code: 'ROUTE_STATUS_NOT_ALLOWED',
+        details: {
+          route_id: r.id,
+          status: r.status,
+          checkin_at: r.checkin_at || null,
+          visit_date: r.visit_date ? String(r.visit_date).slice(0, 10) : null,
+          scheduled_time: r.scheduled_time ? String(r.scheduled_time).slice(0, 5) : null,
+          promoter_id: r.promoter_id,
+          pdv_id: r.pdv_id,
+        },
+      });
     }
     const nowBR = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
     const todayStr = `${nowBR.getFullYear()}-${String(nowBR.getMonth()+1).padStart(2,'0')}-${String(nowBR.getDate()).padStart(2,'0')}`;
