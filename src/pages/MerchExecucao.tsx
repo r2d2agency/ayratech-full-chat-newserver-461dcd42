@@ -71,13 +71,13 @@ function defaultDatetimeLocal(): string {
 function getContingencyCategories(viewRoute: any, brandId: string): Array<{ id: string; name: string }> {
   if (!viewRoute) return [];
   const seen = new Map<string, string>();
-  const execs: any[] = viewRoute.executions || [];
+  const execs: any[] = Array.isArray(viewRoute.executions) ? viewRoute.executions : [];
   execs.forEach((e) => {
     if (!e.category_id) return;
     if (brandId && e.route_brand_id && e.route_brand_id !== brandId) return;
     if (!seen.has(e.category_id)) seen.set(e.category_id, e.category_name || 'Categoria');
   });
-  const cp: any[] = viewRoute.category_progress || [];
+  const cp: any[] = Array.isArray(viewRoute.category_progress) ? viewRoute.category_progress : [];
   cp.forEach((c) => {
     if (c.category_id && !seen.has(c.category_id)) seen.set(c.category_id, c.category_name || 'Categoria');
   });

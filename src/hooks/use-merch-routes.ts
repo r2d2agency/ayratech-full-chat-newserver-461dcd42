@@ -26,7 +26,12 @@ export function useMerchRoutes(filters?: {
   const qs = params.toString();
   return useQuery({
     queryKey: ['merch-routes', qs],
-    queryFn: () => api<any[]>(`/api/merch/routes${qs ? `?${qs}` : ''}`),
+    queryFn: async () => {
+      const data = await api<any>(`/api/merch/routes${qs ? `?${qs}` : ''}`);
+      // Algumas telas fazem forEach direto; nunca deixe um objeto inesperado
+      // vazar como se fosse lista.
+      return Array.isArray(data) ? data : (Array.isArray(data?.routes) ? data.routes : []);
+    },
   });
 }
 
