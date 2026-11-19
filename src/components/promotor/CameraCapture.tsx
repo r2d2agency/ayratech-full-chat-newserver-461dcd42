@@ -537,14 +537,20 @@ export function CameraCapture({
         return;
       }
 
+      // Upload manual precisa entrar no MESMO pipeline da captura: aplicar
+      // legenda/marca d'água antes de qualquer preview/upload. Sem isso, a foto
+      // enviada pelo computador chegava sem PDV/marca/promotor/data/tipo/GPS.
+      const meta = await stampCanvas(canvas);
+      setPreviewMeta(meta);
+
       setIsManualOpen(false);
       if (requireConfirmation) {
-        // Aplica watermark + GPS e mostra prévia; upload só ao clicar "Aprovar".
-        await stampAndPreview(canvas);
-      } else {
-        // Preview sem watermark; watermark é aplicada no processAndUpload.
-        setCapturedImage(canvas.toDataURL("image/jpeg", 0.95));
+        // Mostra a prévia já com legenda; upload só ao clicar "Aprovar".
+        setCapturedImage(canvas.toDataURL("image/jpeg", 0.92));
         setIsOpen(true);
+      } else {
+        // Auto-aprovar: envia a imagem já legendada.
+        await processAndUpload(canvas);
       }
     } catch (err) {
       toast.error("Erro ao processar imagem do computador.");
