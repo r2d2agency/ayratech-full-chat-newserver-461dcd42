@@ -62,7 +62,10 @@ function statusLabel(day: CartaoDay): string {
   if (day.dayType === 'feriado') return day.holidayName || 'Feriado';
   if (day.dayType === 'ausencia') return day.absenceType || 'Afastado';
   if (day.dayType === 'folga') return 'Folga';
-  if (day.dayType === 'atestado') return day.medicalCid ? `Atestado (CID ${day.medicalCid})${day.medicalHours ? ` • ${day.medicalHours}` : ''}` : 'Atestado';
+  if (day.dayType === 'atestado') {
+    const detail = day.medicalCid ? ` (CID ${day.medicalCid})${day.medicalHours ? ` • ${day.medicalHours}` : ''}` : '';
+    return `Abonado por atestado${detail}`;
+  }
   return '';
 }
 

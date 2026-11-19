@@ -31,9 +31,10 @@ function statusCell(day: CartaoDay) {
   else if (day.dayType === 'ausencia') s = day.absenceType || 'Afastado';
   else if (day.dayType === 'folga') s = 'Folga';
   else if (day.dayType === 'atestado') {
-    s = day.medicalCid
-      ? `Atestado (CID ${day.medicalCid})${day.medicalHours ? ` - ${day.medicalHours}` : ''}`
-      : 'Atestado';
+    const detail = day.medicalCid
+      ? ` (CID ${day.medicalCid})${day.medicalHours ? ` - ${day.medicalHours}` : ''}`
+      : '';
+    s = `Abonado por atestado${detail}`;
   }
   if (day.closed) s = s ? `${s} (fechado)` : 'Período fechado';
   return s;
