@@ -2077,10 +2077,26 @@ router.put('/rh/pdvs/:id', async (req, res) => {
 
 router.delete('/rh/pdvs/:id', async (req, res) => {
   try {
-    // Check if pdv has dependencies before deleting (optional, but good practice)
-    // For now, let's just try to delete. If it has foreign keys, it will fail and we return error.
+    // Rotas futuras agendadas/confirmadas dependem do PDV. Remove primeiro para
+    // que um PDV excluído não continue aparecendo no roteiro do promotor.
+    const futureRoutes = await query(
+      `DELETE FROM merch_routes
+        WHERE pdv_id = $1
+          AND visit_date > (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+          AND status IN ('scheduled','confirmed')
+        RETURNING id`,
+      [req.params.id]
+    );
+
+    // Remove também vínculos que não possuem FK e poderiam manter o PDV
+    // "fantasma" em telas de agendamento.
+    await Promise.allSettled([
+      query('DELETE FROM merch_pdv_brands WHERE pdv_id = $1', [req.params.id]),
+      query('DELETE FROM merch_rede_pdvs WHERE pdv_id = $1', [req.params.id]),
+    ]);
+
     await query('DELETE FROM pdvs WHERE id = $1', [req.params.id]);
-    res.json({ success: true });
+    res.json({ success: true, future_routes_removed: futureRoutes.rowCount || 0 });
   } catch (err) {
     logError('promotor.pdvs.delete', err);
     if (err.code === '23503') {
