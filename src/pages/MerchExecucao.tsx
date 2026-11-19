@@ -17,6 +17,7 @@ import { CameraCapture } from "@/components/promotor/CameraCapture";
 import { useUpload } from "@/hooks/use-upload";
 import { resolveMediaUrl } from "@/lib/media";
 import { exportPhotosAsJpg } from "@/lib/photo-export";
+import { stampWatermarkOnFile } from "@/lib/photo-watermark";
 import { PhotoLightbox } from "@/components/merch/PhotoLightbox";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Download, CheckSquare } from "lucide-react";
@@ -992,7 +993,10 @@ export default function MerchExecucao() {
                     onChange={(e) => {
                       const files = Array.from(e.target.files || []);
                       setContingencyFiles(prev => [...prev, ...files]);
-                      setContingencyPhotoProgress(prev => ({ ...prev, ...Object.fromEntries(files.map(file => [file.name, 'queued'])) }));
+                      setContingencyPhotoProgress(prev => ({
+                        ...prev,
+                        ...Object.fromEntries(files.map((file, idx) => [`${file.name}#${prev.length + idx}`, 'queued'])),
+                      }));
                     }}
                   />
                   {contingencyFiles.length > 0 && (
@@ -1051,7 +1055,22 @@ export default function MerchExecucao() {
                     const key = `${file.name}#${i}`;
                     setContingencyPhotoProgress(prev => ({ ...prev, [key]: 'processing' }));
                     try {
-                      const url = await uploadPhotoFile(file);
+                      // Cada arquivo recebe a legenda antes do upload: esta tela
+                      // não passa pelo CameraCapture (que já fazia isso só para 1 arquivo).
+                      const brandName = viewRoute.is_multi_brand
+                        ? (viewRoute.route_brands?.find((rb: any) => rb.id === contingencyBrandId)?.brand_name || 'Multi-marca')
+                        : viewRoute.brand_name;
+                      const categoryName = contingencyCategoryId && contingencyCategoryId !== '__none__'
+                        ? getContingencyCategories(viewRoute, contingencyBrandId).find((c: any) => c.id === contingencyCategoryId)?.name
+                        : '';
+                      const stampedFile = await stampWatermarkOnFile(file, {
+                        pdvName: viewRoute.pdv_name,
+                        brandName,
+                        promotorName: viewRoute.promoter_name,
+                        categoryName,
+                        photoType: `Contingência (${contingencyPhotoType})`,
+                      }, new Date(contingencyCapturedAt));
+                      const url = await uploadPhotoFile(stampedFile);
                       if (!url) throw new Error('Upload sem URL');
                       await contingencyUpload.mutateAsync({
                         routeId: viewRoute.id, photo_url: url, photo_type: contingencyPhotoType,
