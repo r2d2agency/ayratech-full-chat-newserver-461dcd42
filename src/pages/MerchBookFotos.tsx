@@ -16,7 +16,7 @@ import { useEmployees } from "@/hooks/use-rh";
 import { useRedes } from "@/hooks/use-price-research";
 import { resolveMediaUrl } from "@/lib/media";
 import { format, startOfMonth, endOfMonth } from "date-fns";
-import { Camera, Image, Eye, Calendar, MapPin, Tag, User, ZoomIn, FileText, CheckSquare, RotateCw, RotateCcw, ChevronDown, X, Download } from "lucide-react";
+import { Camera, Image, Eye, Calendar, MapPin, Tag, User, ZoomIn, FileText, CheckSquare, RotateCw, RotateCcw, ChevronDown, ChevronLeft, ChevronRight, X, Download } from "lucide-react";
 import { BookEditorDialog } from "@/components/merch/BookEditorDialog";
 import { exportPhotosAsJpg } from "@/lib/photo-export";
 import { PhotoLightbox } from "@/components/merch/PhotoLightbox";
@@ -100,6 +100,8 @@ export default function MerchBookFotos() {
   const [viewPhoto, setViewPhoto] = useState<any>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bookEditorOpen, setBookEditorOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const pageSize = 50;
   const rotateMut = useRotatePhoto();
 
   const { data: brands = [] } = useBrands();
@@ -125,7 +127,7 @@ export default function MerchBookFotos() {
     return Array.from(set).sort();
   }, [pdvs]);
 
-  const { data: photos = [], isLoading } = usePhotoBook({
+  const { data: photoBook, isLoading, isFetching } = usePhotoBook({
     brand_id: brandFilter || undefined,
     pdv_id: pdvFilter.length ? pdvFilter.join(',') : undefined,
     promoter_id: promoterFilter.length ? promoterFilter.join(',') : undefined,
@@ -135,7 +137,17 @@ export default function MerchBookFotos() {
     rede_id: redeFilter.length ? redeFilter.join(',') : undefined,
     city: cityFilter.length ? cityFilter.join(',') : undefined,
     date_from: dateFrom, date_to: dateTo,
+    page, pageSize,
   });
+  const photos = photoBook?.photos || [];
+  const totalPhotos = photoBook?.total ?? 0;
+  const totalPages = photoBook?.totalPages ?? 1;
+
+  // Qualquer filtro alterado volta para a primeira página.
+  useEffect(() => { setPage(1); }, [
+    brandFilter, pdvFilter, promoterFilter, categoryFilter, supervisorFilter,
+    photoTypeFilter, redeFilter, cityFilter, dateFrom, dateTo,
+  ]);
 
   const toggleIn = (setter: React.Dispatch<React.SetStateAction<string[]>>) => (id: string) => {
     setter(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -363,7 +375,7 @@ export default function MerchBookFotos() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Card><CardContent className="pt-4 text-center">
             <Camera className="h-5 w-5 mx-auto mb-1 text-primary" />
-            <div className="text-2xl font-bold">{photos.length}</div>
+            <div className="text-2xl font-bold">{totalPhotos.toLocaleString('pt-BR')}</div>
             <p className="text-xs text-muted-foreground">Total de fotos</p>
           </CardContent></Card>
           <Card><CardContent className="pt-4 text-center">
@@ -499,6 +511,24 @@ export default function MerchBookFotos() {
             <Camera className="h-12 w-12 mx-auto mb-3 opacity-40" />
             <p>Nenhuma foto encontrada no período selecionado</p>
           </CardContent></Card>
+        )}
+
+        {/* Paginação: o backend envia 50 fotos por vez */}
+        {totalPhotos > 0 && (
+          <div className="flex items-center justify-between gap-3 flex-wrap rounded-lg border bg-card px-4 py-3">
+            <span className="text-sm text-muted-foreground">
+              Página {page} de {totalPages} • {totalPhotos.toLocaleString('pt-BR')} fotos no total
+              {isFetching && !isLoading ? ' • carregando...' : ''}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={page <= 1 || isFetching} onClick={() => setPage(p => Math.max(1, p - 1))}>
+                <ChevronLeft className="h-4 w-4 mr-1" /> Anterior
+              </Button>
+              <Button variant="outline" size="sm" disabled={page >= totalPages || isFetching} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>
+                Próxima <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            </div>
+          </div>
         )}
       </div>
 

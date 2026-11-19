@@ -37,7 +37,7 @@ import {
   BarChart3, Store, Building2, Package, User, Layers, Route, AlertTriangle,
   TrendingUp, TrendingDown, Camera, DollarSign, ShoppingCart, Clock, Target,
   Download, FileSpreadsheet, Sparkles, Filter, Calendar, FileText, CheckCircle2, XCircle, CalendarClock,
-  Settings, TimerReset,
+  Settings, TimerReset, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { AiAnalysisChat } from "@/components/merch/AiAnalysisChat";
 import { format, subDays, startOfWeek, startOfMonth } from "date-fns";
@@ -1264,14 +1264,24 @@ async function downloadPhoto(url: string, filename: string) {
 function FotosTab({ filters }: { filters: any }) {
   const [typeFilter, setTypeFilter] = useState('');
   const [viewPhoto, setViewPhoto] = useState<any | null>(null);
-  const { data: photos = [], isLoading } = usePhotoBook({
+  const [page, setPage] = useState(1);
+  const pageSize = 50;
+  const { data: photoBook, isLoading, isFetching } = usePhotoBook({
     brand_id: filters.brand_id,
     pdv_id: filters.pdv_id,
     promoter_id: filters.promoter_id,
     date_from: filters.date_from,
     date_to: filters.date_to,
     photo_type: typeFilter || undefined,
+    page, pageSize,
   });
+  const photos = photoBook?.photos || [];
+  const totalPhotos = photoBook?.total ?? 0;
+  const totalPages = photoBook?.totalPages ?? 1;
+
+  useEffect(() => { setPage(1); }, [
+    filters.brand_id, filters.pdv_id, filters.promoter_id, filters.date_from, filters.date_to, typeFilter,
+  ]);
 
   const typeOptions = useMemo(() => {
     const seen = new Map<string, number>();
@@ -1290,14 +1300,16 @@ function FotosTab({ filters }: { filters: any }) {
             <Select value={typeFilter || ALL_VALUE} onValueChange={v => setTypeFilter(v === ALL_VALUE ? '' : v)}>
               <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL_VALUE}>Todos ({photos.length})</SelectItem>
+                <SelectItem value={ALL_VALUE}>Todos ({totalPhotos.toLocaleString('pt-BR')})</SelectItem>
                 {typeOptions.map(o => (
                   <SelectItem key={o.value} value={o.value}>{PHOTO_TYPE_LABELS[o.value] || o.value} ({o.count})</SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
-          <p className="text-xs text-muted-foreground pb-2">{photos.length} foto(s) — filtros de período, PDV e promotor seguem a barra acima.</p>
+          <p className="text-xs text-muted-foreground pb-2">
+            Página {page} de {totalPages} • {photos.length} exibidas de {totalPhotos.toLocaleString('pt-BR')} foto(s) — use os filtros para reduzir.
+          </p>
         </div>
       </Card>
 
@@ -1348,6 +1360,22 @@ function FotosTab({ filters }: { filters: any }) {
           );
         })}
       </div>
+
+      {totalPhotos > 0 && (
+        <div className="flex items-center justify-between gap-3 flex-wrap rounded-lg border p-3">
+          <span className="text-xs text-muted-foreground">
+            {isFetching && !isLoading ? 'Carregando...' : `${photos.length} exibidas de ${totalPhotos.toLocaleString('pt-BR')} fotos`}
+          </span>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" disabled={page <= 1 || isFetching} onClick={() => setPage(p => Math.max(1, p - 1))}>
+              <ChevronLeft className="h-4 w-4 mr-1" /> Anterior
+            </Button>
+            <Button variant="outline" size="sm" disabled={page >= totalPages || isFetching} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>
+              Próxima <ChevronRight className="h-4 w-4 ml-1" />
+            </Button>
+          </div>
+        </div>
+      )}
 
       {viewPhoto && (
         <Dialog open={!!viewPhoto} onOpenChange={v => !v && setViewPhoto(null)}>

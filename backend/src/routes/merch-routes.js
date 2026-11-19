@@ -2614,19 +2614,36 @@ router.get('/photo-book', authenticate, async (req, res) => {
     // corte o primeiro dia do intervalo (o app grava em horario de Brasilia).
     if (date_from) { sql += ` AND captured_at::date >= $${idx++}::date`; params.push(date_from); }
     if (date_to) { sql += ` AND captured_at::date <= $${idx++}::date`; params.push(date_to); }
-    // Sem LIMIT: o book precisa mostrar o total real de fotos. A paginação é
-    // feita no frontend. A deduplicação entra na própria query (DISTINCT ON)
-    // para não recortar a lista antes de remover duplicatas.
-    sql += ` ORDER BY captured_at DESC`;
-    const allRows = (await query(sql, params)).rows;
-    const seen = new Set();
-    const unique = allRows.filter(r => {
-      const k = `${r.route_id || ''}|${r.photo_url}`;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
+    // Paginação no backend: a tela recebe só PAGE_SIZE itens por vez, mas
+    // ainda sabe o total real para filtrar/navegar sem baixar milhares de fotos.
+    const rawPage = Number(req.query.page || 1);
+    const rawPageSize = Number(req.query.pageSize || 50);
+    const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
+    const pageSize = Math.min(200, Math.max(1, Number.isFinite(rawPageSize) ? Math.floor(rawPageSize) : 50));
+
+    // Deduplica no SQL (mesma URL na mesma rota pode existir nas duas tabelas)
+    // antes de contar/paginar, para total e páginas serem consistentes.
+    const dedupSql = `
+      SELECT DISTINCT ON (route_id, photo_url) *
+      FROM (${sql}) combined_all
+      ORDER BY route_id, photo_url, captured_at DESC
+    `;
+    const countResult = await query(
+      `SELECT COUNT(*)::int AS total FROM (${dedupSql}) dedup`,
+      params
+    );
+    const total = countResult.rows[0]?.total || 0;
+    const pageParams = [...params, pageSize, (page - 1) * pageSize];
+    const pageSql = `${dedupSql} ORDER BY captured_at DESC LIMIT $${pageParams.length - 1} OFFSET $${pageParams.length}`;
+    const rows = (await query(pageSql, pageParams)).rows;
+
+    res.json({
+      photos: rows,
+      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
     });
-    res.json(unique);
   } catch (err) {
     if (err.code === '42P01') return res.json([]);
     logError('photo-book', err);

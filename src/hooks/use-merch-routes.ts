@@ -317,7 +317,7 @@ export function useAssignPromoter() {
 }
 
 // Photo Book
-export function usePhotoBook(filters?: { brand_id?: string; pdv_id?: string; date_from?: string; date_to?: string; promoter_id?: string; category_id?: string; photo_type?: string; supervisor_id?: string; rede_id?: string; city?: string }) {
+export function usePhotoBook(filters?: { brand_id?: string; pdv_id?: string; date_from?: string; date_to?: string; promoter_id?: string; category_id?: string; photo_type?: string; supervisor_id?: string; rede_id?: string; city?: string; page?: number; pageSize?: number }) {
   const params = new URLSearchParams();
   if (filters?.brand_id) params.set('brand_id', filters.brand_id);
   if (filters?.pdv_id) params.set('pdv_id', filters.pdv_id);
@@ -329,10 +329,12 @@ export function usePhotoBook(filters?: { brand_id?: string; pdv_id?: string; dat
   if (filters?.supervisor_id) params.set('supervisor_id', filters.supervisor_id);
   if (filters?.rede_id) params.set('rede_id', filters.rede_id);
   if (filters?.city) params.set('city', filters.city);
+  if (filters?.page) params.set('page', String(filters.page));
+  if (filters?.pageSize) params.set('pageSize', String(filters.pageSize));
   const qs = params.toString();
   return useQuery({
     queryKey: ['photo-book', qs],
-    queryFn: () => api<any[]>(`/api/merch/photo-book${qs ? `?${qs}` : ''}`),
+    queryFn: () => api<{ photos: any[]; total: number; page: number; pageSize: number; totalPages: number }>(`/api/merch/photo-book${qs ? `?${qs}` : ''}`),
   });
 }
 
