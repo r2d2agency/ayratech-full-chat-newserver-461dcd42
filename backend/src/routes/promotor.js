@@ -2075,6 +2075,36 @@ router.put('/rh/pdvs/:id', async (req, res) => {
   }
 });
 
+router.patch('/rh/pdvs/:id/active', async (req, res) => {
+  try {
+    const makeActive = req.body?.active !== false;
+    const upd = await query(
+      'UPDATE pdvs SET active = $2, updated_at = NOW() WHERE id = $1 RETURNING id, active',
+      [req.params.id, makeActive]
+    );
+    if (!upd.rows.length) return res.status(404).json({ error: 'PDV não encontrado' });
+
+    let futureRoutesRemoved = 0;
+    if (!makeActive) {
+      // Desativar não apaga o cadastro: remove só as rotas futuras que ainda
+      // não começaram, para o PDV sair do roteiro sem perder o histórico.
+      const del = await query(
+        `DELETE FROM merch_routes
+          WHERE pdv_id = $1
+            AND visit_date > (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+            AND status IN ('scheduled','confirmed')
+          RETURNING id`,
+        [req.params.id]
+      );
+      futureRoutesRemoved = del.rowCount || 0;
+    }
+    res.json({ success: true, active: upd.rows[0].active, future_routes_removed: futureRoutesRemoved });
+  } catch (err) {
+    logError('promotor.pdvs.toggle_active', err);
+    res.status(500).json({ error: 'Erro ao alterar status do PDV' });
+  }
+});
+
 router.delete('/rh/pdvs/:id', async (req, res) => {
   try {
     // Rotas futuras agendadas/confirmadas dependem do PDV. Remove primeiro para

@@ -11,11 +11,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { useEmployees } from "@/hooks/use-rh";
-import { usePDVs, useCreatePDV, useUpdatePDV, useDeletePDV } from "@/hooks/use-promotor";
+import { usePDVs, useCreatePDV, useUpdatePDV, useDeletePDV, useTogglePDVActive } from "@/hooks/use-promotor";
 import { useGeocode } from "@/hooks/use-rh";
 import { useAuth } from "@/contexts/AuthContext";
 import { getAuthToken } from "@/lib/api";
-import { MapPin, Plus, Edit, Search, Loader2, Navigation, Upload, Download, Trash2, LayoutDashboard } from "lucide-react";
+import { MapPin, Plus, Edit, Search, Loader2, Navigation, Upload, Download, Trash2, LayoutDashboard, Power } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { PDVImportDialog } from "@/components/promotor/PDVImportDialog";
@@ -44,6 +44,7 @@ export default function RHPDVs() {
   const createPDV = useCreatePDV();
   const updatePDV = useUpdatePDV();
   const deletePDV = useDeletePDV();
+  const toggleActive = useTogglePDVActive();
   const { toast } = useToast();
   const { user } = useAuth();
   const isAdmin = user?.role === 'owner' || user?.role === 'admin';
@@ -147,6 +148,21 @@ export default function RHPDVs() {
       toast({ title: 'PDV excluído com sucesso!' });
     } catch (err: any) {
       toast({ title: 'Erro ao excluir', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const handleToggleActive = async (pdv: any) => {
+    const next = pdv.active === false;
+    const action = next ? 'reativar' : 'desativar';
+    if (!confirm(`Deseja ${action} o PDV "${pdv.name}"?${next ? '' : ' As rotas futuras agendadas deste PDV serão removidas; o histórico será mantido.'}`)) return;
+    try {
+      const r = await toggleActive.mutateAsync({ id: pdv.id, active: next });
+      toast({
+        title: `PDV ${next ? 'reativado' : 'desativado'}!`,
+        description: !next && r?.future_routes_removed ? `${r.future_routes_removed} rota(s) futura(s) removida(s).` : undefined,
+      });
+    } catch (err: any) {
+      toast({ title: 'Erro', description: err.message, variant: 'destructive' });
     }
   };
 
@@ -266,6 +282,9 @@ export default function RHPDVs() {
                   <TableCell>{p.active ? <Badge className="bg-green-500">Ativo</Badge> : <Badge variant="secondary">Inativo</Badge>}</TableCell>
                   <TableCell>
                     <div className="flex gap-2">
+                      <Button size="sm" variant="ghost" onClick={() => handleToggleActive(p)} disabled={toggleActive.isPending} title={p.active ? 'Desativar PDV' : 'Reativar PDV'}>
+                        <Power className={p.active ? "h-4 w-4 text-amber-600" : "h-4 w-4 text-green-600"} />
+                      </Button>
                       <Button size="sm" variant="ghost" onClick={() => openEdit(p)}><Edit className="h-4 w-4" /></Button>
                       <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => handleDelete(p.id)} disabled={deletePDV.isPending}>
                         {deletePDV.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}

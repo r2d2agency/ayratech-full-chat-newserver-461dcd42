@@ -304,6 +304,19 @@ export function useDeletePDV() {
   });
 }
 
+export function useTogglePDVActive() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, active }: { id: string; active: boolean }) =>
+      api<any>(`/api/promotor/rh/pdvs/${id}/active`, { method: 'PATCH', body: { active } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['rh-pdvs'] });
+      qc.invalidateQueries({ queryKey: ['merch-routes'] });
+      qc.invalidateQueries({ queryKey: ['merch-routes-live'] });
+    },
+  });
+}
+
 export function useDocumentDeliveries(filters?: { employee_id?: string; status?: string }) {
   const params = new URLSearchParams();
   if (filters?.employee_id) params.set('employee_id', filters.employee_id);
