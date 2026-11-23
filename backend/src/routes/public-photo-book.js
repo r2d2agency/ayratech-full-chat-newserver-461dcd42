@@ -46,12 +46,8 @@ router.get('/photo-book/:token', async (req, res) => {
     }
 
     let photosRows = [];
-    // Cada IN(...) precisa de placeholders próprios: reutilizar $1..$N nas
-    // duas metades do UNION ALL fazia o driver receber 2*N parâmetros para
-    // N placeholders distintos (erro 08P01).
-    const placeholdersA = photoIds.map((_, i) => `$${i + 1}`).join(',');
-    const placeholdersB = photoIds.map((_, i) => `$${photoIds.length + i + 1}`).join(',');
-
+    // Usa um único parâmetro de array. Gerar IN($1,$2...) duplicava os IDs
+    // nas duas metades do UNION e causava 08P01 (100 params / 50 placeholders).
     try {
       const photosRes = await query(`
         SELECT * FROM (
@@ -64,7 +60,7 @@ router.get('/photo-book/:token', async (req, res) => {
           LEFT JOIN pdvs p ON p.id=lpb.pdv_id
           LEFT JOIN merch_brands b ON b.id=lpb.brand_id
           LEFT JOIN employees e ON e.id=lpb.promoter_id
-          WHERE lpb.id IN (${placeholdersA})
+          WHERE lpb.id = ANY($1::uuid[])
           UNION ALL
           SELECT rp.id, rp.photo_url, rp.photo_type, COALESCE(rp.captured_at, rp.created_at) as captured_at,
                  pr2.name as product_name, pc2.name as category_name, p2.name as pdv_name,
@@ -76,9 +72,9 @@ router.get('/photo-book/:token', async (req, res) => {
           LEFT JOIN pdvs p2 ON p2.id=r.pdv_id
           LEFT JOIN merch_brands b2 ON b2.id=r.brand_id
           LEFT JOIN employees e2 ON e2.id=r.promoter_id
-          WHERE rp.id IN (${placeholdersB})
+          WHERE rp.id = ANY($1::uuid[])
         ) combined
-      `, [...photoIds, ...photoIds]);
+      `, [photoIds]);
       photosRows = photosRes.rows;
     } catch (queryErr) {
       console.error('[photo-book-public] union query failed, trying fallback:', queryErr.message);
@@ -92,7 +88,7 @@ router.get('/photo-book/:token', async (req, res) => {
           LEFT JOIN pdvs p ON p.id=lpb.pdv_id
           LEFT JOIN merch_brands b ON b.id=lpb.brand_id
           LEFT JOIN employees e ON e.id=lpb.promoter_id
-          WHERE lpb.id IN (${placeholdersA})`, photoIds);
+          WHERE lpb.id = ANY($1::uuid[])`, [photoIds]);
         photosRows = r1.rows;
       } catch(_) {}
       try {
@@ -106,7 +102,7 @@ router.get('/photo-book/:token', async (req, res) => {
           LEFT JOIN pdvs p2 ON p2.id=r.pdv_id
           LEFT JOIN merch_brands b2 ON b2.id=r.brand_id
           LEFT JOIN employees e2 ON e2.id=r.promoter_id
-          WHERE rp.id IN (${placeholdersA})`, photoIds);
+          WHERE rp.id = ANY($1::uuid[])`, [photoIds]);
         photosRows = [...photosRows, ...r2.rows];
       } catch(_) {}
     }
