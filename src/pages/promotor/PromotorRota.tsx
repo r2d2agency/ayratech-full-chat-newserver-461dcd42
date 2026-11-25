@@ -895,6 +895,8 @@ export default function PromotorRota() {
   const [optimisticBeforeUnlock, setOptimisticBeforeUnlock] = useState<Record<string, boolean>>({});
   const [optimisticAfterPhoto, setOptimisticAfterPhoto] = useState<Record<string, boolean>>({});
   const [optimisticPhotos, setOptimisticPhotos] = useState<any[]>([]);
+  // IDs de execuções concluídas localmente que ainda estão na fila offline.
+  const [offlineCompletedExecs, setOfflineCompletedExecs] = useState<Record<string, boolean>>({});
 
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
   const [extraPhotosOpen, setExtraPhotosOpen] = useState<Record<string, boolean>>({});
@@ -1034,8 +1036,6 @@ export default function PromotorRota() {
   const { data: stockCountExecs = [] } = useRouteStockCount(id);
   const stockCountBlocking = useMemo(() => {
     if (isCheckinOnlyMode) return [];
-    // Sempre bloqueia a conclusão da rota quando houver contagem pendente.
-    // Só libera se a contagem foi concluída, justificada ou adiada com motivo.
     return (stockCountExecs as any[]).filter((e: any) => {
       const resolved = e.status === 'completed' || e.status === 'justified' || e.status === 'postponed';
       return !resolved;
@@ -1086,6 +1086,17 @@ export default function PromotorRota() {
       })();
       const queuedCalls = await db.pending_api_calls.toArray();
       const queuedUploads = await db.pending_uploads.toArray();
+      const localExecs: Record<string, boolean> = {};
+      for (const call of queuedCalls) {
+        if (cancelled || call.accountKey !== accountKey) continue;
+        const m = call.url.match(/\/promotor\/executions\/([^/]+)$/);
+        if (!m || call.method !== 'PUT') continue;
+        const body: any = call.body || {};
+        if (body.status === 'completed' || body.checked === true) localExecs[m[1]] = true;
+      }
+      if (Object.keys(localExecs).length) {
+        setOfflineCompletedExecs(prev => ({ ...localExecs, ...prev }));
+      }
       const localStates = await db.offline_category_states
         .where('routeId').equals(id)
         .toArray();
@@ -2251,7 +2262,9 @@ export default function PromotorRota() {
               // opcionais: a categoria é concluída exclusivamente pelo mínimo de fotos.
               const requiredProductExecutions = allExecutions.filter(productIsRequired);
               const totalExecsGlobalRaw = requiredProductExecutions.length;
-              const completedExecsGlobalRaw = requiredProductExecutions.filter((e: any) => e.status === 'completed').length;
+              const completedExecsGlobalRaw = requiredProductExecutions.filter((e: any) =>
+                e.status === 'completed' || !!offlineCompletedExecs[e.id]
+              ).length;
 
               // MODO CHECKIN_ONLY: zera as exigências de produtos/fotos de categoria
               const totalExecsGlobal = isCheckinOnlyMode ? 0 : totalExecsGlobalRaw;
@@ -2359,7 +2372,7 @@ export default function PromotorRota() {
                       return rb?.brand_name ? `${rb.brand_name} › ${cat}` : cat;
                     };
                     if (!allProductsDoneGlobal) {
-                       const pendingList = requiredProductExecutions.filter((e: any) => e.status !== 'completed');
+                       const pendingList = requiredProductExecutions.filter((e: any) => e.status !== 'completed' && !offlineCompletedExecs[e.id]);
                       const pendingExtra = pendingList.filter((e: any) => e.exposure_point === 'extra').length;
                       const sample = pendingList.slice(0, 3).map((e: any) => {
                         const rb = e.route_brand_id ? routeBrands.find((b: any) => b.id === e.route_brand_id) : null;
