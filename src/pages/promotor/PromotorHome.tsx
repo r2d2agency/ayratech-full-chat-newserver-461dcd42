@@ -194,8 +194,16 @@ export default function PromotorHome() {
   const scheduleStatus = data?.schedule_status;
   const employmentType = String(employee?.employment_type || 'clt').trim().toLowerCase();
   const isPunchEligible = !['pj', 'freelance', 'freelancer'].includes(employmentType);
-  const todayRoutes = data?.today_routes || [];
-  const activeRoute = data?.active_route;
+  const todayRoutes = (data?.today_routes || []) as any[];
+  // O backend pode continuar devolvendo a rota como in_progress enquanto a
+  // fila offline não sincroniza. Usa today_routes (já corrigido com ações
+  // locais em usePromotorHome) como fonte da verdade para a tela.
+  const activeRoute = (() => {
+    const serverActive = data?.active_route;
+    if (!serverActive) return null;
+    const local = todayRoutes.find((r: any) => r.id === serverActive.id);
+    return local ? { ...serverActive, ...local } : serverActive;
+  })();
   const nextRoute = data?.next_route;
   const hasRoutesToday = data?.has_routes_today || false;
   const completedRoutesCount = data?.completed_routes_count || 0;
@@ -697,9 +705,11 @@ export default function PromotorHome() {
   const handlePdvCheckout = useCallback(async (pdvId: string, slotKey?: string, routeId?: string) => {
     setPdvCheckoutLoading(true);
     try {
-      const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
-        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 })
-      );
+      // Offline o GPS pode demorar/falhar; a fila guarda as coordenadas que
+      // existirem e o checkout não pode travar por isso.
+      const pos = await new Promise<GeolocationPosition | null>((resolve) =>
+        navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), { enableHighAccuracy: true, timeout: 10000 })
+      ).catch(() => null);
       const token = localStorage.getItem('promotor_token') || localStorage.getItem('auth_token') || '';
       const headers: Record<string, string> = {
         'Content-Type': 'application/json'
@@ -714,8 +724,8 @@ export default function PromotorHome() {
         // PDV, cada horário fecha a sua própria visita.
         slot_time: slotKey || undefined,
         route_id: routeId || undefined,
-        latitude: pos.coords.latitude,
-        longitude: pos.coords.longitude,
+        latitude: pos?.coords.latitude,
+        longitude: pos?.coords.longitude,
         photo_url: pdvCheckoutPhoto || undefined,
         notes: pdvCheckoutNotes || undefined,
         status_override: !pdvCheckoutPhoto ? 'awaiting_photo' : 'completed'
@@ -1234,7 +1244,21 @@ export default function PromotorHome() {
             {/* Active route - primary focus */}
             {activeRoute && (
               <Card className="border-orange-400/50 bg-orange-50/50 dark:bg-orange-950/10 cursor-pointer active:scale-[0.98]"
-                onClick={() => navigate(`/promotor/rota/${activeRoute.id}`)}>
+                onClick={() => {
+                  if (activeRoute.status === 'completed') {
+                    setActionPdv({
+                      pdv_id: activeRoute.pdv_id,
+                      pdv_name: activeRoute.pdv_name,
+                      route_id: activeRoute.id,
+                      slot_key: routeSlotKey(activeRoute),
+                    });
+                    setPdvCheckoutPhoto('');
+                    setPdvCheckoutNotes('');
+                    setShowPdvCheckout(true);
+                    return;
+                  }
+                  navigate(`/promotor/rota/${activeRoute.id}`);
+                }}>
                 <CardContent className="p-4">
                   <div className="flex items-center justify-between mb-2">
                     <Badge className={activeRoute.status === 'completed'
@@ -1261,7 +1285,23 @@ export default function PromotorHome() {
                       </div>
                     </div>
                   )}
-                  <Button className="w-full mt-3" size="sm">
+                  <Button className="w-full mt-3" size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (activeRoute.status === 'completed') {
+                        setActionPdv({
+                          pdv_id: activeRoute.pdv_id,
+                          pdv_name: activeRoute.pdv_name,
+                          route_id: activeRoute.id,
+                          slot_key: routeSlotKey(activeRoute),
+                        });
+                        setPdvCheckoutPhoto('');
+                        setPdvCheckoutNotes('');
+                        setShowPdvCheckout(true);
+                      } else {
+                        navigate(`/promotor/rota/${activeRoute.id}`);
+                      }
+                    }}>
                     <PlayCircle className="h-4 w-4 mr-2" />
                     {activeRoute.status === 'completed' ? 'Fazer Checkout da Loja' : 'Continuar Execução'}
                   </Button>
