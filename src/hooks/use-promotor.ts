@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { db } from '@/lib/offline-db';
 import { api } from '@/lib/api';
 
 // ===== PROMOTOR APP HOOKS (used by collaborator app) =====
@@ -23,7 +24,49 @@ const promotorApi = async <T>(endpoint: string, options: any = {}): Promise<T> =
 export function usePromotorHome() {
   return useQuery({
     queryKey: ['promotor-home'],
-    queryFn: () => promotorApi<any>('/api/promotor/home'),
+    queryFn: async () => {
+      let home: any;
+      try {
+        home = await promotorApi<any>('/api/promotor/home');
+      } catch (err) {
+        // Offline: usa o cache da query em vez de falhar, para rotas
+        // concluídas/checkouts não sumirem ao recarregar a tela.
+        home = null;
+      }
+      // Aplica ações offline pendentes (conclusão de rota / checkout) por cima
+      // do que o servidor retornou — sobrevive a reload enquanto a fila existe.
+      try {
+        const userId = localStorage.getItem('user_id') || localStorage.getItem('promotor_employee_id') || localStorage.getItem('employee_id');
+        const organizationId = localStorage.getItem('organization_id') || localStorage.getItem('org_id') || '';
+        const authDomain = localStorage.getItem('auth_type') || 'promotor';
+        const accountKey = userId ? `${authDomain}:${organizationId}:${userId}` : null;
+        const actions = await db.offline_action_states
+          .where('status').equals('pending')
+          .filter(a => !accountKey || a.accountKey === accountKey)
+          .toArray();
+        if (actions.length && home) {
+          const routes = Array.isArray(home.today_routes) ? [...home.today_routes] : [];
+          const visits = Array.isArray(home.pdv_visits) ? [...home.pdv_visits] : [];
+          for (const action of actions) {
+            if (action.type === 'route_completed' && action.routeId) {
+              const idx = routes.findIndex((r: any) => r.id === action.routeId);
+              if (idx >= 0) routes[idx] = { ...routes[idx], status: 'completed', completed_at: action.timestamp, progress_pct: 100 };
+            }
+            if (action.type === 'pdv_checkout') {
+              for (let i = 0; i < visits.length; i++) {
+                const v = visits[i];
+                if (v.pdv_id === action.pdvId && String(v.slot_time || v.slot_key || '').slice(0, 5) === String(action.slotKey || '').slice(0, 5)) {
+                  visits[i] = { ...v, checkout_at: v.checkout_at || action.timestamp, status: 'completed' };
+                }
+              }
+            }
+          }
+          home = { ...home, today_routes: routes, pdv_visits: visits };
+        }
+      } catch { /* estado offline indisponível: usa o que veio do servidor */ }
+      if (!home) throw new Error('Sem conexão e sem dados em cache');
+      return home;
+    },
     refetchInterval: 30000,
   });
 }

@@ -738,7 +738,13 @@ function useOfflineSyncState() {
         }
 
         const attempts = (call.attempts || 0) + 1;
-        const terminal = attempts >= MAX_API_ATTEMPTS || (status >= 400 && status < 500 && status !== 408 && status !== 429);
+        // Checkout de PDV pode receber 400 enquanto a fila ainda está
+        // sincronizando rotas/fotos do mesmo horário. Isso NÃO é recusa
+        // definitiva — marcar como terminal travava o checkout para sempre.
+        const isPdvCheckout = call.url.endsWith('/promotor/pdv-checkout') || call.url.endsWith('/promotor/pdv-checkout/photo');
+        const terminal = !isPdvCheckout && (
+          attempts >= MAX_API_ATTEMPTS || (status >= 400 && status < 500 && status !== 408 && status !== 429)
+        );
         logger.error('[OfflineSync] Erro na chamada API', { id: call.id, error: err.message, url: call.url, attempts, terminal });
         await db.pending_api_calls.update(call.id!, {
           status: terminal ? 'failed' : 'failed',

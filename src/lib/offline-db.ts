@@ -62,6 +62,21 @@ export interface OfflineCategoryState {
   error?: string;
 }
 
+// Estado local de ações do promotor que precisam sobreviver a reload/offline
+// (checkout de PDV, conclusão de rota etc.) até a fila sincronizar.
+export interface OfflineActionState {
+  key: string;
+  accountKey: string | null;
+  type: 'pdv_checkout' | 'route_completed' | 'punch';
+  routeId?: string | null;
+  pdvId?: string | null;
+  slotKey?: string | null;
+  timestamp: string;
+  updatedAt: number;
+  status: 'pending' | 'synced';
+  payload?: any;
+}
+
 export interface SyncLease {
   name: string; // 'offline-sync'
   ownerId: string;
@@ -83,6 +98,7 @@ export class OfflineDatabase extends Dexie {
   upload_mappings!: Table<UploadMapping>;
   sync_leases!: Table<SyncLease>;
   offline_category_states!: Table<OfflineCategoryState>;
+  offline_action_states!: Table<OfflineActionState>;
 
   constructor() {
     super('AyraOfflineDB');
@@ -96,7 +112,8 @@ export class OfflineDatabase extends Dexie {
       pending_api_calls: '++id, status, timestamp, dependsOnUploadId, accountKey, [accountKey+status]',
       upload_mappings: 'localId, timestamp, accountKey',
       sync_leases: 'name, expiresAt, accountKey',
-      offline_category_states: 'key, routeId, categoryId, accountKey, updatedAt, [routeId+categoryId]'
+      offline_category_states: 'key, routeId, categoryId, accountKey, updatedAt, [routeId+categoryId]',
+      offline_action_states: 'key, type, routeId, pdvId, accountKey, status, updatedAt'
     });
   }
 }

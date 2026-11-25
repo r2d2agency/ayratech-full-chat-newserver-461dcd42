@@ -37,6 +37,31 @@ import { StockCountCard } from "@/components/promotor/StockCountCard";
 import { useRouteStockCount } from "@/hooks/use-stock-count";
 import { routeSlotKey, visitSlotKey, hasCheckinForSlot, evaluateCheckinWindow, currentSaoPauloMinutes } from "@/lib/route-slot";
 
+function currentOfflineAccountKey() {
+  const userId = localStorage.getItem('user_id') || localStorage.getItem('promotor_employee_id') || localStorage.getItem('employee_id');
+  const organizationId = localStorage.getItem('organization_id') || localStorage.getItem('org_id') || '';
+  const authDomain = localStorage.getItem('auth_type') || 'promotor';
+  return userId ? `${authDomain}:${organizationId}:${userId}` : null;
+}
+
+async function persistOfflineAction(action: {
+  type: 'pdv_checkout' | 'route_completed' | 'punch';
+  routeId?: string | null;
+  pdvId?: string | null;
+  slotKey?: string | null;
+  timestamp: string;
+  payload?: any;
+}) {
+  const key = `${action.type}:${action.routeId || ''}:${action.pdvId || ''}:${action.slotKey || ''}`;
+  await db.offline_action_states.put({
+    key,
+    accountKey: currentOfflineAccountKey(),
+    ...action,
+    status: 'pending',
+    updatedAt: Date.now(),
+  });
+}
+
 // ===== Photo capture with Approve/Reject preview =====
 function PhotoApprovalCapture({
   photos, onPhotosChange, min, isSending, onSubmit,
@@ -1669,6 +1694,16 @@ export default function PromotorRota() {
     // Marcar checkout_at aqui fazia a rota sumir como "aguardando checkout"
     // e fechava a visita sem a foto de checkout.
     const nowIso = new Date().toISOString();
+    if (!isOnline) {
+      await persistOfflineAction({
+        type: 'route_completed',
+        routeId: id,
+        pdvId: route?.pdv_id || null,
+        slotKey: routeSlotKey(route),
+        timestamp: nowIso,
+        payload: { notes: actionForm.notes || null },
+      }).catch((e) => logger.warn('[handleCompleteRoute] Falha ao persistir conclusão offline', { error: e?.message }));
+    }
     qc.setQueryData(['promotor-route', id], (old: any) => old ? {
       ...old,
       status: 'completed',
@@ -1777,7 +1812,17 @@ export default function PromotorRota() {
         );
         return { ...old, pdv_visits: pdvVisits };
       });
-      // Removed toast per user request
+      if (!isOnline) {
+        await persistOfflineAction({
+          type: 'pdv_checkout',
+          routeId: route.id,
+          pdvId: route.pdv_id,
+          slotKey,
+          timestamp: nowIso,
+          payload: { photoUrl: pdvCheckoutPhoto || null },
+        }).catch((e) => logger.warn('[handlePdvCheckout] Falha ao persistir checkout offline', { error: e?.message }));
+        toast.success('Checkout registrado offline. Aguardando sinal para sincronizar.', { duration: 6000 });
+      }
 
       setShowPdvCheckout(false);
       navigate('/promotor/home');
