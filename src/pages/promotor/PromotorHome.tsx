@@ -1237,7 +1237,11 @@ export default function PromotorHome() {
                 onClick={() => navigate(`/promotor/rota/${activeRoute.id}`)}>
                 <CardContent className="p-4">
                   <div className="flex items-center justify-between mb-2">
-                    <Badge className="bg-orange-500/20 text-orange-700 text-[10px]">🔥 EM ANDAMENTO</Badge>
+                    <Badge className={activeRoute.status === 'completed'
+                      ? 'bg-yellow-500/20 text-yellow-700 text-[10px]'
+                      : 'bg-orange-500/20 text-orange-700 text-[10px]'}>
+                      {activeRoute.status === 'completed' ? '⏳ AGUARDANDO CHECKOUT' : '🔥 EM ANDAMENTO'}
+                    </Badge>
                     <ChevronRight className="h-4 w-4 text-muted-foreground" />
                   </div>
                   <h3 className="font-bold text-base">{activeRoute.pdv_name}</h3>
@@ -1258,7 +1262,8 @@ export default function PromotorHome() {
                     </div>
                   )}
                   <Button className="w-full mt-3" size="sm">
-                    <PlayCircle className="h-4 w-4 mr-2" /> Continuar Execução
+                    <PlayCircle className="h-4 w-4 mr-2" />
+                    {activeRoute.status === 'completed' ? 'Fazer Checkout da Loja' : 'Continuar Execução'}
                   </Button>
                 </CardContent>
               </Card>

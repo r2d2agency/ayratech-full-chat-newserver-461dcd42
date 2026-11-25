@@ -1664,41 +1664,33 @@ export default function PromotorRota() {
       return;
     }
 
-    // Otimista offline: marcar rota como concluída no cache para refletir na Home
+    // Concluir a ROTA não é o mesmo que fazer o CHECKOUT DA LOJA.
+    // O checkout da loja tem foto obrigatória e é feito em handlePdvCheckout.
+    // Marcar checkout_at aqui fazia a rota sumir como "aguardando checkout"
+    // e fechava a visita sem a foto de checkout.
     const nowIso = new Date().toISOString();
     qc.setQueryData(['promotor-route', id], (old: any) => old ? {
       ...old,
       status: 'completed',
-      checkout_at: nowIso,
+      checkout_at: old.checkout_at || null,
       completed_at: nowIso,
       progress_pct: 100,
       completion_notes: actionForm.notes || old.completion_notes,
     } : old);
 
-    // Otimista: atualizar pdv_visits e today_routes na Home
     qc.setQueryData(['promotor-home'], (old: any) => {
       if (!old) return old;
       const todayRoutes = (old.today_routes || []).map((r: any) =>
-        r.id === id ? { ...r, status: 'completed', checkout_at: nowIso, progress_pct: 100 } : r
+        r.id === id ? { ...r, status: 'completed', checkout_at: r.checkout_at || null, progress_pct: 100 } : r
       );
-      const pdvVisits = [...(old.pdv_visits || [])];
-      // Fecha a visita do MESMO slot — a das 13:00 continua aberta quando a
-      // rota das 07:00 termina.
-      const slotKey = routeSlotKey(route);
-      const visitIdx = pdvVisits.findIndex((v: any) =>
-        v.pdv_id === route?.pdv_id && !v.checkout_at && visitSlotKey(v) === slotKey
-      );
-      if (visitIdx >= 0) {
-        pdvVisits[visitIdx] = { ...pdvVisits[visitIdx], checkout_at: nowIso, status: 'completed' };
-      }
-      return { ...old, today_routes: todayRoutes, pdv_visits: pdvVisits };
+      // Não fecha pdv_visits: ainda falta o checkout da loja (com foto).
+      return { ...old, todayRoutes, today_routes: todayRoutes };
     });
 
-    // Otimista: atualizar agenda
     qc.setQueryData(['promotor-agenda'], (old: any) => {
       if (!Array.isArray(old)) return old;
       return old.map((r: any) =>
-        r.id === id ? { ...r, status: 'completed', checkout_at: nowIso, progress_pct: 100 } : r
+        r.id === id ? { ...r, status: 'completed', checkout_at: r.checkout_at || null, progress_pct: 100 } : r
       );
     });
 
@@ -1710,7 +1702,7 @@ export default function PromotorRota() {
     // checkout da loja fica travado até a última rota do slot ser concluída.
     if (slotCheckout) {
       if (slotCheckout.canCheckout) {
-        toast.success('Rota concluída. Checkout da loja liberado para este horário.', { duration: 6000 });
+        toast.success('Rota concluída. Agora faça o checkout da loja (foto de checkout).', { duration: 8000 });
       } else {
         toast.error(
           slotCheckout.message ||
@@ -1853,11 +1845,36 @@ export default function PromotorRota() {
   // O progresso do backend permanece em 0% enquanto a foto e a chamada da
   // categoria aguardam a internet. O hook precisa ficar antes dos retornos
   // condicionais para preservar a ordem de hooks do React.
+  const brandLocalProgress = useMemo(() => {
+    const result: Record<string, number> = {};
+    const executions = Array.isArray(route?.executions) ? route.executions : [];
+    for (const rb of routeBrands) {
+      const rbKey = rb.id || rb.brand_id;
+      const brandExecs = executions.filter((e: any) => e.route_brand_id === rb.id);
+      if (!brandExecs.length) {
+        result[rbKey] = Number(rb.progress_pct || 0);
+        continue;
+      }
+      const done = brandExecs.filter((e: any) => e.status === 'completed' || !!offlineCompletedExecs[e.id]).length;
+      const optimisticCategories = new Set<string>();
+      Object.entries(optimisticAfterPhoto).forEach(([key, value]) => {
+        if (value && key.endsWith(`_${rb.id}`)) optimisticCategories.add(key);
+      });
+      const categoryKeys = new Set(brandExecs.map((e: any) => `${e.category_id}_${rb.id}`));
+      const extra = [...optimisticCategories].filter(key => categoryKeys.has(key)).length;
+      result[rbKey] = Math.min(100, Math.max(
+        Number(rb.progress_pct || 0),
+        Math.round(((done + extra) / (brandExecs.length + extra)) * 100)
+      ));
+    }
+    return result;
+  }, [route?.executions, routeBrands, optimisticAfterPhoto, offlineCompletedExecs]);
+
   const localProgress = useMemo(() => {
     const executions = Array.isArray(route?.executions) ? route.executions : [];
     if (!executions.length) return Number(route?.progress_pct || 0);
     const total = executions.length;
-    const completed = executions.filter((exec: any) => exec.status === 'completed').length;
+    const completed = executions.filter((exec: any) => exec.status === 'completed' || !!offlineCompletedExecs[exec.id]).length;
     const optimisticCategories = new Set<string>();
     Object.entries(optimisticAfterPhoto).forEach(([key, value]) => {
       if (value) optimisticCategories.add(key);
@@ -1865,7 +1882,7 @@ export default function PromotorRota() {
     const categoryKeys = new Set(executions.map((exec: any) => `${exec.category_id}_${exec.route_brand_id || 'null'}`));
     const extraCompleted = [...optimisticCategories].filter(key => categoryKeys.has(key)).length;
     return Math.min(100, Math.max(Number(route?.progress_pct || 0), Math.round(((completed + extraCompleted) / total) * 100)));
-  }, [route?.executions, route?.progress_pct, optimisticAfterPhoto]);
+  }, [route?.executions, route?.progress_pct, optimisticAfterPhoto, offlineCompletedExecs]);
 
   if (isLoading) return <PromotorLayout><div className="flex items-center justify-center h-64"><div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" /></div></PromotorLayout>;
   if (!route) return <PromotorLayout><div className="text-center py-12 text-muted-foreground">Rota não encontrada</div></PromotorLayout>;
@@ -2538,8 +2555,9 @@ export default function PromotorRota() {
               Toque numa marca para abrir suas categorias.
             </p>
             {routeBrands.map((rb: any) => {
-              const isDone = rb.status === 'completed';
-              const isInProgress = rb.status === 'in_progress' || ((rb.progress_pct || 0) > 0 && !isDone);
+              const brandProgress = brandLocalProgress[rb.id || rb.brand_id] ?? Number(rb.progress_pct || 0);
+              const isDone = rb.status === 'completed' || brandProgress >= 100;
+              const isInProgress = rb.status === 'in_progress' || (brandProgress > 0 && !isDone);
               const cardCls = isDone
                 ? 'border-green-500/60 bg-green-500/10 hover:bg-green-500/15'
                 : isInProgress
@@ -2570,14 +2588,14 @@ export default function PromotorRota() {
                       </div>
                       <div className="flex items-center gap-2">
                         <span className={`text-sm font-mono font-bold ${isDone ? 'text-green-700' : isInProgress ? 'text-yellow-700' : ''}`}>
-                          {Math.round(rb.progress_pct || 0)}%
+                          {Math.round(brandProgress)}%
                         </span>
                         <ChevronRight className="h-4 w-4 text-muted-foreground" />
                       </div>
                     </div>
                     <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden mt-2">
                       <div className={`h-full rounded-full transition-all ${barCls}`}
-                        style={{ width: `${rb.progress_pct || 0}%` }} />
+                        style={{ width: `${brandProgress}%` }} />
                     </div>
                   </CardContent>
                 </Card>
@@ -2637,11 +2655,11 @@ export default function PromotorRota() {
                       )}
                     </div>
                   </div>
-                  <span className="text-sm font-mono font-bold">{Math.round(currentBrand?.progress_pct || 0)}%</span>
+                  <span className="text-sm font-mono font-bold">{Math.round(brandLocalProgress[currentBrand?.id || currentBrand?.brand_id] || currentBrand?.progress_pct || 0)}%</span>
                 </div>
                 <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden mt-2">
                   <div className={`h-full rounded-full transition-all ${currentBrand?.status === 'completed' ? 'bg-green-500' : 'bg-primary'}`}
-                    style={{ width: `${currentBrand?.progress_pct || 0}%` }} />
+                    style={{ width: `${brandLocalProgress[currentBrand?.id || currentBrand?.brand_id] || currentBrand?.progress_pct || 0}%` }} />
                 </div>
               </CardContent>
             </Card>
